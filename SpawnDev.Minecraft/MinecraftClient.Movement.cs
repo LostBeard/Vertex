@@ -19,6 +19,32 @@ public sealed partial class MinecraftClient
     /// <summary>Raised on the receive loop when the server sets our position (see TeleportCount).</summary>
     public event Action? Teleported;
 
+    /// <summary>Abilities from the server (player_abilities): flags 1 invulnerable, 2 flying, 4 may fly, 8 instabuild.</summary>
+    public bool Invulnerable { get; private set; }
+    public bool Flying { get; private set; }
+    public bool MayFly { get; private set; }
+    public bool InstaBuild { get; private set; }
+    public float FlySpeed { get; private set; } = 0.05f;
+
+    internal void OnAbilities(byte flags, float flySpeed)
+    {
+        Invulnerable = (flags & 1) != 0;
+        Flying = (flags & 2) != 0;
+        MayFly = (flags & 4) != 0;
+        InstaBuild = (flags & 8) != 0;
+        FlySpeed = flySpeed;
+    }
+
+    /// <summary>Starts or stops flying (creative double-jump). Only allowed when MayFly.</summary>
+    public async Task SetFlyingAsync(bool flying, CancellationToken cancellationToken = default)
+    {
+        if (flying && !MayFly) throw new InvalidOperationException("this player may not fly");
+        Flying = flying;
+        using var p = new PacketWriter(CB.Play.Serverbound.PlayerAbilities);
+        p.WriteByte(flying ? (byte)2 : (byte)0);
+        await _connection!.SendAsync(p, cancellationToken);
+    }
+
     private void OnTeleported()
     {
         TeleportCount++;
@@ -34,6 +60,8 @@ public sealed partial class MinecraftClient
         if (!PhysicsEnabled) return;
         _physics ??= new PlayerPhysics(World);
         RefreshPhysicsAttributes(_physics);
+        _physics.Flying = Flying;
+        _physics.FlySpeed = FlySpeed;
         PhysicsTweak?.Invoke(_physics);
 
         // Vanilla only lets you start sprinting with more than 6 food (or flying).
@@ -45,6 +73,8 @@ public sealed partial class MinecraftClient
         lock (_positionLock) simulated = _physics.Tick(_body, controls);
         controls.Sprint = sprintSave;
         if (!simulated) return; // our chunk is not loaded yet: vanilla does not move either
+        // Touching the ground ends creative flight (LocalPlayer), and tells the server.
+        if (Flying && OnGround && GameMode != GameMode.Spectator) await SetFlyingAsync(false, ct);
 
         await SendMovementAsync(ct);
         Moved?.Invoke();

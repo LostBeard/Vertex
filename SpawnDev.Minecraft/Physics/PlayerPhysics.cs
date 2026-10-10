@@ -86,6 +86,10 @@ public sealed class PlayerPhysics
     /// <summary>Test-only: ignore block collisions (proves the server catches an illegal move).</summary>
     internal bool NoClip;
 
+    /// <summary>Creative/spectator flight (abilities.flying) and its speed (abilities flying speed, 0.05).</summary>
+    public bool Flying;
+    public float FlySpeed = 0.05f;
+
     /// <summary>Advances the player one tick. Returns false (and does nothing) while the ground is not loaded.</summary>
     public bool Tick(PlayerState s, PlayerControls c)
     {
@@ -106,7 +110,7 @@ public sealed class PlayerPhysics
         if (s.Sprinting && (!c.Forward || c.Sneak || (s.HorizontalCollision && !s.MinorHorizontalCollision))) s.Sprinting = false;
         if (c.Sprint && c.Forward && !c.Sneak && !s.Sprinting) s.Sprinting = true;
 
-        if (c.Jump)
+        if (c.Jump && !Flying)
         {
             var fluidHeight = s.InLava ? s.LavaHeight : s.WaterHeight;
             var inWater = s.InWater && fluidHeight > 0;
@@ -149,6 +153,19 @@ public sealed class PlayerPhysics
 
         s.InputStrafe = strafe;
         s.InputForward = forward;
+        if (Flying)
+        {
+            // LocalPlayer.aiStep + the flying branch of Player.travel (client-side code: not in the server jar, so
+            // not byte-verified; Paper does not movement-check creative/spectator players): sneak/jump move
+            // down/up by 3x the fly speed, travel uses the fly speed, vertical velocity keeps 60% per tick.
+            var vertical = (c.Jump ? 1 : 0) - (c.Sneak ? 1 : 0);
+            if (vertical != 0) s.VelY += vertical * FlySpeed * 3.0f;
+            var vyBefore = s.VelY;
+            TravelInAir(s, strafe, forward, c);
+            s.VelY = vyBefore * 0.6;
+            s.FallDistance = 0;
+            return true;
+        }
         Travel(s, strafe, forward, c);
         return true;
     }
@@ -253,7 +270,9 @@ public sealed class PlayerPhysics
     private double Speed(PlayerState s) => s.Sprinting ? MovementSpeed * 1.3 : MovementSpeed; // sprint: +30% multiply_total
 
     private float FrictionInfluencedSpeed(PlayerState s, float friction) =>
-        s.OnGround ? (float)Speed(s) * (0.21600002f / (friction * friction * friction)) : s.Sprinting ? 0.025999999f : 0.02f;
+        s.OnGround ? (float)Speed(s) * (0.21600002f / (friction * friction * friction))
+        : Flying ? FlySpeed * (s.Sprinting ? 2 : 1)
+        : s.Sprinting ? 0.025999999f : 0.02f;
 
     /// <summary>Entity.moveRelative + getInputVector (Mth table trig, as vanilla).</summary>
     private static void MoveRelative(PlayerState s, float speed, float strafe, float forward)

@@ -153,6 +153,38 @@ public partial class LivePhysicsTests
     }
 
     [Test]
+    public async Task CreativeFlight_UpHoverDownAndLand()
+    {
+        const string name = "VertexFly";
+        var (client, ax, az) = await JoinOnArenaAsync(name, (_, _) => []);
+        await using var _ = client;
+        await _server.CommandAsync($"gamemode creative {name}");
+        await Wait.UntilAsync(() => client.MayFly, Timeout, () => "abilities");
+
+        await client.SetFlyingAsync(true);
+        client.Controls.Jump = true;
+        await RunTicksAsync(client, 20);
+        client.Controls.Jump = false;
+        Assert.That(client.Position.Y, Is.GreaterThan(203), "climbed");
+        await RunTicksAsync(client, 15); // coasts up a little while the 0.6/tick decay stops it
+        var up = client.Position.Y;
+        await RunTicksAsync(client, 20);
+        Assert.That(client.Position.Y, Is.EqualTo(up).Within(1e-3), "hovers: no gravity while flying");
+        Assert.That(client.Flying);
+
+        client.Controls.Sneak = true;
+        await Wait.UntilAsync(() => client.OnGround, Timeout, () => $"{client.Position}");
+        client.Controls.Clear();
+        await RunTicksAsync(client, 5);
+        Assert.That(client.Flying, Is.False, "landing ends flight");
+        Assert.That(client.Position.Y, Is.EqualTo(200.0));
+
+        await AssertSameAsServerAsync(client, name);
+        AssertServerNeverObjected(client, name);
+        await _server.CommandAsync($"gamemode survival {name}");
+    }
+
+    [Test]
     public async Task Fall_TakesVanillaFallDamage()
     {
         const string name = "VertexFall";

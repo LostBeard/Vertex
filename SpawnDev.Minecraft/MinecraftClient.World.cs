@@ -458,6 +458,14 @@ public sealed partial class MinecraftClient
                 if (id == EntityId && effect != null) _effects.TryRemove(effect, out _);
                 return;
             }
+            case CB.Play.Clientbound.PlayerAbilities:
+            {
+                var flags = r.ReadByte();
+                var fly = r.ReadFloat();
+                r.ReadFloat(); // field-of-view modifier (walking speed)
+                OnAbilities(flags, fly);
+                return;
+            }
             case CB.Play.Clientbound.SetExperience:
                 ExperienceProgress = r.ReadFloat();
                 ExperienceLevel = r.ReadVarInt();
