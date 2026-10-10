@@ -131,6 +131,26 @@ public static class GameTools
                 return Task.FromResult($"OK: I started crafting {count} {item.Replace('_', ' ')}.");
             });
 
+        yield return new GameTool("guard",
+            "Protect a player: stay with them and fight any monster that comes near them, until told to stop.",
+            """{"type":"object","properties":{"player":{"type":"string","description":"player name, or 'me' for the person talking"}}}""",
+            a => { var p = Who(a); tasks.Start($"guarding {p}", ct => skills.GuardAsync(p, ct)); return Task.FromResult($"OK: I started guarding {p}. I stay with them and fight monsters that come near, until told to stop."); });
+
+        yield return new GameTool("smelt",
+            "Smelt or cook in a furnace: iron_ingot from raw iron, glass from sand, cooked_beef from beef, charcoal from logs. Builds a furnace from cobblestone if none is near. Takes 10 seconds per item.",
+            """{"type":"object","properties":{"result":{"type":"string","description":"what to make, e.g. iron_ingot, glass, cooked_porkchop"},"count":{"type":"integer"}},"required":["result"]}""",
+            a =>
+            {
+                var item = (Str(a, "result") ?? "").Trim().ToLowerInvariant().Replace(' ', '_');
+                var count = Math.Clamp(Int(a, "count", 1), 1, 64);
+                tasks.Start($"smelting {count} {item.Replace('_', ' ')}", async ct =>
+                {
+                    var (ok, message) = await client.SmeltAsync(item, count, ct);
+                    return (ok, message + ". I have: " + skills.InventorySummary());
+                });
+                return Task.FromResult($"OK: I started smelting {count} {item.Replace('_', ' ')}. It is NOT done yet.");
+            });
+
         yield return new GameTool("eat", "Eat some food from your inventory.", NoArgs,
             async _ => (await skills.EatAsync(CancellationToken.None)).Item2);
 

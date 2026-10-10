@@ -23,13 +23,13 @@ Every milestone is tested against REAL servers started locally (Paper 1.21.5 bui
   attributes, time, tags
 - [x] Item stacks with data components (ProtoDef over minecraft-data's 1.21.5 types), inventory, containers
 
-## M3 - Body (done 2026-10-10 except smelting)
+## M3 - Body (done 2026-10-10)
 - [x] Vanilla-accurate player physics (gravity, drag, collision, step-up, jump, sprint, swim, ladders)
   so Paper's movement checks never rubber-band or kick it
 - [x] Pathfinding (A*, walk/jump/fall/swim/pillar/dig-through)
 - [x] Dig (correct break time per tool/enchant/effect), place, use, attack, eat, chests, creative flight
 - [x] Craft: recipe book from the data pack, real container clicks, recursive planning, crafting table
-- [ ] Smelt (furnace)
+- [x] Smelt (furnace): crafts and places one if needed, picks the least-wasted fuel
 
 ## M4 - Accounts (pulled ahead: done 2026-10-10 except signed commands)
 - [x] Microsoft account sign-in: live.com device code under a public Minecraft title client id (no app
@@ -54,7 +54,8 @@ Every milestone is tested against REAL servers started locally (Paper 1.21.5 bui
 ## M6 - Brain (working: llama3.1:8b tool calling, Whisper/Kokoro, characters, reflexes; tests on GPU)
 - [x] SpawnDev.AI LLM with tool calling over a skill library (follow, come here, go to, collect, craft, give,
   attack, eat, stop, look, inventory, remember, switch character)
-- [ ] More skills: build structures, guard a player, explore, smelt, store items in chests, sleep
+- [x] Guard a player (fights monsters within 10 blocks of them, leash 16)
+- [ ] More skills: build structures, explore, store items in chests, sleep
 - [x] Characters: name, personality (system prompt), voice, play style knobs; switch in game by voice or chat
 - [x] Memory: remembered facts (persisted)
 - [ ] Per-player memory, places, long-running goals

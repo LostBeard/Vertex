@@ -245,27 +245,78 @@ public sealed class Skills(MinecraftClient client)
             var (x, y, z) = client.Position;
             var target = client.Entities.Values.Where(e => !e.IsPlayer && Matches(e) && e.DistanceTo(x, y, z) < 24).OrderBy(e => e.DistanceTo(x, y, z)).FirstOrDefault();
             if (target == null) break;
-            var id = target.Id;
-            while (client.Entities.ContainsKey(id) && !ct.IsCancellationRequested)
-            {
-                var t = client.Entities[id];
-                var d = t.DistanceTo(client.Position.X, client.Position.Y, client.Position.Z);
-                if (d > 2.8)
-                {
-                    using var hop = CancellationTokenSource.CreateLinkedTokenSource(ct);
-                    hop.CancelAfter(TimeSpan.FromSeconds(1));
-                    try { await client.GoToAsync(Goal.Near(t.X, t.Y, t.Z, 2.0), new PathOptions { MaxNodes = 8_000 }, hop.Token); }
-                    catch (OperationCanceledException) when (!ct.IsCancellationRequested) { }
-                    continue;
-                }
-                client.LookAt(t.X, t.Y + t.Type.Height * 0.5, t.Z);
-                if (client.AttackReady) await client.AttackAsync(t, ct);
-                await client.WaitTicksAsync(1, ct);
-                if (client.Health < 6) break;
-            }
-            if (!client.Entities.ContainsKey(id)) kills++;
+            if (await FightAsync(target.Id, null, ct)) kills++;
         }
         return (true, kills > 0 ? $"I defeated {kills} {what}." : $"I don't see any {what} around.");
+    }
+
+    /// <summary>
+    /// Fights one mob until it is gone (true), we are hurt, or `keepGoing` says to stop chasing it (false).
+    /// </summary>
+    private async Task<bool> FightAsync(int id, Func<Entity, bool>? keepGoing, CancellationToken ct)
+    {
+        while (client.Entities.TryGetValue(id, out var t) && !ct.IsCancellationRequested)
+        {
+            if (client.Health < 6 || (keepGoing != null && !keepGoing(t))) return false;
+            var d = t.DistanceTo(client.Position.X, client.Position.Y, client.Position.Z);
+            if (d > 2.8)
+            {
+                using var hop = CancellationTokenSource.CreateLinkedTokenSource(ct);
+                hop.CancelAfter(TimeSpan.FromSeconds(1));
+                try { await client.GoToAsync(Goal.Near(t.X, t.Y, t.Z, 2.0), new PathOptions { MaxNodes = 8_000 }, hop.Token); }
+                catch (OperationCanceledException) when (!ct.IsCancellationRequested) { }
+                continue;
+            }
+            client.LookAt(t.X, t.Y + t.Type.Height * 0.5, t.Z);
+            if (client.AttackReady) await client.AttackAsync(t, ct);
+            await client.WaitTicksAsync(1, ct);
+        }
+        return !client.Entities.ContainsKey(id);
+    }
+
+    /// <summary>
+    /// Stays with a player and fights every monster that comes within 10 blocks of them (never chasing one more
+    /// than 16 blocks from them), until stopped. Backs off from fights while hurt but keeps following.
+    /// </summary>
+    public async Task<(bool, string)> GuardAsync(string? playerName, CancellationToken ct)
+    {
+        var target = FindPlayer(playerName);
+        if (target == null) return (false, $"I can't see {playerName ?? "anyone"} to protect.");
+        var name = target.PlayerName!;
+        var uuid = target.Uuid;
+        Entity? Ward() => client.Entities.Values.FirstOrDefault(e => e.Uuid == uuid);
+        var kills = 0;
+        var lost = 0;
+        await EquipWeaponAsync(ct);
+        while (!ct.IsCancellationRequested)
+        {
+            var p = Ward();
+            if (p == null)
+            {
+                if (++lost > 100) return (false, $"I lost {name}. I defeated {kills} monsters while guarding.");
+                await client.WaitTicksAsync(1, ct);
+                continue;
+            }
+            lost = 0;
+            var threat = client.Health < 6 ? null : client.Entities.Values
+                .Where(e => !e.IsPlayer && Hostile.Contains(e.Name) && e.DistanceTo(p.X, p.Y, p.Z) < 10)
+                .OrderBy(e => e.DistanceTo(p.X, p.Y, p.Z)).FirstOrDefault();
+            if (threat != null)
+            {
+                if (await FightAsync(threat.Id, e => Ward() is { } w && e.DistanceTo(w.X, w.Y, w.Z) < 16, ct)) kills++;
+                continue;
+            }
+            var (x, y, z) = client.Position;
+            if (p.DistanceTo(x, y, z) > 4)
+            {
+                using var hop = CancellationTokenSource.CreateLinkedTokenSource(ct);
+                hop.CancelAfter(TimeSpan.FromSeconds(1));
+                try { await client.GoToAsync(Goal.Near(p.X, p.Y, p.Z, 3), new PathOptions { MaxNodes = 20_000 }, hop.Token); }
+                catch (OperationCanceledException) when (!ct.IsCancellationRequested) { }
+            }
+            else await client.WaitTicksAsync(2, ct); // watch: threats are checked every few ticks
+        }
+        return (true, $"stopped guarding {name} ({kills} monsters defeated)");
     }
 
     public async Task EquipWeaponAsync(CancellationToken ct)

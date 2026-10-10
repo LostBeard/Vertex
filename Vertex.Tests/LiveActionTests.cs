@@ -173,6 +173,41 @@ public class LiveActionTests
     }
 
     [Test]
+    public async Task Guard_FightsMonstersNearThePlayer_AndOnlyThose()
+    {
+        const string name = "VertexGuard", ward = "VertexWard";
+        string Zombie(double x, double z) =>
+            $"summon minecraft:zombie {x} 200 {z} {{NoAI:1b,Tags:[\"vguard\"],active_effects:[{{id:\"minecraft:fire_resistance\",duration:1000000}}]}}";
+        // The ward stands 4 blocks from Vertex; two zombies 3 blocks either side of them, and one 12.5 blocks away
+        // (on its own block, outside the arena): within Vertex's attack range, but not near the ward.
+        var (client, x, z) = await JoinOnArenaAsync(name, (ax, az) =>
+            [$"setblock {ax - 12} 199 {az + 4} minecraft:stone", Zombie(ax + 3.5, az + 4.5), Zombie(ax - 2.5, az + 4.5), Zombie(ax - 11.5, az + 4.5)]);
+        await using var _ = client;
+        await using var aubs = new MinecraftClient(GameProfile.Offline(ward));
+        using (var cts = new CancellationTokenSource(Timeout)) await aubs.ConnectAsync("127.0.0.1", Port, cts.Token);
+        await _server.CommandAsync($"tp {ward} {x + 0.5} 200 {z + 4.5}");
+        await GiveAsync(client, name, "minecraft:stone_sword", 1, () => client.Inventory.Count("stone_sword") == 1);
+        await Wait.UntilAsync(() => client.Entities.Values.Count(e => e.Name == "minecraft:zombie") == 3 && client.Entities.Values.Any(e => e.PlayerName == ward),
+            Timeout, () => string.Join(", ", client.Entities.Values));
+        var far = client.Entities.Values.Single(e => e.Name == "minecraft:zombie" && e.X < x - 10).Id;
+
+        var skills = new Vertex.Brain.Skills(client);
+        using var stop = new CancellationTokenSource();
+        var guarding = skills.GuardAsync("vertexward", stop.Token); // fuzzy name, like speech
+        await Wait.UntilAsync(() => client.Entities.Values.Count(e => e.Name == "minecraft:zombie") == 1 || guarding.IsCompleted, TimeSpan.FromSeconds(60),
+            () => string.Join(", ", client.Entities.Values.Where(e => e.Name == "minecraft:zombie").Select(e => $"zombie {e.Health} at {e.X:0.0},{e.Z:0.0}")));
+        Assert.That(guarding.IsCompleted, Is.False, guarding.IsCompleted ? guarding.Result.Item2 : "");
+        await client.WaitTicksAsync(40);
+        Assert.That(client.Entities.ContainsKey(far), "left the zombie that is not near the ward alone");
+        var (px, py, pz) = client.Position;
+        Assert.That(client.Entities.Values.Single(e => e.PlayerName == ward).DistanceTo(px, py, pz), Is.LessThan(5), "back with the ward");
+        // Guarding runs until stopped; stopping cancels it like every other task (TaskRunner expects the throw).
+        stop.Cancel();
+        Assert.That(async () => await guarding, Throws.InstanceOf<OperationCanceledException>());
+        await _server.CommandAsync("kill @e[tag=vguard]");
+    }
+
+    [Test]
     public async Task Chest_OpenStoreAndClose()
     {
         const string name = "VertexChest";

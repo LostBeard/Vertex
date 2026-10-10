@@ -27,7 +27,7 @@ public class LiveCraftingTests
 
     private async Task<MinecraftClient> JoinOnPlatformAsync(string name)
     {
-        var client = new MinecraftClient(GameProfile.Offline(name));
+        var client = new MinecraftClient(GameProfile.Offline(name), new ClientOptions { Log = m => TestContext.Out.WriteLine(m) });
         using var cts = new CancellationTokenSource(Timeout);
         await client.ConnectAsync("127.0.0.1", Port, cts.Token);
         var (px, _, pz) = client.Position;
@@ -87,5 +87,34 @@ public class LiveCraftingTests
         var (more, why) = await client.CraftItemAsync("torch", 4);
         Assert.That(more, Is.False);
         Assert.That(why, Does.Contain("need"));
+    }
+
+    [Test]
+    public async Task IronIngots_InAFurnaceItBuilds()
+    {
+        await using var client = await JoinOnPlatformAsync("VertexSmelt");
+        await _server.CommandAsync("give VertexSmelt minecraft:cobblestone 8");
+        await _server.CommandAsync("give VertexSmelt minecraft:raw_iron 3");
+        await _server.CommandAsync("give VertexSmelt minecraft:oak_planks 8");
+        await Wait.UntilAsync(() => client.Inventory.Count("cobblestone") == 8 && client.Inventory.Count("raw_iron") == 3 && client.Inventory.Count("oak_planks") == 8,
+            Timeout, () => client.Inventory.ToString());
+
+        // 8 cobblestone -> furnace (crafted in a table made from 4 planks, placed), 3 raw iron + 2 planks (1.5 smelts
+        // each) -> 3 iron ingots (10 s each).
+        var (ok, message) = await client.SmeltAsync("iron_ingot", 3);
+        TestContext.Out.WriteLine(message + " | inventory: " + client.Inventory);
+        Assert.That(ok, message);
+        Assert.That(client.Inventory.Count("iron_ingot"), Is.EqualTo(3));
+        Assert.That(client.Inventory.Count("raw_iron"), Is.Zero);
+        Assert.That(client.Inventory.Count("oak_planks"), Is.EqualTo(2), "loaded only the fuel it needed");
+        Assert.That(client.OpenWindow, Is.Null, "closed the furnace afterwards");
+
+        // Nothing left to smelt: says so instead of building another furnace.
+        var (again, why) = await client.SmeltAsync("iron_ingot", 1);
+        Assert.That(again, Is.False);
+        Assert.That(why, Does.Contain("nothing to smelt"));
+        var (notCooked, why2) = await client.SmeltAsync("oak_planks", 1);
+        Assert.That(notCooked, Is.False);
+        Assert.That(why2, Does.Contain("not made in a furnace"));
     }
 }
