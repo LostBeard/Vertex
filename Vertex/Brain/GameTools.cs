@@ -116,6 +116,21 @@ public static class GameTools
                 return Task.FromResult($"OK: I am going after the {t} now.");
             });
 
+        yield return new GameTool("craft",
+            "Craft items (tools, torches, planks, a crafting table...). Makes missing parts on the way when you have the raw materials.",
+            """{"type":"object","properties":{"item":{"type":"string","description":"what to craft, e.g. wooden_pickaxe, torch, oak_planks"},"count":{"type":"integer"}},"required":["item"]}""",
+            a =>
+            {
+                var item = (Str(a, "item") ?? "").Trim().ToLowerInvariant().Replace(' ', '_');
+                var count = Math.Clamp(Int(a, "count", 1), 1, 64);
+                tasks.Start($"crafting {count} {item.Replace('_', ' ')}", async ct =>
+                {
+                    var (ok, message) = await client.CraftItemAsync(item, count, ct);
+                    return (ok, message + ". I have: " + skills.InventorySummary());
+                });
+                return Task.FromResult($"OK: I started crafting {count} {item.Replace('_', ' ')}.");
+            });
+
         yield return new GameTool("eat", "Eat some food from your inventory.", NoArgs,
             async _ => (await skills.EatAsync(CancellationToken.None)).Item2);
 
