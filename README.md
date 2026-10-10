@@ -9,7 +9,7 @@ Named by Aubriella, who it was built to play with.
 
 > **Status: early, playable.** Vertex joins servers (Microsoft accounts, signed chat), moves with vanilla physics,
 > pathfinds, digs, builds up, crafts, fights, hears and speaks in proximity voice, and takes requests through a local
-> language model. See [PLAN.md](PLAN.md) for what is done and what is next. See [PLAN.md](PLAN.md) for the roadmap and what works today.
+> language model. See [PLAN.md](PLAN.md) for what is done and what is next.
 
 ## Goals
 
@@ -36,6 +36,24 @@ Vertex runs on Windows with an NVIDIA GPU (CUDA; it falls back to OpenCL/CPU, sl
    character, press **Start playing**.
 3. Talk to it in game: say its name ("Vertex, follow me", "Vertex, get some wood", "Vertex, make a wooden pickaxe",
    "Vertex, be Pixel"), in proximity voice (Simple Voice Chat) or in chat. You can also type to it on the dashboard.
+
+What you can ask it (any wording; the language model picks the tool):
+
+| Ask | It does |
+|---|---|
+| "follow me", "come here", "go to 100 64 -20" | walks, climbs, swims, jumps, opens doors and gates (and closes them behind it) |
+| "get some wood", "mine 10 stone", "find iron" | finds, walks to, mines and picks up blocks, with the best tool it has |
+| "make a wooden pickaxe", "craft torches" | crafts with real container clicks, making the parts it is missing first |
+| "smelt the iron", "cook the beef" | builds a furnace if needed, fuels it, waits, takes the output |
+| "protect me", "fight the zombies" | guards a player, fighting monsters that come near them |
+| "put your stuff in the chest", "get bread from the chest" | stores and takes items (keeps its tools, armor, food) |
+| "go to bed" | sleeps in the nearest bed (the night passes when everyone sleeps) |
+| "give me your diamonds", "eat something" | walks over and drops items; eats when hungry (also by reflex) |
+| "remember this is home", "go home" | remembers named places per server and walks back to them |
+| "be Pixel" | switches character (personality and voice) |
+
+Walking somewhere never breaks player builds (planks, glass, doors, bricks...): it only digs natural blocks, and
+only when there is no other way.
 
 Command line: `vertex login`, `vertex play <host> [--character Pixel] [--model llama3.1:8b] [--offline Name]`,
 `vertex ping <host>`.

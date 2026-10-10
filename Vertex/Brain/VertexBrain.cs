@@ -24,10 +24,8 @@ public sealed class VertexBrain : IAsyncDisposable
 {
     private readonly Channel<BrainEvent> _events = Channel.CreateUnbounded<BrainEvent>();
     private readonly List<AiChatMessage> _history = [];
-    private readonly List<string> _memory = [];
     private readonly CancellationTokenSource _cts = new();
     private readonly CharacterStore _characters;
-    private readonly string _memoryFile;
     private Task? _loop;
     private DateTime _lastExchange = DateTime.MinValue;
     private Guid? _lastPartner;
@@ -45,10 +43,13 @@ public sealed class VertexBrain : IAsyncDisposable
     public string Model { get; set; }
     /// <summary>Name of whoever spoke last (what "me" means in a request).</summary>
     public string? CurrentSpeaker { get; private set; }
+    /// <summary>Facts and named places for this server's world.</summary>
+    public WorldMemory Memory { get; }
 
     public event Action<string>? Log;
 
-    public VertexBrain(MinecraftClient client, SimpleVoiceChat? voice, VertexAi ai, CharacterStore characters, Character character, string model)
+    /// <param name="world">Which world's memory to use (one per server, e.g. "mc.spawndev.com_25565").</param>
+    public VertexBrain(MinecraftClient client, SimpleVoiceChat? voice, VertexAi ai, CharacterStore characters, Character character, string model, string world = "default")
     {
         Client = client;
         Voice = voice;
@@ -66,9 +67,7 @@ public sealed class VertexBrain : IAsyncDisposable
             Ears.Heard += h => _events.Writer.TryWrite(new SaidEvent(h.Speaker, NameOf(h.Speaker), h.Text, true));
         }
         Reflexes = new Reflexes(this);
-        _memoryFile = Path.Combine(characters.Folder, "..", "memory.json");
-        try { if (File.Exists(_memoryFile)) _memory.AddRange(JsonSerializer.Deserialize<List<string>>(File.ReadAllText(_memoryFile)) ?? []); }
-        catch (JsonException) { }
+        Memory = WorldMemory.Load(Path.Combine(characters.Folder, "..", "worlds"), world);
 
         foreach (var tool in GameTools.Create(this))
         {
@@ -167,7 +166,11 @@ public sealed class VertexBrain : IAsyncDisposable
         var near = Client.Entities.Values.Where(e => e.DistanceTo(x, y, z) < 24 && e.Uuid != Client.Profile.Id).OrderBy(e => e.DistanceTo(x, y, z)).Take(12)
             .Select(e => e.IsPlayer ? $"{e.PlayerName} (player, {e.DistanceTo(x, y, z):0} blocks)" : $"{e.Name.Replace("minecraft:", "").Replace('_', ' ')} ({e.DistanceTo(x, y, z):0} blocks)").ToList();
         sb.AppendLine($"- Nearby: {(near.Count == 0 ? "nobody" : string.Join(", ", near))}.");
-        if (_memory.Count > 0) sb.AppendLine("- Things you remember: " + string.Join("; ", _memory.TakeLast(12)));
+        if (Memory.Facts.Count > 0) sb.AppendLine("- Things you remember: " + string.Join("; ", Memory.Facts.TakeLast(12)));
+        if (Memory.Places.Count > 0)
+            sb.AppendLine("- Places you know: " + string.Join(", ", Memory.Places.Select(p => p.Dimension == Client.World.Dimension
+                ? $"{p.Name} ({Math.Sqrt((p.X + 0.5 - x) * (p.X + 0.5 - x) + (p.Z + 0.5 - z) * (p.Z + 0.5 - z)):0} blocks away)"
+                : $"{p.Name} (in the {p.Dimension.Replace("minecraft:", "").Replace("the_", "")})")) + ".");
         var others = _characters.All().Where(c => c.Name != Character.Name).Select(c => c.Name);
         sb.AppendLine($"- Other characters you can switch to: {string.Join(", ", others)}.");
         return sb.ToString();
@@ -226,11 +229,7 @@ public sealed class VertexBrain : IAsyncDisposable
     public string Remember(string fact)
     {
         if (string.IsNullOrWhiteSpace(fact)) return "nothing to remember";
-        lock (_memory)
-        {
-            _memory.Add(fact.Trim());
-            try { File.WriteAllText(_memoryFile, JsonSerializer.Serialize(_memory)); } catch (IOException) { }
-        }
+        Memory.AddFact(fact);
         return "remembered";
     }
 

@@ -119,7 +119,7 @@ static async Task<int> PlayAsync(string[] args)
     await using var client = new MinecraftClient(profile, new ClientOptions { Log = Log, Brand = "vertex" });
     await using var voice = new SimpleVoiceChat(client, host);
     voice.Log += m => Log("[voice] " + m);
-    await using var brain = new VertexBrain(client, voice, ai, characters, character, model);
+    await using var brain = new VertexBrain(client, voice, ai, characters, character, model, $"{host}_{port}");
     brain.Log += Log;
     var done = new TaskCompletionSource<string>();
     client.ChatReceived += m => Log("[chat] " + m.Text);

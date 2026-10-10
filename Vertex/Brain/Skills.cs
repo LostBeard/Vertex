@@ -154,6 +154,26 @@ public sealed class Skills(MinecraftClient client)
         return (ok, ok ? $"I'm next to {target.PlayerName}." : $"I couldn't find a way to {target.PlayerName}.");
     }
 
+    /// <summary>
+    /// Walks somewhere far away: plans hop after hop as the chunks on the way arrive, until there or no longer
+    /// getting closer. Never breaks builds on the way (only natural blocks, and only when there is no other way).
+    /// </summary>
+    public async Task<(bool, string)> TravelAsync(int x, int y, int z, string label, CancellationToken ct)
+    {
+        double Dist() { var (px, py, pz) = client.Position; return Math.Sqrt((x + 0.5 - px) * (x + 0.5 - px) + (y - py) * (y - py) + (z + 0.5 - pz) * (z + 0.5 - pz)); }
+        var best = Dist();
+        var stalls = 0;
+        while (true)
+        {
+            ct.ThrowIfCancellationRequested();
+            if (await client.GoToAsync(Goal.Near(x + 0.5, y, z + 0.5, 2), new PathOptions { CanDig = true, MaxNodes = 40_000 }, ct))
+                return (true, $"I'm at {label}.");
+            var d = Dist();
+            if (d < best - 4) { best = d; stalls = 0; }
+            else if (++stalls >= 3) return (false, $"I got stuck {d:0} blocks from {label}.");
+        }
+    }
+
     public async Task<(bool, string)> GoToAsync(int x, int y, int z, CancellationToken ct)
     {
         var ok = await client.GoToAsync(Goal.Near(x + 0.5, y, z + 0.5, 1.5), new PathOptions { CanDig = false }, ct);

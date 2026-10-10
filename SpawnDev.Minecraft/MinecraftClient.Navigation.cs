@@ -34,6 +34,36 @@ public sealed partial class MinecraftClient
     ];
 
     /// <summary>
+    /// Blocks navigation never digs through: what players build with and nature rarely places (planks, glass,
+    /// doors, beds, chests, bricks, stairs, wool...). Walking somewhere must never break someone's house; collecting
+    /// a block on purpose (DigAsync) is not affected. Replace to change the rule.
+    /// </summary>
+    public Func<BlockType, bool> IsBuiltBlock { get; set; } = DefaultIsBuiltBlock;
+
+    private static readonly string[] BuiltNameParts =
+    [
+        "planks", "glass", "_wool", "_carpet", "bricks", "door", "_bed", "chest", "barrel", "crafting_table", "furnace", "smoker",
+        "torch", "lantern", "_sign", "concrete", "glazed_terracotta", "_stairs", "_slab", "fence", "_wall", "bookshelf",
+        "shulker_box", "banner", "rail", "redstone", "repeater", "comparator", "lever", "_button", "pressure_plate", "piston",
+        "hopper", "dropper", "dispenser", "observer", "anvil", "enchanting_table", "brewing_stand", "cauldron", "jukebox",
+        "note_block", "beacon", "lectern", "loom", "stonecutter", "grindstone", "cartography_table", "fletching_table",
+        "smithing_table", "composter", "flower_pot", "candle", "bell", "scaffolding", "target", "respawn_anchor", "lodestone",
+        "daylight_detector", "tnt", "sea_lantern", "farmland", "stripped_", "_wood", "polished_", "smooth_", "cut_", "chiseled_",
+        "waxed_", "quartz_block", "quartz_pillar", "trapdoor", "iron_bars", "chain", "campfire", "crafter", "spawner", "obsidian",
+        "decorated_pot", "_head", "skull", "end_rod", "froglight", "hay_block", "_pane",
+    ];
+
+    private static readonly HashSet<string> BuiltBlocks =
+    [
+        "minecraft:iron_block", "minecraft:gold_block", "minecraft:diamond_block", "minecraft:emerald_block", "minecraft:lapis_block",
+        "minecraft:netherite_block", "minecraft:redstone_block", "minecraft:coal_block", "minecraft:copper_block",
+    ];
+
+    /// <summary>The default IsBuiltBlock. Ores are never "built" (redstone_ore is not a redstone part).</summary>
+    public static bool DefaultIsBuiltBlock(BlockType block) =>
+        !block.Name.EndsWith("_ore") && (BuiltBlocks.Contains(block.Name) || BuiltNameParts.Any(block.Name.Contains));
+
+    /// <summary>
     /// Walks (digs, pillars, swims, climbs) to a goal. Replans when stuck, corrected by the server, or when a plan
     /// only got part of the way. Returns true when the goal is reached.
     /// </summary>
@@ -93,6 +123,8 @@ public sealed partial class MinecraftClient
     private int? BestDigTicks(int state)
     {
         if (World.Data.Hardness[state] < 0) return null;
+        // Never through someone's build, nor through modded blocks we know nothing about.
+        if (state == World.Data.UnknownState || IsBuiltBlock(World.Data.BlockOf(state))) return null;
         // The best tool we carry (Vertex swaps to it before digging).
         var best = TicksToBreak(state);
         foreach (var slot in Inventory.Find(s => s.Type?.ToolRules.Length > 0))
@@ -136,10 +168,27 @@ public sealed partial class MinecraftClient
     private async Task<bool> FollowAsync(List<PathStep> steps, CancellationToken ct)
     {
         var startTeleports = TeleportCount;
+        var opened = new List<(int X, int Y, int Z)>();
         for (var i = 0; i < steps.Count; i++)
         {
             var step = steps[i];
             var last = i == steps.Count - 1;
+
+            // A closed door or gate on the step: open it (and close it again once we are through).
+            if (Pathfinder.IsDoorway(World.GetState(step.X, step.Y, step.Z)))
+            {
+                if (!await OpenDoorwayAsync(step.X, step.Y, step.Z, opened, ct)) return false;
+            }
+            else if (opened.Count > 0 && !last)
+            {
+                // Out of the doorway and one step on: shut what we opened behind us.
+                foreach (var d in opened.Where(d => BodyClearOf(d.X, d.Z) && (d.X, d.Y, d.Z) != (step.X, step.Y, step.Z)).ToList())
+                {
+                    Controls.Clear();
+                    await SetDoorwayOpenAsync(d.X, d.Y, d.Z, false, ct);
+                    opened.Remove(d);
+                }
+            }
 
             foreach (var d in step.Dig)
             {
@@ -160,8 +209,37 @@ public sealed partial class MinecraftClient
             if (TeleportCount != startTeleports) return false; // the server disagreed with us: replan
         }
         Controls.Clear();
+        // Through a door on the very last steps: close it behind us when we are clear of it.
+        foreach (var d in opened.Where(d => BodyClearOf(d.X, d.Z) && DistanceToBlock(d.X, d.Y, d.Z) <= BlockReach - 0.5))
+            await SetDoorwayOpenAsync(d.X, d.Y, d.Z, false, ct);
         return true;
     }
+
+    /// <summary>Our body (0.6 wide) is entirely outside block column x,z (safe to shut a door there).</summary>
+    private bool BodyClearOf(int x, int z)
+    {
+        var (px, _, pz) = Position;
+        return Math.Abs(px - (x + 0.5)) >= 0.8 || Math.Abs(pz - (z + 0.5)) >= 0.8;
+    }
+
+    private async Task<bool> OpenDoorwayAsync(int x, int y, int z, List<(int X, int Y, int Z)> opened, CancellationToken ct)
+    {
+        if (IsDoorwayOpen(x, y, z)) return true;
+        Controls.Clear();
+        if (!await SetDoorwayOpenAsync(x, y, z, true, ct)) return false;
+        opened.Add((x, y, z));
+        return true;
+    }
+
+    /// <summary>Right-clicks a door or gate until it is open (or closed). False if the server would not change it.</summary>
+    public async Task<bool> SetDoorwayOpenAsync(int x, int y, int z, bool open, CancellationToken ct = default)
+    {
+        if (IsDoorwayOpen(x, y, z) == open) return true;
+        await UseOnBlockAsync(x, y, z, FaceToward(x, y, z), Hand.Main, null, ct);
+        return await WaitUntilAsync(() => IsDoorwayOpen(x, y, z) == open, 20, ct);
+    }
+
+    private bool IsDoorwayOpen(int x, int y, int z) => World.GetState(x, y, z) is var s && s > 0 && World.Data.GetProperty(s, "open") == "true";
 
     /// <summary>Steers onto one step's block. False when it stops making progress.</summary>
     private async Task<bool> MoveToStepAsync(PathStep step, bool last, CancellationToken ct)

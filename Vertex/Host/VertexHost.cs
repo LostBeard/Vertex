@@ -137,7 +137,7 @@ public sealed class VertexHost : IAsyncDisposable
                 _voice.Log += m => Add(LineKind.System, "voice: " + m);
             }
             var character = Characters.Find(Settings.Character) ?? Character.BuiltIn[0];
-            _brain = new VertexBrain(_client, _voice, _ai, Characters, character, Settings.Model);
+            _brain = new VertexBrain(_client, _voice, _ai, Characters, character, Settings.Model, $"{Settings.Server}_{Settings.Port}");
             _brain.Log += m =>
             {
                 if (m.StartsWith("> ")) Add(LineKind.Heard, m[2..]);

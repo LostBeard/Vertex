@@ -81,10 +81,11 @@ public sealed partial class MinecraftClient
         if (DistanceToBlock(x, y, z) > 2.5
             && !await GoToAsync(new GoalReachBlock(x, y, z, 2.5), new PathOptions { CanDig = false, MaxNodes = 30_000 }, ct))
             return "I could not get to the bed";
-        // Refusals come as action bar text (Player.displayClientMessage(problem, true)); "Respawn point set" and
-        // broadcasts (advancements) come as chat and are not refusals.
+        // Refusals are Player.BedSleepingProblem messages (plus BedBlock's "occupied") on the action bar. Other
+        // text comes too and is no refusal: "Respawn point set" in chat, and on success "Sleeping through this
+        // night" on the action bar, sometimes before our sleeping pose arrives.
         string? refusal = null;
-        void OnChat(ChatMessage m) { if (m.Kind == ChatKind.ActionBar) refusal ??= m.Text; }
+        void OnChat(ChatMessage m) { if (m.Kind == ChatKind.ActionBar && BedRefusals.Value.Contains(m.Text)) refusal ??= m.Text; }
         ChatReceived += OnChat;
         try
         {
@@ -97,6 +98,9 @@ public sealed partial class MinecraftClient
         }
         return Sleeping ? null : refusal ?? "the bed did nothing";
     }
+
+    private static readonly Lazy<HashSet<string>> BedRefusals = new(() =>
+        new[] { "no_sleep", "not_safe", "obstructed", "too_far_away", "occupied" }.Select(k => Text.TextComponent.Translate("block.minecraft.bed." + k)!).ToHashSet());
 
     /// <summary>Gets out of bed (the "Leave Bed" button).</summary>
     public async Task LeaveBedAsync(CancellationToken ct = default)

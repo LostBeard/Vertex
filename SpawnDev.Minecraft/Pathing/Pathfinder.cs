@@ -82,6 +82,7 @@ public sealed class Pathfinder
     private readonly GameData _data;
     private readonly HashSet<int> _avoidBlocks;
     private readonly HashSet<int> _climbable;
+    private readonly HashSet<int> _doorways;
     private readonly int _water, _lava;
 
     public Pathfinder(GameWorld world)
@@ -91,6 +92,8 @@ public sealed class Pathfinder
         _avoidBlocks = new[] { "lava", "fire", "soul_fire", "magma_block", "cactus", "sweet_berry_bush", "cobweb", "powder_snow", "wither_rose", "campfire", "soul_campfire", "pointed_dripstone" }
             .Select(n => _data.Block(n)!.Id).ToHashSet();
         _climbable = _data.BlockTag("minecraft:climbable").Select(n => _data.Block(n)!.Id).ToHashSet();
+        // Wooden doors and fence gates open by hand (iron ones need redstone and stay walls).
+        _doorways = _data.BlockTag("minecraft:wooden_doors").Concat(_data.BlockTag("minecraft:fence_gates")).Select(n => _data.Block(n)!.Id).ToHashSet();
         _water = _data.Block("water")!.Id;
         _lava = _data.Block("lava")!.Id;
     }
@@ -111,6 +114,12 @@ public sealed class Pathfinder
     private bool Solid(int state) => state > 0 && _data.HasCollision(state);
     private bool IsFluid(int state) => state > 0 && (_data.StateFlags[state] & (GameData.FlagWater | GameData.FlagLava)) != 0;
     private bool IsWater(int state) => state > 0 && (_data.StateFlags[state] & GameData.FlagWater) != 0;
+    /// <summary>A wooden door or fence gate: walked through (opened first when closed), straight along its axis.</summary>
+    public bool IsDoorway(int state) => state > 0 && _doorways.Contains(_data.StateBlock[state]);
+
+    /// <summary>Whether a door or gate lets you through moving along x (it faces east or west) rather than z.</summary>
+    private bool DoorAlongX(int state) => _data.GetProperty(state, "facing") is "east" or "west";
+
     private bool Dangerous(int state) => state > 0 && (_avoidBlocks.Contains(_data.StateBlock[state]) || (_data.StateFlags[state] & GameData.FlagLava) != 0);
 
     /// <summary>
@@ -124,7 +133,8 @@ public sealed class Pathfinder
         if (here < 0 || below < 0) return null;
         if (Dangerous(here) || Dangerous(below)) return null;
         double floor;
-        if (Solid(here))
+        var doorway = IsDoorway(here);
+        if (Solid(here) && !doorway)
         {
             var t = Top(here);
             if (t >= 1.0) return null; // a full-height block (or a fence/wall) is a wall, not a floor
@@ -142,8 +152,8 @@ public sealed class Pathfinder
             if (Top(below) > 1.0 + 1e-9) return null; // fences/walls: cannot stand on (1.5 tall)
             floor = y;
         }
-        // Body: 1.8 tall from the floor must be free of collision.
-        if (!Clear(x, y + 1, z) || (floor - y + 1.8 > 2.0 && !Clear(x, y + 2, z))) return null;
+        // Body: 1.8 tall from the floor must be free of collision (in a doorway, the door's own upper half).
+        if (!(Clear(x, y + 1, z) || doorway && IsDoorway(State(x, y + 1, z))) || (floor - y + 1.8 > 2.0 && !Clear(x, y + 2, z))) return null;
         return floor;
     }
 
@@ -217,6 +227,7 @@ public sealed class Pathfinder
         var inWater = IsWater(State(n.X, n.Y, n.Z));
         var onClimbable = State(n.X, n.Y, n.Z) is var hs && hs > 0 && _climbable.Contains(_data.StateBlock[hs]);
         var fromFloor = hereFeet ?? n.Y;
+        var hereDoor = State(n.X, n.Y, n.Z) is var hd && IsDoorway(hd) ? hd : 0;
 
         foreach (var (dx, dz) in Cardinal)
         {
@@ -226,6 +237,15 @@ public sealed class Pathfinder
             // Same block level or one up, classified by how far the floor really rises: up to the 0.6 step height
             // is a walk (slabs, carpets, slab-to-block), up to the 1.25 jump height a jump (blocks, soul sand).
             var moved = false;
+            // Through a doorway only straight along its axis, on the level (no jumps, drops or digging there).
+            var thereDoor = State(x, n.Y, z) is var td && IsDoorway(td) ? td : 0;
+            if (hereDoor != 0 || thereDoor != 0)
+            {
+                if ((hereDoor == 0 || DoorAlongX(hereDoor) == (dx != 0)) && (thereDoor == 0 || DoorAlongX(thereDoor) == (dx != 0))
+                    && FeetHeight(x, n.Y, z) is double df && Math.Abs(df - fromFloor) <= 0.6)
+                    yield return (new Node(x, n.Y, z), 1.5, new PathStep(x, n.Y, z, MoveKind.Walk, [], null));
+                continue;
+            }
             foreach (var ny in new[] { n.Y, n.Y + 1 })
             {
                 if (FeetHeight(x, ny, z) is not double f) continue;
@@ -291,7 +311,7 @@ public sealed class Pathfinder
         {
             int x = n.X + dx, z = n.Z + dz;
             if (!Loaded(x, z)) continue;
-            if (FeetHeight(x, n.Y, z) is double f && Math.Abs(f - fromFloor) < 1e-9
+            if (hereDoor == 0 && !IsDoorway(State(x, n.Y, z)) && FeetHeight(x, n.Y, z) is double f && Math.Abs(f - fromFloor) < 1e-9
                 && Clear(n.X + dx, n.Y, n.Z) && Clear(n.X + dx, n.Y + 1, n.Z) && Clear(n.X, n.Y, n.Z + dz) && Clear(n.X, n.Y + 1, n.Z + dz))
                 yield return (new Node(x, n.Y, z), Math.Sqrt(2), new PathStep(x, n.Y, z, MoveKind.Diagonal, [], null));
         }
@@ -306,7 +326,7 @@ public sealed class Pathfinder
 
         // Dig straight down one block (the way out of a tree top, a pit, or onto a lower level): needs a solid floor
         // under the dug block and no fluid around it to flood in.
-        if (o.CanDig && o.DigTicks != null && !inWater)
+        if (o.CanDig && o.DigTicks != null && !inWater && hereDoor == 0)
         {
             var below = State(n.X, n.Y - 1, n.Z);
             var under = State(n.X, n.Y - 2, n.Z);
@@ -317,7 +337,7 @@ public sealed class Pathfinder
 
         // Pillar: jump and place a block under ourselves. A node with no support is one we pillared up to (nodes are
         // otherwise always standable), so it stands on our own placed block and can pillar again.
-        if (o.CanPlace && !inWater && Math.Abs((hereFeet ?? n.Y) - n.Y) < 1e-9 && Clear(n.X, n.Y + 2, n.Z))
+        if (o.CanPlace && !inWater && hereDoor == 0 && Math.Abs((hereFeet ?? n.Y) - n.Y) < 1e-9 && Clear(n.X, n.Y + 2, n.Z))
             yield return (new Node(n.X, n.Y + 1, n.Z), 4.0, new PathStep(n.X, n.Y + 1, n.Z, MoveKind.Pillar, [], (n.X, n.Y, n.Z)));
     }
 }

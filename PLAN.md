@@ -56,6 +56,9 @@ Every milestone is tested against REAL servers started locally (Paper 1.21.5 bui
   attack, eat, stop, look, inventory, remember, switch character)
 - [x] Guard a player (fights monsters within 10 blocks of them, leash 16)
 - [x] Store and take items (chests, barrels), sleep in a bed (pose tracked from our own entity data)
+- [x] Doors and fence gates: opened on the way, closed behind
+- [x] Never digs through player builds while walking (planks, glass, bricks, doors...)
+- [x] Named places per server ("remember this is home", "go home"), long-distance travel
 - [ ] More skills: build structures, explore
 - [x] Characters: name, personality (system prompt), voice, play style knobs; switch in game by voice or chat
 - [x] Memory: remembered facts (persisted)

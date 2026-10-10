@@ -89,4 +89,47 @@ public class VertexUnitTests
             Directory.Delete(folder, recursive: true);
         }
     }
+
+    [Test]
+    public void WorldMemory_FindsPlacesByLooseNames_AndKeepsThemPerServer()
+    {
+        var folder = Path.Combine(Path.GetTempPath(), "vertex-memory-" + Guid.NewGuid().ToString("N"));
+        try
+        {
+            var a = WorldMemory.Load(folder, "mc.spawndev.com_25565");
+            a.SetPlace("our home", "minecraft:overworld", 10, 64, -20, "Aubri");
+            a.SetPlace("the mine", "minecraft:overworld", 100, 12, 5, "TJ");
+            a.SetPlace("TJ's house", "minecraft:overworld", 1, 2, 3, "TJ");
+            a.AddFact("Aubri loves axolotls");
+            Assert.That(a.FindPlace("home")?.X, Is.EqualTo(10), "articles do not matter");
+            Assert.That(a.FindPlace("The Mine")?.Y, Is.EqualTo(12));
+            Assert.That(a.FindPlace("hom")?.Name, Is.EqualTo("home"), "speech-to-text spelling");
+            Assert.That(a.FindPlace("tjs house")?.Z, Is.EqualTo(3));
+            Assert.That(a.FindPlace("castle"), Is.Null);
+            a.SetPlace("home", "minecraft:overworld", 11, 65, -21, "TJ");
+            Assert.That(a.Places.Count(p => p.Name == "home"), Is.EqualTo(1), "marking again moves it");
+
+            var again = WorldMemory.Load(folder, "mc.spawndev.com_25565");
+            Assert.That(again.FindPlace("home"), Is.EqualTo(new Place("home", "minecraft:overworld", 11, 65, -21, "TJ")));
+            Assert.That(again.Facts, Is.EqualTo(new[] { "Aubri loves axolotls" }));
+            Assert.That(WorldMemory.Load(folder, "localhost_25565").Places, Is.Empty, "another server has its own world");
+        }
+        finally
+        {
+            if (Directory.Exists(folder)) Directory.Delete(folder, true);
+        }
+    }
+
+    [Test]
+    public void BuiltBlocks_AreThePlayersBuildsNotNature()
+    {
+        var data = GameData.Vanilla;
+        bool Built(string n) => MinecraftClient.DefaultIsBuiltBlock(data.Block(n)!);
+        string[] built = ["oak_planks", "glass", "white_wool", "oak_door", "red_bed", "chest", "stone_bricks", "white_concrete", "oak_stairs",
+            "cobblestone_wall", "farmland", "diamond_block", "jack_o_lantern", "oak_fence_gate", "torch", "obsidian", "spawner", "glass_pane", "bookshelf"];
+        string[] natural = ["stone", "dirt", "grass_block", "oak_log", "deepslate", "sand", "gravel", "netherrack", "red_terracotta",
+            "raw_copper_block", "redstone_ore", "deepslate_diamond_ore", "glowstone", "basalt", "oak_leaves", "cobblestone", "andesite", "clay", "snow_block", "ice"];
+        Assert.That(built.Where(n => !Built(n)), Is.Empty, "should be protected");
+        Assert.That(natural.Where(Built), Is.Empty, "should be diggable");
+    }
 }

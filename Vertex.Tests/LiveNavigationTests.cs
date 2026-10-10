@@ -126,4 +126,62 @@ public class LiveNavigationTests
         Assert.That(client.FeetBlock, Is.EqualTo((x + 10, 203, z)));
         Assert.That(client.TeleportCount, Is.EqualTo(teleports), "the server corrected our movement");
     }
+
+    [Test]
+    public async Task WalksThroughDoorsAndGates_ClosingThemBehind()
+    {
+        const string name = "VertexDoors";
+        var (client, x, z) = await JoinCourseAsync(name, (ax, az) =>
+        [
+            // Two brick walls across the course: a closed oak door in the first, a closed fence gate in the second.
+            $"fill {ax + 6} 200 {az - 20} {ax + 6} 202 {az + 20} minecraft:stone_bricks",
+            $"setblock {ax + 6} 200 {az} minecraft:oak_door[facing=east,half=lower]",
+            $"setblock {ax + 6} 201 {az} minecraft:oak_door[facing=east,half=upper]",
+            $"fill {ax + 12} 200 {az - 20} {ax + 12} 202 {az + 20} minecraft:stone_bricks",
+            $"setblock {ax + 12} 200 {az + 4} minecraft:oak_fence_gate[facing=east]",
+            $"setblock {ax + 12} 201 {az + 4} minecraft:air",
+        ]);
+        await using var _ = client;
+        var teleports = client.TeleportCount;
+        var data = client.World.Data;
+        string? Open(int bx, int by, int bz) => data.GetProperty(client.World.GetState(bx, by, bz), "open");
+        Assert.That((Open(x + 6, 200, z), Open(x + 12, 200, z + 4)), Is.EqualTo(("false", "false")));
+
+        // Digging allowed, and still it must not break the bricks or the doors: it opens them.
+        var options = new PathOptions { CanDig = true };
+        Assert.That(await client.GoToAsync(Goal.Block(x + 18, 200, z + 2), options), $"through both; at {client.Position}");
+        Assert.That(client.FeetBlock, Is.EqualTo((x + 18, 200, z + 2)));
+        Assert.That(data.BlockOf(client.World.GetState(x + 6, 200, z)).Name, Is.EqualTo("minecraft:oak_door"), "door still there");
+        Assert.That(data.BlockOf(client.World.GetState(x + 12, 200, z + 4)).Name, Is.EqualTo("minecraft:oak_fence_gate"), "gate still there");
+        await client.WaitTicksAsync(5);
+        Assert.That((Open(x + 6, 200, z), Open(x + 12, 200, z + 4)), Is.EqualTo(("false", "false")), "closed both behind us");
+        Assert.That(client.TeleportCount, Is.EqualTo(teleports), "the server corrected our movement");
+
+        // And back the other way.
+        Assert.That(await client.GoToAsync(Goal.Block(x + 1, 200, z), options), $"back; at {client.Position}");
+        await client.WaitTicksAsync(5);
+        Assert.That((Open(x + 6, 200, z), Open(x + 12, 200, z + 4)), Is.EqualTo(("false", "false")), "closed both behind us");
+        Assert.That(client.TeleportCount, Is.EqualTo(teleports), "the server corrected our movement");
+    }
+
+    [Test]
+    public async Task NeverDigsThroughABuild()
+    {
+        const string name = "VertexPolite";
+        var (client, x, z) = await JoinCourseAsync(name, (ax, az) =>
+        [
+            // Shut in a plank hut (no door): the only way out would be breaking someone's build.
+            $"fill {ax - 1} 200 {az - 1} {ax + 1} 202 {az + 1} minecraft:oak_planks hollow",
+            $"setblock {ax} 200 {az} minecraft:air", $"setblock {ax} 201 {az} minecraft:air",
+        ]);
+        await using var _ = client;
+        await _server.CommandAsync($"give {name} minecraft:iron_axe 1");
+        await Wait.UntilAsync(() => client.Inventory.Count("iron_axe") == 1, Timeout, () => client.Inventory.ToString());
+
+        var options = new PathOptions { CanDig = true, MaxNodes = 5_000 };
+        Assert.That(await client.GoToAsync(Goal.Block(x + 5, 200, z), options), Is.False, $"stayed in; at {client.Position}");
+        var planks = client.World.FindBlocks(st => st > 0 && client.World.Data.BlockOf(st).Name == "minecraft:oak_planks", client.Position, 3, 64);
+        // A 3x3x3 hollow shell is 26 blocks; the floor block under our feet was cleared: 25 planks.
+        Assert.That(planks, Has.Count.EqualTo(25), "every plank of the hut is still there");
+    }
 }

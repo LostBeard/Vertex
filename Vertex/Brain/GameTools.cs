@@ -205,6 +205,42 @@ public static class GameTools
             """{"type":"object","properties":{"name":{"type":"string","description":"character name"}},"required":["name"]}""",
             a => Task.FromResult(brain.SwitchCharacter(Str(a, "name") ?? "")));
 
+        // "my house" is the speaker's house: TJ's and Aubri's are different places.
+        string Owned(string name) =>
+            name.Trim() is var n && n.StartsWith("my ", StringComparison.OrdinalIgnoreCase) && brain.CurrentSpeaker is { } who ? $"{who}'s {n[3..].Trim()}" : name.Trim();
+
+        yield return new GameTool("mark_place",
+            "Remember a place by name (home, the mine, the farm) so you can go back later. Marks where the person talking is standing, or where you are.",
+            """{"type":"object","properties":{"name":{"type":"string","description":"what to call the place"},"where":{"type":"string","description":"'me' = where the person talking stands (default), 'you' = where you are"}},"required":["name"]}""",
+            a =>
+            {
+                var name = Owned(Str(a, "name") ?? "");
+                if (name.Length == 0) return Task.FromResult("I need a name for the place.");
+                var mine = (Str(a, "where") ?? "me").Trim().ToLowerInvariant() is "you" or "yourself" or "vertex" or "your spot";
+                var speaker = mine ? null : skills.FindPlayer(brain.CurrentSpeaker);
+                var (px, py, pz) = speaker != null ? (speaker.X, speaker.Y, speaker.Z) : client.Position;
+                var place = brain.Memory.SetPlace(name, client.World.Dimension, (int)Math.Floor(px), (int)Math.Floor(py + 1e-6), (int)Math.Floor(pz), brain.CurrentSpeaker);
+                return Task.FromResult($"OK: I will remember {place.Name} at {place.X} {place.Y} {place.Z}.");
+            });
+
+        yield return new GameTool("go_to_place",
+            "Walk to a place you remember by name (see 'Places you know').",
+            """{"type":"object","properties":{"name":{"type":"string"}},"required":["name"]}""",
+            a =>
+            {
+                var name = Owned(Str(a, "name") ?? "");
+                var place = brain.Memory.FindPlace(name);
+                if (place == null) return Task.FromResult($"I don't know a place called {name}. Places I know: {(brain.Memory.Places.Count == 0 ? "none yet" : string.Join(", ", brain.Memory.Places.Select(p => p.Name)))}.");
+                if (place.Dimension != client.World.Dimension) return Task.FromResult($"{place.Name} is in another dimension; I can't get there from here.");
+                tasks.Start($"going to {place.Name}", ct => skills.TravelAsync(place.X, place.Y, place.Z, place.Name, ct));
+                return Task.FromResult($"OK: I started walking to {place.Name}. I am NOT there yet.");
+            });
+
+        yield return new GameTool("forget_place",
+            "Forget a place you remembered.",
+            """{"type":"object","properties":{"name":{"type":"string"}},"required":["name"]}""",
+            a => Task.FromResult(brain.Memory.ForgetPlace(Owned(Str(a, "name") ?? "")) ? "OK: forgotten." : "I don't know that place."));
+
         yield return new GameTool("remember",
             "Remember an important fact for later (a player's favourite things, where something is).",
             """{"type":"object","properties":{"fact":{"type":"string"}},"required":["fact"]}""",
