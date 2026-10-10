@@ -39,9 +39,10 @@ public sealed class PaperServer : IAsyncDisposable
 
     /// <summary>Starts a fresh server (world, lists and config wiped; Paper's downloaded libraries kept).</summary>
     public static async Task<PaperServer> StartAsync(string name, int port, TimeSpan timeout,
-        IDictionary<string, string>? properties = null, Func<string, Task>? beforeStart = null)
+        IDictionary<string, string>? properties = null, Func<string, Task>? beforeStart = null, string? launchJar = null)
     {
-        var jar = await EnsureJarAsync();
+        // launchJar: run something other than Paper from the server folder (e.g. fabric-server-launch.jar).
+        var jar = launchJar ?? await EnsureJarAsync();
         var dir = Path.Combine(CacheRoot, "servers", "vertex-" + name);
         Directory.CreateDirectory(dir);
         foreach (var d in Directory.GetDirectories(dir))

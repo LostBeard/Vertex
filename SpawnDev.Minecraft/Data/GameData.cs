@@ -95,7 +95,14 @@ public sealed class GameData
     private Dictionary<string, HashSet<string>> _itemTags = [];
     private Dictionary<string, HashSet<string>> _blockTags = [];
 
+    /// <summary>Block states the game data knows (the vanilla ones; UnknownState comes right after them).</summary>
+    public int VanillaStateCount { get; private init; }
+    /// <summary>The stand-in for block states a modded server uses that we have no data for: a solid cube.</summary>
+    public int UnknownState => VanillaStateCount;
     public int StateCount => StateBlock.Length;
+
+    /// <summary>A state id from the network, with modded ones (beyond the vanilla table) mapped to UnknownState.</summary>
+    public int Known(int state) => (uint)state < (uint)VanillaStateCount ? state : UnknownState;
 
     public BlockType? Block(string name) => _blocksByName.GetValueOrDefault(Normalize(name));
     public ItemType? Item(string name) => _itemsByName.GetValueOrDefault(Normalize(name));
@@ -168,14 +175,15 @@ public sealed class GameData
 
         var states = root["states"]!.AsArray();
         var n = states.Count;
-        var stateBlock = new ushort[n];
-        var hardness = new float[n];
-        var flags = new byte[n];
-        var shape = new ushort[n];
-        var friction = new float[n];
-        var speed = new float[n];
-        var jump = new float[n];
-        var fluid = new byte[n];
+        // One extra state at the end: UnknownState, what a modded server's block states we have no data for become.
+        var stateBlock = new ushort[n + 1];
+        var hardness = new float[n + 1];
+        var flags = new byte[n + 1];
+        var shape = new ushort[n + 1];
+        var friction = new float[n + 1];
+        var speed = new float[n + 1];
+        var jump = new float[n + 1];
+        var fluid = new byte[n + 1];
         for (var i = 0; i < n; i++)
         {
             var s = states[i]!.AsArray();
@@ -192,7 +200,16 @@ public sealed class GameData
         {
             var a = b!.AsArray();
             return new Box(a[0]!.GetValue<double>(), a[1]!.GetValue<double>(), a[2]!.GetValue<double>(), a[3]!.GetValue<double>(), a[4]!.GetValue<double>(), a[5]!.GetValue<double>());
-        }).ToArray()).ToArray();
+        }).ToArray()).ToList();
+        // The unknown (modded) block: a solid full cube, breakable, so physics and pathing treat it as a wall.
+        var cube = shapes.FindIndex(sh => sh.Length == 1 && sh[0] == new Box(0, 0, 0, 1, 1, 1));
+        blocks = [.. blocks, new BlockType { Id = blocks.Length, Name = "vertex:unknown_modded_block", MinState = n, MaxState = n, DefaultState = n, ExplosionResistance = 3 }];
+        stateBlock[n] = (ushort)(blocks.Length - 1);
+        hardness[n] = 1.5f;
+        shape[n] = (ushort)cube;
+        friction[n] = 0.6f;
+        speed[n] = 1;
+        jump[n] = 1;
 
         var items = root["items"]!.AsArray().Select((it, i) =>
         {
@@ -234,7 +251,8 @@ public sealed class GameData
             SpeedFactor = speed,
             JumpFactor = jump,
             FluidAmount = fluid,
-            Shapes = shapes,
+            Shapes = shapes.ToArray(),
+            VanillaStateCount = n,
         };
         data._blocksByName = blocks.ToDictionary(b => b.Name);
         data._itemsByName = items.ToDictionary(i => i.Name);

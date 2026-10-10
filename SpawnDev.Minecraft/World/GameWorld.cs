@@ -57,6 +57,7 @@ public sealed class GameWorld
 
     internal void SetState(int x, int y, int z, int state)
     {
+        state = Data.Known(state); // modded states -> the solid unknown state
         if (!_columns.TryGetValue(Key(x >> 4, z >> 4), out var c)) return;
         var old = c.Get(x, y, z);
         if (old == state) return;

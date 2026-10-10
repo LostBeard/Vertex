@@ -130,6 +130,10 @@ public sealed partial class MinecraftClient : IAsyncDisposable
     }
 
     public event Action<ChatMessage>? ChatReceived;
+
+    /// <summary>Play packets that failed to decode and were skipped (zero on vanilla servers).</summary>
+    public int PacketErrors { get; private set; }
+    public event Action<int, Exception>? PacketError;
     /// <summary>Raised once when the connection ends, with the server's reason (or the error).</summary>
     public event Action<string>? Disconnected;
     /// <summary>A plugin channel message (e.g. voicechat:secret). Raised on the receive loop.</summary>
@@ -285,6 +289,7 @@ public sealed partial class MinecraftClient : IAsyncDisposable
                 Registries.Clear();
                 await SendClientInformationAsync(CB.Configuration.Serverbound.ClientInformation, ct);
                 await SendBrandAsync(CB.Configuration.Serverbound.CustomPayload, ct);
+                await RegisterFabricChannelsAsync(ct);
                 return null;
             }
             case CB.Login.Clientbound.CustomQuery:
@@ -349,6 +354,7 @@ public sealed partial class MinecraftClient : IAsyncDisposable
                 return null;
             }
             case CB.Configuration.Clientbound.CustomPayload:
+                if (await HandleFabricPayloadAsync(packet, ct)) return null;
                 RaisePluginMessage(packet);
                 return null;
             case CB.Configuration.Clientbound.ResourcePackPush:
@@ -548,6 +554,7 @@ public sealed partial class MinecraftClient : IAsyncDisposable
                 return null;
             }
             case CB.Play.Clientbound.CustomPayload:
+                if (IsModded && TryModdedSpawn(packet)) return null;
                 RaisePluginMessage(packet);
                 return null;
             case CB.Play.Clientbound.PlayerInfoUpdate:
@@ -571,6 +578,7 @@ public sealed partial class MinecraftClient : IAsyncDisposable
                 Registries.Clear();
                 _players.Clear(); // the next server sends its own list
                 await SendClientInformationAsync(CB.Configuration.Serverbound.ClientInformation, ct);
+                await RegisterFabricChannelsAsync(ct); // the next server may be a Fabric one (proxy server switch)
                 return null;
             }
             case CB.Play.Clientbound.ResourcePackPush:
@@ -582,7 +590,16 @@ public sealed partial class MinecraftClient : IAsyncDisposable
             case CB.Play.Clientbound.Transfer:
                 return DisconnectReason = "the server asked to transfer to another server (not supported yet)";
             default:
-                OnWorldPacket(packet);
+                // Packets are framed one by one, so a packet we cannot decode (a modded server's custom entity data,
+                // item components we do not know) is skipped instead of ending the connection. Counted and reported:
+                // on a vanilla server this must stay zero (the tests check).
+                try { OnWorldPacket(packet); }
+                catch (Exception e) when (e is InvalidDataException or IndexOutOfRangeException or InvalidCastException or KeyNotFoundException or ArgumentException or NullReferenceException or FormatException)
+                {
+                    PacketErrors++;
+                    Log($"skipped packet 0x{packet.Id:X2}: {e.GetType().Name}: {e.Message}");
+                    PacketError?.Invoke(packet.Id, e);
+                }
                 return null;
         }
     }

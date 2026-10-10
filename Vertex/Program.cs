@@ -116,7 +116,7 @@ static async Task<int> PlayAsync(string[] args)
 
     var characters = new CharacterStore();
     var character = characters.Find(Option(args, "--character") ?? "Vertex") ?? Character.BuiltIn[0];
-    await using var client = new MinecraftClient(profile, new ClientOptions { Log = Log });
+    await using var client = new MinecraftClient(profile, new ClientOptions { Log = Log, Brand = "vertex" });
     await using var voice = new SimpleVoiceChat(client, host);
     voice.Log += m => Log("[voice] " + m);
     await using var brain = new VertexBrain(client, voice, ai, characters, character, model);

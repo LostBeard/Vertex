@@ -81,6 +81,7 @@ public class LiveWorldTests
         }
         Assert.That(checkedSolid, Is.GreaterThan(10), "too few non-air samples to mean anything");
         Assert.That(client.State, Is.EqualTo(ConnectionState.Play));
+        Assert.That(client.PacketErrors, Is.Zero, "a vanilla server's packets must all decode");
     }
 
     [Test]
@@ -199,5 +200,6 @@ public class LiveWorldTests
         await _server.CommandAsync("time set 1000");
         await Wait.UntilAsync(() => client.World.DayTime % 24000 is >= 1000 and < 1100, Timeout, () => $"time {client.World.DayTime}");
         Assert.That(client.Attribute("movement_speed"), Is.EqualTo(0.1).Within(1e-6));
+        Assert.That(client.PacketErrors, Is.Zero, "a vanilla server's packets must all decode");
     }
 }

@@ -126,7 +126,9 @@ public sealed class VertexHost : IAsyncDisposable
             }
 
             SetStatus(HostState.Starting, $"Joining {Settings.Server}...");
-            _client = new MinecraftClient(profile, new ClientOptions { Log = m => { if (m.StartsWith("disconnected") || m.StartsWith("joined") || m.StartsWith("spawned")) Add(LineKind.System, m); } });
+            // Brand "vertex": honest, and not "vanilla" (AubsCraft's proxy keeps vanilla clients off modded servers
+            // because they cannot answer Fabric's registry sync; Vertex can).
+            _client = new MinecraftClient(profile, new ClientOptions { Brand = "vertex", Log = m => { if (m.StartsWith("disconnected") || m.StartsWith("joined") || m.StartsWith("spawned")) Add(LineKind.System, m); } });
             _client.ChatReceived += m => Add(LineKind.Chat, m.Text);
             _client.Disconnected += r => { Add(LineKind.System, "disconnected: " + r); _ = StopAsync(); };
             if (Settings.Voice)

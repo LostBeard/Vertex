@@ -23,12 +23,13 @@ Every milestone is tested against REAL servers started locally (Paper 1.21.5 bui
   attributes, time, tags
 - [x] Item stacks with data components (ProtoDef over minecraft-data's 1.21.5 types), inventory, containers
 
-## M3 - Body (done 2026-10-10 except crafting/smelting, which land with the M6 skills)
+## M3 - Body (done 2026-10-10 except smelting)
 - [x] Vanilla-accurate player physics (gravity, drag, collision, step-up, jump, sprint, swim, ladders)
   so Paper's movement checks never rubber-band or kick it
 - [x] Pathfinding (A*, walk/jump/fall/swim/pillar/dig-through)
 - [x] Dig (correct break time per tool/enchant/effect), place, use, attack, eat, chests, creative flight
-- [ ] Craft, smelt (with the M6 skill library)
+- [x] Craft: recipe book from the data pack, real container clicks, recursive planning, crafting table
+- [ ] Smelt (furnace)
 
 ## M4 - Accounts (pulled ahead: done 2026-10-10 except signed commands)
 - [x] Microsoft account sign-in: live.com device code under a public Minecraft title client id (no app
@@ -44,18 +45,30 @@ Every milestone is tested against REAL servers started locally (Paper 1.21.5 bui
   secret over the plugin channel, AES-GCM UDP (authenticate, connection check, keep-alive, ping), Opus via
   Concentus, paced 20 ms frames + stop packet, per-speaker decoders, player voice states. Live-tested with the
   real voicechat-bukkit 2.6.16 plugin: one Vertex hears another (pitch verified)
-- [ ] Speech-to-text (Whisper on SpawnDev.ILGPU.ML) per speaking player, voice activity detection
-- [ ] Text-to-speech (Kokoro on SpawnDev.ILGPU.ML) back into proximity voice
-- [ ] Falls back to text chat on servers without Simple Voice Chat
+- [x] Speech-to-text (Whisper on SpawnDev.ILGPU.ML) per speaking player; utterances end on the speaker's own
+  stop packet (Simple Voice Chat's voice activation) or a silence gap
+- [x] Text-to-speech (Kokoro on SpawnDev.ILGPU.ML) back into proximity voice, sentence by sentence; verified
+  end to end: one Vertex says a sentence, another transcribes it, through the real plugin
+- [x] Falls back to text chat on servers without Simple Voice Chat (replies are also echoed to chat)
 
-## M6 - Brain
-- [ ] SpawnDev.AI LLM with tool calling over a skill library (follow, go to, gather, mine, build, craft, fight,
-  give, guard, explore)
-- [ ] Characters: name, personality (system prompt), voice, play style knobs; switch in game by voice or chat
-- [ ] Memory: per-player facts, places, ongoing goals
+## M6 - Brain (working: llama3.1:8b tool calling, Whisper/Kokoro, characters, reflexes; tests on GPU)
+- [x] SpawnDev.AI LLM with tool calling over a skill library (follow, come here, go to, collect, craft, give,
+  attack, eat, stop, look, inventory, remember, switch character)
+- [ ] More skills: build structures, guard a player, explore, smelt, store items in chests, sleep
+- [x] Characters: name, personality (system prompt), voice, play style knobs; switch in game by voice or chat
+- [x] Memory: remembered facts (persisted)
+- [ ] Per-player memory, places, long-running goals
+- [x] Reflexes ("System One"): eat, fight back or flee, surface for air, every few ticks without the LLM
+- [ ] A learned fast policy for reflexes (SpawnDev.ILGPU.ML)
 
 ## M7 - App
-- [ ] Windows app: accounts, servers, characters, live status and log
+- [x] Dashboard (Vertex.exe, Blazor Server at http://localhost:5280): accounts, server, characters, model, voice,
+  live status and transcript
 
 ## M8 - Modded servers
-- [ ] Fabric registry sync so Vertex can join Fabric servers that need it (AubsCraft "spooky")
+- [x] Fabric registry sync (fabric:registry/sync/direct + complete) - joins AubsCraft's "spooky" Fabric server
+  (tested locally with its exact mod set)
+- [x] Modded blocks with no data become a solid "unknown" block (physics/pathing treat them as walls); modded entity
+  types named from the synced registry; Puzzles Lib mod spawns (Mutant Monsters) decoded; undecodable packets are
+  skipped and counted instead of dropping the connection (zero on vanilla, asserted)
+- [ ] Real shapes/hardness for modded blocks (Fabric does not sync them)

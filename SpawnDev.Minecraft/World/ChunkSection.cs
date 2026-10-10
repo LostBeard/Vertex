@@ -42,7 +42,13 @@ public sealed class ChunkSection
     {
         var section = new ChunkSection { NonAirCount = r.ReadShort() };
         padding += ReadContainer(ref r, 4096, maxIndirectBits: 8, out section._states, out var single);
-        section._single = (ushort)single;
+        // A modded server's block states beyond the vanilla table become the solid "unknown" state (never an
+        // index past the end of the game data arrays).
+        var data = Data.GameData.Vanilla;
+        section._single = (ushort)data.Known(single);
+        if (section._states is { } states)
+            for (var i = 0; i < states.Length; i++)
+                if (states[i] >= data.VanillaStateCount) states[i] = (ushort)data.UnknownState;
         padding += ReadContainer(ref r, 64, maxIndirectBits: 3, out var biomes, out var singleBiome);
         if (biomes != null)
         {

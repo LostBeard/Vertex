@@ -48,6 +48,8 @@ public sealed partial class MinecraftClient
 
     public Entity? Entity(int id) => _entities.GetValueOrDefault(id);
 
+    private void OnEntitySpawned(Entity e) => EntitySpawned?.Invoke(e);
+
     /// <summary>The tag's member ids in a registry ("minecraft:block", "minecraft:item"...), from the server.</summary>
     public IReadOnlyCollection<int> Tag(string registry, string tag) =>
         _tags.TryGetValue(GameData.Normalize(registry), out var r) && r.TryGetValue(GameData.Normalize(tag.TrimStart('#')), out var ids) ? ids : [];
@@ -154,6 +156,13 @@ public sealed partial class MinecraftClient
 
     private static double Angle(sbyte b) => b * 360.0 / 256.0;
 
+    /// <summary>An entity type beyond the vanilla table: its name from a Fabric server's registry sync, if any.</summary>
+    private EntityTypeInfo ModdedEntityType(int id)
+    {
+        var name = FabricRegistries.TryGetValue("minecraft:entity_type", out var map) ? map.FirstOrDefault(kv => kv.Value == id).Key : null;
+        return new EntityTypeInfo(id, name ?? $"unknown:{id}", 0.6f, 1.8f, 1.6f);
+    }
+
     private void OnWorldPacket(ReceivedPacket packet)
     {
         var r = packet.Reader();
@@ -223,7 +232,8 @@ public sealed partial class MinecraftClient
             {
                 var id = r.ReadVarInt();
                 var uuid = r.ReadUuid();
-                var type = GameData.Vanilla.Entity(r.ReadVarInt()) ?? new EntityTypeInfo(-1, "unknown", 0.6f, 1.8f, 1.6f);
+                var typeId = r.ReadVarInt();
+                var type = GameData.Vanilla.Entity(typeId) ?? ModdedEntityType(typeId);
                 var e = new Entity(id, uuid, type)
                 {
                     X = r.ReadDouble(), Y = r.ReadDouble(), Z = r.ReadDouble(),
@@ -237,7 +247,7 @@ public sealed partial class MinecraftClient
                 e.VelocityZ = r.ReadShort() / 8000.0;
                 if (e.IsPlayer && Players.TryGetValue(uuid, out var info)) e.PlayerName = info.Name;
                 _entities[id] = e;
-                EntitySpawned?.Invoke(e);
+                OnEntitySpawned(e);
                 return;
             }
             case CB.Play.Clientbound.MoveEntityPos:
