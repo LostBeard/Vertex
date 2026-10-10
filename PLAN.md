@@ -55,7 +55,8 @@ Every milestone is tested against REAL servers started locally (Paper 1.21.5 bui
 - [x] SpawnDev.AI LLM with tool calling over a skill library (follow, come here, go to, collect, craft, give,
   attack, eat, stop, look, inventory, remember, switch character)
 - [x] Guard a player (fights monsters within 10 blocks of them, leash 16)
-- [ ] More skills: build structures, explore, store items in chests, sleep
+- [x] Store and take items (chests, barrels), sleep in a bed (pose tracked from our own entity data)
+- [ ] More skills: build structures, explore
 - [x] Characters: name, personality (system prompt), voice, play style knobs; switch in game by voice or chat
 - [x] Memory: remembered facts (persisted)
 - [ ] Per-player memory, places, long-running goals

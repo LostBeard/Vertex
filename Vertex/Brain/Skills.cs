@@ -88,10 +88,13 @@ public sealed class Skills(MinecraftClient client)
     }
 
     /// <summary>An item in our inventory matching what a player called it.</summary>
-    public ItemStack? FindItem(string what)
+    public ItemStack? FindItem(string what) => MatchStack(client.Inventory.Slots.Skip(PlayerInventory.MainStart), what);
+
+    /// <summary>The stack a player meant by a name: exact item name, then a name containing it, then a custom name.</summary>
+    public static ItemStack? MatchStack(IEnumerable<ItemStack> slots, string what)
     {
         var w = Simplify(what.TrimEnd('s'));
-        var stacks = client.Inventory.Slots.Skip(PlayerInventory.MainStart).Where(s => !s.IsEmpty).ToList();
+        var stacks = slots.Where(s => !s.IsEmpty).ToList();
         return stacks.FirstOrDefault(s => Simplify(s.Name.Replace("minecraft:", "")) == w)
             ?? stacks.FirstOrDefault(s => Simplify(s.Name.Replace("minecraft:", "")).Contains(w))
             ?? stacks.FirstOrDefault(s => s.CustomName != null && Simplify(s.CustomName).Contains(w));
@@ -317,6 +320,95 @@ public sealed class Skills(MinecraftClient client)
             else await client.WaitTicksAsync(2, ct); // watch: threats are checked every few ticks
         }
         return (true, $"stopped guarding {name} ({kills} monsters defeated)");
+    }
+
+    // ---------------------------------------------------------------- chests and beds
+
+    private static readonly string[] KeepSuffixes =
+        ["_sword", "_pickaxe", "_axe", "_shovel", "_hoe", "_helmet", "_chestplate", "_leggings", "_boots"];
+
+    /// <summary>What "store everything" leaves in our pockets: tools, weapons, armor, food and torches.</summary>
+    private static bool KeepWhenStoring(ItemStack s) =>
+        KeepSuffixes.Any(s.Name.EndsWith) || s.Type is { IsFood: true }
+        || s.Name is "minecraft:shield" or "minecraft:bow" or "minecraft:crossbow" or "minecraft:arrow" or "minecraft:torch";
+
+    private static bool MeansEverything(string what) =>
+        what.Trim().ToLowerInvariant() is "" or "everything" or "all" or "stuff" or "items" or "all items" or "my stuff" or "inventory";
+
+    /// <summary>Puts items into the nearest chests or barrels: one kind, or everything we don't need to carry.</summary>
+    public async Task<(bool, string)> StoreAsync(string what, CancellationToken ct)
+    {
+        Func<ItemStack, bool> match;
+        if (MeansEverything(what)) match = s => !KeepWhenStoring(s);
+        else
+        {
+            var stack = FindItem(what);
+            if (stack == null) return (false, $"I don't have any {what}.");
+            var name = stack.Name;
+            match = s => s.Name == name;
+        }
+        if (!client.Inventory.Find(match).Any()) return (true, "I have nothing to store (I keep my tools, armor, food and torches).");
+        var chests = client.FindStorage();
+        if (chests.Count == 0) return (false, "I don't see a chest or barrel nearby.");
+        var stored = 0;
+        foreach (var (x, y, z) in chests.Take(4))
+        {
+            if (!await client.OpenContainerAsync(x, y, z, ct)) continue;
+            stored += await client.StoreAsync(match, ct);
+            await client.CloseWindowAsync(ct);
+            if (!client.Inventory.Find(match).Any()) break;
+        }
+        var left = client.Inventory.Find(match).Sum(i => client.Inventory[i].Count);
+        return stored == 0 ? (false, "I couldn't put anything in the chests (full, or I couldn't reach them).")
+            : (left == 0, $"I stored {stored} items{(left > 0 ? $"; {left} didn't fit" : "")}. I have: {InventorySummary()}.");
+    }
+
+    /// <summary>Looks through the nearest chests and barrels for an item and takes about `count` of it.</summary>
+    public async Task<(bool, string)> TakeAsync(string what, int count, CancellationToken ct)
+    {
+        var chests = client.FindStorage();
+        if (chests.Count == 0) return (false, "I don't see a chest or barrel nearby.");
+        var taken = 0;
+        string? name = null;
+        foreach (var (x, y, z) in chests.Take(6))
+        {
+            if (!await client.OpenContainerAsync(x, y, z, ct)) continue;
+            var window = client.OpenWindow!;
+            name ??= MatchStack(window.Slots.Take(window.ContainerSlotCount), what)?.Name;
+            if (name != null) taken += await client.TakeAsync(s => s.Name == name, count - taken, ct);
+            await client.CloseWindowAsync(ct);
+            if (taken >= count) break;
+        }
+        var pretty = (name ?? what).Replace("minecraft:", "").Replace('_', ' ');
+        return taken > 0 ? (true, $"I took {taken} {pretty} from the chests. I have: {InventorySummary()}.")
+            : (false, $"I couldn't find any {pretty} in the chests nearby.");
+    }
+
+    /// <summary>Sleeps in the nearest free bed until morning (the night passes when everyone online sleeps).</summary>
+    public async Task<(bool, string)> SleepAsync(CancellationToken ct)
+    {
+        var beds = client.FindBeds();
+        if (beds.Count == 0) return (false, "I don't see a bed nearby.");
+        string? why = null;
+        foreach (var (x, y, z) in beds.Take(4))
+        {
+            why = await client.LieDownAsync(x, y, z, ct);
+            if (why == null) break;
+            if (!why.Contains("occupied", StringComparison.OrdinalIgnoreCase)) return (false, why);
+        }
+        if (why != null) return (false, why);
+        try
+        {
+            while (client.Sleeping) await client.WaitTicksAsync(5, ct);
+        }
+        catch (OperationCanceledException)
+        {
+            await client.LeaveBedAsync(CancellationToken.None);
+            throw;
+        }
+        // The server wakes everyone at dawn but sends the clock only once a second.
+        var morning = await client.WaitUntilAsync(() => client.World.DayTime % 24000 < 1000, 25, ct);
+        return (morning, morning ? "I slept. Good morning!" : "I had to get out of bed (it's still night).");
     }
 
     public async Task EquipWeaponAsync(CancellationToken ct)

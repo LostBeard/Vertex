@@ -136,6 +136,36 @@ public static class GameTools
             """{"type":"object","properties":{"player":{"type":"string","description":"player name, or 'me' for the person talking"}}}""",
             a => { var p = Who(a); tasks.Start($"guarding {p}", ct => skills.GuardAsync(p, ct)); return Task.FromResult($"OK: I started guarding {p}. I stay with them and fight monsters that come near, until told to stop."); });
 
+        yield return new GameTool("store_items",
+            "Put items into the nearest chest or barrel. One kind of item, or 'everything' (keeps tools, weapons, armor, food and torches).",
+            """{"type":"object","properties":{"item":{"type":"string","description":"what to store, e.g. cobblestone, dirt, or everything"}}}""",
+            a =>
+            {
+                var what = Str(a, "item") ?? "everything";
+                tasks.Start($"storing {what}", ct => skills.StoreAsync(what, ct));
+                return Task.FromResult($"OK: I started putting {what} in the chest. It is NOT done yet.");
+            });
+
+        yield return new GameTool("take_items",
+            "Get items out of the nearest chests or barrels.",
+            """{"type":"object","properties":{"item":{"type":"string","description":"what to take, e.g. iron_ingot, bread"},"count":{"type":"integer"}},"required":["item"]}""",
+            a =>
+            {
+                var what = Str(a, "item") ?? "";
+                var count = Math.Clamp(Int(a, "count", 64), 1, 64 * 36);
+                tasks.Start($"getting {what} from the chests", ct => skills.TakeAsync(what, count, ct));
+                return Task.FromResult($"OK: I started looking in the chests for {what}. It is NOT done yet.");
+            });
+
+        yield return new GameTool("sleep",
+            "Sleep in the nearest bed (only works at night or in a thunderstorm). The night is skipped when everyone online sleeps.",
+            NoArgs,
+            _ =>
+            {
+                tasks.Start("sleeping", ct => skills.SleepAsync(ct));
+                return Task.FromResult("OK: I am going to bed.");
+            });
+
         yield return new GameTool("smelt",
             "Smelt or cook in a furnace: iron_ingot from raw iron, glass from sand, cooked_beef from beef, charcoal from logs. Builds a furnace from cobblestone if none is near. Takes 10 seconds per item.",
             """{"type":"object","properties":{"result":{"type":"string","description":"what to make, e.g. iron_ingot, glass, cooked_porkchop"},"count":{"type":"integer"}},"required":["result"]}""",

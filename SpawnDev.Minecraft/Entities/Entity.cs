@@ -57,3 +57,10 @@ public sealed class Entity
 
     public override string ToString() => $"{PlayerName ?? Name} #{Id} at {X:0.#} {Y:0.#} {Z:0.#}";
 }
+
+/// <summary>net.minecraft.world.entity.Pose, in declaration order (the ordinal is what the protocol sends).</summary>
+public enum EntityPose
+{
+    Standing, FallFlying, Sleeping, Swimming, SpinAttack, Crouching, LongJumping, Dying, Croaking, UsingTongue,
+    Sitting, Roaring, Sniffing, Emerging, Digging, Sliding, Shooting, Inhaling,
+}

@@ -173,6 +173,122 @@ public class LiveActionTests
     }
 
     [Test]
+    public async Task Storage_WalksToAChest_StoresAndTakes()
+    {
+        const string name = "VertexStore";
+        var (client, x, z) = await JoinOnArenaAsync(name, (ax, az) => [$"setblock {ax + 5} 200 {az + 3} minecraft:chest[facing=west]"]);
+        await using var _ = client;
+        await GiveAsync(client, name, "minecraft:diamond", 7, () => client.Inventory.Count("diamond") == 7);
+        await GiveAsync(client, name, "minecraft:dirt", 20, () => client.Inventory.Count("dirt") == 20);
+
+        Assert.That(client.FindStorage(), Does.Contain((x + 5, 200, z + 3))); // other tests' chests may be around too
+        Assert.That(client.DistanceToBlock(x + 5, 200, z + 3), Is.GreaterThan(client.BlockReach), "has to walk there");
+        Assert.That(await client.OpenContainerAsync(x + 5, 200, z + 3), $"open: {client.OpenWindow}");
+        Assert.That(await client.StoreAsync(s => s.Name == "minecraft:dirt"), Is.EqualTo(20));
+        Assert.That(client.Inventory.Count("dirt"), Is.Zero);
+        Assert.That(client.Inventory.Count("diamond"), Is.EqualTo(7), "kept what it was not told to store");
+        await client.CloseWindowAsync();
+
+        var line = _server.WaitForLineAsync(l => l.Contains("has the following block data"), Timeout);
+        await _server.CommandAsync($"data get block {x + 5} 200 {z + 3} Items");
+        Assert.That(await line, Does.Contain("minecraft:dirt").And.Contain("count: 20"));
+
+        Assert.That(await client.OpenContainerAsync(x + 5, 200, z + 3));
+        Assert.That(await client.TakeAsync(s => s.Name == "minecraft:dirt", 5), Is.EqualTo(20), "whole stacks come back");
+        Assert.That(client.Inventory.Count("dirt"), Is.EqualTo(20));
+        await client.CloseWindowAsync();
+    }
+
+    [Test]
+    public async Task Skills_StoreEverything_TakeBack_AndSleepTillMorning()
+    {
+        const string name = "VertexHome";
+        var (client, x, z) = await JoinOnArenaAsync(name, (ax, az) =>
+        [
+            $"setblock {ax - 4} 200 {az - 3} minecraft:barrel[facing=up]",
+            $"setblock {ax + 3} 200 {az + 2} minecraft:white_bed[facing=east,part=foot]", $"setblock {ax + 4} 200 {az + 2} minecraft:white_bed[facing=east,part=head]",
+        ]);
+        await using var _ = client;
+        var skills = new Vertex.Brain.Skills(client);
+        await GiveAsync(client, name, "minecraft:stone_pickaxe", 1, () => client.Inventory.Count("stone_pickaxe") == 1);
+        await GiveAsync(client, name, "minecraft:bread", 3, () => client.Inventory.Count("bread") == 3);
+        await GiveAsync(client, name, "minecraft:dirt", 20, () => client.Inventory.Count("dirt") == 20);
+        await GiveAsync(client, name, "minecraft:cobblestone", 10, () => client.Inventory.Count("cobblestone") == 10);
+
+        var (stored, message) = await skills.StoreAsync("everything", CancellationToken.None);
+        TestContext.Out.WriteLine(message);
+        Assert.That(stored, message);
+        Assert.That(message, Does.Contain("stored 30 items"));
+        Assert.That((client.Inventory.Count("stone_pickaxe"), client.Inventory.Count("bread")), Is.EqualTo((1, 3)), "kept the tool and the food");
+
+        var (took, message2) = await skills.TakeAsync("cobblestones", 5, CancellationToken.None); // spoken plural
+        TestContext.Out.WriteLine(message2);
+        Assert.That(took, message2);
+        Assert.That(client.Inventory.Count("cobblestone"), Is.EqualTo(10));
+        Assert.That(client.Inventory.Count("dirt"), Is.Zero, "took only what was asked for");
+
+        try
+        {
+            await _server.CommandAsync("time set 18000");
+            await Wait.UntilAsync(() => client.World.DayTime % 24000 >= 13000, Timeout, () => $"time {client.World.DayTime}");
+            await client.WaitTicksAsync(5); // beds read Level.skyDarken, which the server updates on its next tick
+            var (slept, message3) = await skills.SleepAsync(CancellationToken.None).WaitAsync(TimeSpan.FromSeconds(30));
+            Assert.That(slept, message3);
+            Assert.That(message3, Does.Contain("morning"));
+        }
+        finally
+        {
+            await _server.CommandAsync("time set day");
+        }
+    }
+
+    [Test]
+    public async Task Bed_RefusedByDay_SleepsAtNight_AndWakesInTheMorning()
+    {
+        const string name = "VertexSleep";
+        var (client, x, z) = await JoinOnArenaAsync(name, (ax, az) =>
+            [$"setblock {ax + 3} 200 {az + 2} minecraft:red_bed[facing=east,part=foot]", $"setblock {ax + 4} 200 {az + 2} minecraft:red_bed[facing=east,part=head]"]);
+        await using var _ = client;
+        try
+        {
+            var bed = client.FindBeds()[0];
+            Assert.That(bed.Y, Is.EqualTo(200));
+            await _server.CommandAsync("time set day");
+            var refusal = await client.LieDownAsync(bed.X, bed.Y, bed.Z);
+            Assert.That(refusal, Does.Contain("night"), "the server's own reason");
+            Assert.That(client.Sleeping, Is.False);
+
+            await _server.CommandAsync("time set 18000"); // midnight
+            await Wait.UntilAsync(() => client.World.DayTime % 24000 >= 13000, Timeout, () => $"time {client.World.DayTime}");
+            await client.WaitTicksAsync(5); // beds read Level.skyDarken, which the server updates on its next tick
+            Assert.That(await client.LieDownAsync(bed.X, bed.Y, bed.Z), Is.Null);
+            Assert.That(client.Pose, Is.EqualTo(SpawnDev.Minecraft.Entities.EntityPose.Sleeping));
+            var teleports = client.TeleportCount;
+            // We keep ticking and reporting our (still) position like the vanilla client; Paper ignores small moves
+            // from a sleeper and must never have to correct us.
+            await client.WaitTicksAsync(60);
+            Assert.That(client.TeleportCount, Is.EqualTo(teleports), "lying still: the server never had to put us back");
+
+            await client.LeaveBedAsync();
+            Assert.That(client.Sleeping, Is.False, "got up");
+            await client.WaitTicksAsync(10);
+            Assert.That(client.OnGround);
+
+            // Back to bed; alone on the server, the night passes after 100 ticks asleep and the server wakes us.
+            Assert.That(await client.LieDownAsync(bed.X, bed.Y, bed.Z), Is.Null);
+            await Wait.UntilAsync(() => !client.Sleeping, TimeSpan.FromSeconds(20), () => $"pose {client.Pose}, time {client.World.DayTime % 24000}");
+            // The server sends the clock once a second (MinecraftServer.synchronizeTime every 20 ticks).
+            await Wait.UntilAsync(() => client.World.DayTime % 24000 < 1000, TimeSpan.FromSeconds(3), () => $"still night: {client.World.DayTime % 24000}");
+            await client.WaitTicksAsync(20);
+            Assert.That(client.OnGround, $"standing beside the bed at {client.Position}");
+        }
+        finally
+        {
+            await _server.CommandAsync("time set day");
+        }
+    }
+
+    [Test]
     public async Task Guard_FightsMonstersNearThePlayer_AndOnlyThose()
     {
         const string name = "VertexGuard", ward = "VertexWard";

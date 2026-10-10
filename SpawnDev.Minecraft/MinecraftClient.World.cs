@@ -23,6 +23,11 @@ public sealed partial class MinecraftClient
     public PlayerInventory Inventory { get; } = new();
     /// <summary>The container screen that is open (chest, furnace...), or null.</summary>
     public ContainerWindow? OpenWindow { get; private set; }
+
+    /// <summary>Our own pose, as the server set it (Sleeping while in a bed).</summary>
+    public EntityPose Pose { get; private set; }
+
+    public bool Sleeping => Pose == EntityPose.Sleeping;
     /// <summary>The state id of the player inventory (container 0), sent back with every click.</summary>
     public int InventoryStateId { get; private set; }
     public int ExperienceLevel { get; private set; }
@@ -329,9 +334,19 @@ public sealed partial class MinecraftClient
             }
             case CB.Play.Clientbound.SetEntityData:
             {
-                var e = Entity(r.ReadVarInt());
+                var id = r.ReadVarInt();
+                var e = Entity(id);
                 var entries = ProtoDef.Vanilla.Read(ref r, "entityMetadata") as List<object?>;
-                if (e == null || entries == null) return;
+                if (entries == null) return;
+                if (id == EntityId)
+                {
+                    // Our own data: the pose (index 6) says when we are asleep in a bed.
+                    foreach (var entry in entries)
+                        if (entry is Dictionary<string, object?> m && Convert.ToInt32(m["key"]) == 6 && m.GetValueOrDefault("value") is { } pose)
+                            Pose = (EntityPose)Convert.ToInt32(pose);
+                    return;
+                }
+                if (e == null) return;
                 foreach (var entry in entries)
                 {
                     if (entry is not Dictionary<string, object?> m) continue;
