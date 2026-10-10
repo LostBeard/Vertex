@@ -1,7 +1,12 @@
 using SpawnDev.Minecraft;
 using SpawnDev.Minecraft.Auth;
+using SpawnDev.Minecraft.VoiceChat;
+using Vertex.AI;
+using Vertex.Brain;
 
-// Vertex command line (the full app with the brain and voice comes later).
+// Vertex command line.
+//   vertex play <host[:port]> [--offline <name>] [--character <name>] [--model <ollama model>] [--account <name>]
+//                                               play: brain, voice, reflexes. Lines typed here are said to Vertex.
 //   vertex login [account]                      sign a Microsoft account in (device code), cache it encrypted
 //   vertex logout [account]                     forget the cached account
 //   vertex ping <host[:port]>                   server list ping
@@ -12,7 +17,7 @@ const string App = "Vertex";
 
 if (args.Length == 0)
 {
-    Console.WriteLine("usage: vertex login|logout [account] | ping <host[:port]> | join <host[:port]> [account | --offline <name>]");
+    Console.WriteLine("usage: vertex play <host[:port]> [--offline <name>] [--character <name>] [--model <model>] | login|logout [account] | ping <host[:port]> | join <host[:port]> [account | --offline <name>]");
     return 2;
 }
 
@@ -58,6 +63,8 @@ try
             Console.WriteLine("disconnected: " + await done.Task);
             return 0;
         }
+        case "play":
+            return await PlayAsync(args);
         default:
             Console.WriteLine("unknown command " + args[0]);
             return 2;
@@ -79,4 +86,49 @@ static (string Host, int Port) HostPort(string value)
 {
     var i = value.LastIndexOf(':');
     return i > 0 ? (value[..i], int.Parse(value[(i + 1)..])) : (value, 25565);
+}
+
+static string? Option(string[] args, string name)
+{
+    var i = Array.IndexOf(args, name);
+    return i >= 0 && i + 1 < args.Length ? args[i + 1] : null;
+}
+
+static async Task<int> PlayAsync(string[] args)
+{
+    var (host, port) = HostPort(args[1]);
+    var profile = Option(args, "--offline") is string offline
+        ? GameProfile.Offline(offline)
+        : await Auth(Option(args, "--account") ?? "default").SignInAsync();
+    void Log(string m) => Console.WriteLine($"[{DateTime.Now:HH:mm:ss}] {m}");
+
+    await using var ai = new VertexAi(Log);
+    var models = await ai.ModelNamesAsync();
+    var model = Option(args, "--model") ?? models.FirstOrDefault(m => m.StartsWith("llama3.1")) ?? models.FirstOrDefault()
+        ?? throw new InvalidOperationException("no chat model found in the Ollama cache (ollama pull llama3.1:8b)");
+    Log($"models: {string.Join(", ", models)}; using {model}");
+    await ai.Chat.EnsureReadyAsync(model);
+
+    var characters = new CharacterStore();
+    var character = characters.Find(Option(args, "--character") ?? "Vertex") ?? Character.BuiltIn[0];
+    await using var client = new MinecraftClient(profile, new ClientOptions { Log = Log });
+    await using var voice = new SimpleVoiceChat(client, host);
+    voice.Log += m => Log("[voice] " + m);
+    await using var brain = new VertexBrain(client, voice, ai, characters, character, model);
+    brain.Log += Log;
+    var done = new TaskCompletionSource<string>();
+    client.ChatReceived += m => Log("[chat] " + m.Text);
+    client.Disconnected += r => done.TrySetResult(r);
+    Console.CancelKeyPress += (_, e) => { e.Cancel = true; done.TrySetResult("Ctrl+C"); };
+    await client.ConnectAsync(host, port);
+    brain.Start();
+    Log($"playing as {character.Name} ({profile.Name})");
+    _ = Task.Run(() =>
+    {
+        // The console is a player too: what is typed here is said to Vertex.
+        while (Console.ReadLine() is string line)
+            if (line.Length > 0) brain.Post(new SaidEvent(Guid.Empty, "Console", line, false));
+    });
+    Log("disconnected: " + await done.Task);
+    return 0;
 }
