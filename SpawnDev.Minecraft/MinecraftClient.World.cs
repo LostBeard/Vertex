@@ -52,18 +52,74 @@ public sealed partial class MinecraftClient
     public IReadOnlyCollection<int> Tag(string registry, string tag) =>
         _tags.TryGetValue(GameData.Normalize(registry), out var r) && r.TryGetValue(GameData.Normalize(tag.TrimStart('#')), out var ids) ? ids : [];
 
-    /// <summary>An attribute's current value for our player (base + modifiers, vanilla's three operations).</summary>
+    /// <summary>
+    /// An attribute's current value for our player, as the vanilla client sees it: the server's value (base +
+    /// modifiers) for attributes it syncs; for the ones it does not (attack_damage, attack_speed...) the game's
+    /// base value plus the attribute modifiers of the items in our hands and armor slots. Null if unknown.
+    /// </summary>
     public double? Attribute(string name)
     {
+        name = GameData.Normalize(name);
         var names = GameData.Vanilla.Registries.GetValueOrDefault("minecraft:attribute") ?? [];
-        var id = Array.IndexOf(names, GameData.Normalize(name));
-        if (id < 0 || !_attributes.TryGetValue(id, out var a)) return null;
-        var value = a.Base;
-        foreach (var m in a.Modifiers) if (m.Operation == 0) value += m.Amount;
+        var id = Array.IndexOf(names, name);
+        if (id >= 0 && _attributes.TryGetValue(id, out var a)) return Apply(a.Base, a.Modifiers.Select(m => (m.Amount, m.Operation)));
+        if (!GameData.Vanilla.PlayerAttributes.TryGetValue(name, out var baseValue)) return null;
+        return Apply(baseValue, EquipmentModifiers(name));
+    }
+
+    private static double Apply(double baseValue, IEnumerable<(double Amount, int Operation)> modifiers)
+    {
+        var list = modifiers.ToList();
+        var value = baseValue;
+        foreach (var m in list) if (m.Operation == 0) value += m.Amount;
         var result = value;
-        foreach (var m in a.Modifiers) if (m.Operation == 1) result += value * m.Amount;
-        foreach (var m in a.Modifiers) if (m.Operation == 2) result *= 1 + m.Amount;
+        foreach (var m in list) if (m.Operation == 1) result += value * m.Amount;
+        foreach (var m in list) if (m.Operation == 2) result *= 1 + m.Amount;
         return result;
+    }
+
+    /// <summary>The modifiers our equipment adds to one attribute (main hand, off hand, armor).</summary>
+    private IEnumerable<(double Amount, int Operation)> EquipmentModifiers(string attribute)
+    {
+        var equipped = new (ItemStack Stack, string Slot)[]
+        {
+            (Inventory.MainHand, "mainhand"), (Inventory.OffHandItem, "offhand"),
+            (Inventory.Head, "head"), (Inventory.Chest, "chest"), (Inventory.Legs, "legs"), (Inventory.Feet, "feet"),
+        };
+        foreach (var (stack, slot) in equipped)
+        {
+            if (stack.IsEmpty) continue;
+            foreach (var m in ItemModifiers(stack))
+                if (m.Attribute == attribute && SlotApplies(m.Slot, slot)) yield return (m.Amount, m.Operation);
+        }
+    }
+
+    private static bool SlotApplies(string group, string slot) => group switch
+    {
+        "any" => true,
+        "hand" => slot is "mainhand" or "offhand",
+        "armor" => slot is "head" or "chest" or "legs" or "feet",
+        _ => group == slot,
+    };
+
+    /// <summary>
+    /// An item's attribute modifiers: the stack's own attribute_modifiers component when it has one (decoded by
+    /// ProtoDef: typeId/value/operation/slot), else the item's defaults from the game data.
+    /// </summary>
+    public static IEnumerable<(string Attribute, double Amount, int Operation, string Slot)> ItemModifiers(ItemStack stack)
+    {
+        static string NormalizeSlot(string s) => s.Replace("_", "");
+        static int Op(string o) => o switch { "add" or "add_value" => 0, "multiply_base" or "add_multiplied_base" => 1, _ => 2 };
+        if (stack.Components.TryGetValue("attribute_modifiers", out var own) && own is List<object?> list)
+        {
+            foreach (var e in list)
+                if (e is Dictionary<string, object?> d && GameData.Vanilla.RegistryName("minecraft:attribute", Convert.ToInt32(d["typeId"])) is string attr)
+                    yield return (attr, Convert.ToDouble(d["value"]), Op(d["operation"] as string ?? "add"), NormalizeSlot(d["slot"] as string ?? "any"));
+            yield break;
+        }
+        if (stack.Type?.Components["attribute_modifiers"] is System.Text.Json.Nodes.JsonArray defaults)
+            foreach (var e in defaults)
+                yield return (e!["type"]!.GetValue<string>(), e["amount"]!.GetValue<double>(), Op(e["operation"]!.GetValue<string>()), NormalizeSlot(e["slot"]?.GetValue<string>() ?? "any"));
     }
 
     private void ApplyDimension(int dimensionTypeId, string worldName)
@@ -387,6 +443,21 @@ public sealed partial class MinecraftClient
                 WindowClosed?.Invoke(id);
                 return;
             }
+            case CB.Play.Clientbound.UpdateMobEffect:
+            {
+                var id = r.ReadVarInt();
+                var effect = GameData.Vanilla.RegistryName("minecraft:mob_effect", r.ReadVarInt());
+                var amplifier = r.ReadVarInt();
+                if (id == EntityId && effect != null) _effects[effect] = amplifier;
+                return;
+            }
+            case CB.Play.Clientbound.RemoveMobEffect:
+            {
+                var id = r.ReadVarInt();
+                var effect = GameData.Vanilla.RegistryName("minecraft:mob_effect", r.ReadVarInt());
+                if (id == EntityId && effect != null) _effects.TryRemove(effect, out _);
+                return;
+            }
             case CB.Play.Clientbound.SetExperience:
                 ExperienceProgress = r.ReadFloat();
                 ExperienceLevel = r.ReadVarInt();
@@ -398,6 +469,7 @@ public sealed partial class MinecraftClient
     private void SetInventorySlot(int slot, ItemStack stack)
     {
         if ((uint)slot >= PlayerInventory.Size) return;
+        if (slot == PlayerInventory.HotbarStart + Inventory.SelectedHotbar && Inventory[slot].ItemId != stack.ItemId) _lastHeldChangeTick = Ticks;
         Inventory.Set(slot, stack);
         InventoryChanged?.Invoke(slot, stack);
     }

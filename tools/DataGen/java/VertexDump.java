@@ -96,8 +96,20 @@ public class VertexDump {
             items.append("[\"").append(BuiltInRegistries.ITEM.getKey(item)).append("\",\"").append(placed).append("\"]");
         }
 
+        // The player's base attribute values (attack_damage 1, attack_speed 4...): the server does not sync every
+        // attribute, and the client computes the rest from these plus its equipment.
+        StringBuilder playerAttributes = new StringBuilder();
+        var supplier = net.minecraft.world.entity.ai.attributes.DefaultAttributes.getSupplier(EntityType.PLAYER);
+        for (net.minecraft.world.entity.ai.attributes.Attribute a : BuiltInRegistries.ATTRIBUTE) {
+            var holder = BuiltInRegistries.ATTRIBUTE.wrapAsHolder(a);
+            if (!supplier.hasAttribute(holder)) continue;
+            if (playerAttributes.length() > 0) playerAttributes.append(",\n");
+            playerAttributes.append("[\"").append(BuiltInRegistries.ATTRIBUTE.getKey(a)).append("\",").append(n(supplier.getBaseValue(holder))).append(']');
+        }
+
         try (FileWriter w = new FileWriter(args[0])) {
-            w.write("{\"states\":[\n" + states + "],\n\"blocks\":[\n" + blocks + "],\n\"shapes\":[\n" + String.join(",\n", shapes)
+            w.write("{\"playerAttributes\":[\n" + playerAttributes + "],\n");
+            w.write("\"states\":[\n" + states + "],\n\"blocks\":[\n" + blocks + "],\n\"shapes\":[\n" + String.join(",\n", shapes)
                 + "],\n\"entities\":[\n" + entities + "],\n\"items\":[\n" + items + "]}\n");
         }
         System.out.println("dumped " + expected + " states, " + shapes.size() + " shapes");

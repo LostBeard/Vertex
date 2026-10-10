@@ -200,6 +200,7 @@ public sealed partial class MinecraftClient : IAsyncDisposable
         IsSpawned = false;
         DisconnectReason ??= reason;
         _spawned?.TrySetException(new InvalidOperationException("disconnected before spawning: " + DisconnectReason));
+        FailTickWaiters();
         _cts?.Cancel();
         Log("disconnected: " + DisconnectReason);
         Disconnected?.Invoke(DisconnectReason);
@@ -749,6 +750,7 @@ public sealed partial class MinecraftClient : IAsyncDisposable
                 await PhysicsTickAsync(ct);
                 using var end = new PacketWriter(CB.Play.Serverbound.ClientTickEnd);
                 await _connection!.SendAsync(end, ct);
+                AdvanceTickWaiters();
             }
         }
         catch (OperationCanceledException) { }

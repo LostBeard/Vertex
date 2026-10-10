@@ -71,6 +71,9 @@ public sealed class GameData
     /// <summary>Static registries by name (minecraft:attribute, minecraft:menu, minecraft:mob_effect...), names in network-id order.</summary>
     public IReadOnlyDictionary<string, string[]> Registries { get; private init; } = new Dictionary<string, string[]>();
 
+    /// <summary>The player's base attribute values ("minecraft:attack_damage" = 1...), from the game's defaults.</summary>
+    public IReadOnlyDictionary<string, double> PlayerAttributes { get; private init; } = new Dictionary<string, double>();
+
     /// <summary>The name of a static registry entry by network id, or null.</summary>
     public string? RegistryName(string registry, int id) =>
         Registries.TryGetValue(registry, out var names) && (uint)id < (uint)names.Length ? names[id] : null;
@@ -221,6 +224,7 @@ public sealed class GameData
             Items = items,
             Entities = entities,
             Recipes = root["recipes"]!.AsObject(),
+            PlayerAttributes = root["playerAttributes"]!.AsArray().ToDictionary(a => a![0]!.GetValue<string>(), a => a![1]!.GetValue<double>()),
             Registries = root["registries"]!.AsObject().ToDictionary(r => r.Key, r => r.Value!.AsArray().Select(n => n!.GetValue<string>()).ToArray()),
             StateBlock = stateBlock,
             Hardness = hardness,

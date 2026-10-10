@@ -203,6 +203,7 @@ static JsonObject GameData(string version, string reports, JsonNode dump, ZipArc
     {
         ["version"] = version,
         ["registries"] = staticRegistries,
+        ["playerAttributes"] = dump["playerAttributes"]!.DeepClone(),
         ["blocks"] = blocks,
         ["states"] = states.DeepClone(),
         ["shapes"] = dump["shapes"]!.DeepClone(),

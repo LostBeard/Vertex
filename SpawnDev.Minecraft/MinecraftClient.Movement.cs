@@ -58,6 +58,10 @@ public sealed partial class MinecraftClient
         p.StepHeight = Attribute("step_height") ?? 0.6;
         p.SneakingSpeed = Attribute("sneaking_speed") ?? 0.3;
         p.WaterMovementEfficiency = Attribute("water_movement_efficiency") ?? 0;
+        p.JumpBoostAmplifier = _effects.TryGetValue("minecraft:jump_boost", out var j) ? j : -1;
+        p.LevitationAmplifier = _effects.TryGetValue("minecraft:levitation", out var l) ? l : -1;
+        p.SlowFalling = _effects.ContainsKey("minecraft:slow_falling");
+        p.DolphinsGrace = _effects.ContainsKey("minecraft:dolphins_grace");
     }
 
     /// <summary>An attribute's value ignoring one modifier (the physics adds the sprint boost itself).</summary>
