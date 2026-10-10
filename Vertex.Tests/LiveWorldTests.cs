@@ -65,11 +65,14 @@ public class LiveWorldTests
         Assert.That(D.HasCollision(client.World.GetState(fx, fy - 1, fz)), $"standing on {client.World.GetBlock(fx, fy - 1, fz)}");
 
         // 40 random loaded positions, natural terrain (many palettes), confirmed one by one by the server.
+        // Random positions inside the chunks the server sent (view distance 4 around wherever spawn landed).
         var random = new Random(770);
+        var columns = client.World.Columns.ToList();
         var checkedSolid = 0;
         for (var i = 0; i < 40; i++)
         {
-            int x = fx + random.Next(-60, 61), z = fz + random.Next(-60, 61), y = fy + random.Next(-40, 10);
+            var column = columns[random.Next(columns.Count)];
+            int x = (column.X << 4) + random.Next(16), z = (column.Z << 4) + random.Next(16), y = fy + random.Next(-40, 10);
             var state = client.World.GetState(x, y, z);
             Assert.That(state, Is.Not.EqualTo(SpawnDev.Minecraft.World.GameWorld.Unloaded), $"{x} {y} {z} not loaded");
             var name = D.BlockOf(state).Name;
