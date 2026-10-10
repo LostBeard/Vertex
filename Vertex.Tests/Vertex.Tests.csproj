@@ -11,6 +11,7 @@
 	</ItemGroup>
 	<ItemGroup>
 		<ProjectReference Include="..\SpawnDev.Minecraft\SpawnDev.Minecraft.csproj" />
+		<ProjectReference Include="..\SpawnDev.Minecraft.VoiceChat\SpawnDev.Minecraft.VoiceChat.csproj" />
 	</ItemGroup>
 	<ItemGroup>
 		<Using Include="NUnit.Framework" />

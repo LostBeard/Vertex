@@ -23,11 +23,12 @@ Every milestone is tested against REAL servers started locally (Paper 1.21.5 bui
   attributes, time, tags
 - [x] Item stacks with data components (ProtoDef over minecraft-data's 1.21.5 types), inventory, containers
 
-## M3 - Body
-- [ ] Vanilla-accurate player physics (gravity, drag, collision, step-up, jump, sprint, swim, ladders)
+## M3 - Body (done 2026-10-10 except crafting/smelting, which land with the M6 skills)
+- [x] Vanilla-accurate player physics (gravity, drag, collision, step-up, jump, sprint, swim, ladders)
   so Paper's movement checks never rubber-band or kick it
-- [ ] Pathfinding (A*, walk/jump/fall/swim/pillar/dig-through)
-- [ ] Dig (correct break time per tool/enchant/effect), place, use, attack, eat, craft, smelt, chests
+- [x] Pathfinding (A*, walk/jump/fall/swim/pillar/dig-through)
+- [x] Dig (correct break time per tool/enchant/effect), place, use, attack, eat, chests, creative flight
+- [ ] Craft, smelt (with the M6 skill library)
 
 ## M4 - Accounts (pulled ahead: done 2026-10-10 except signed commands)
 - [x] Microsoft account sign-in: live.com device code under a public Minecraft title client id (no app
@@ -39,7 +40,10 @@ Every milestone is tested against REAL servers started locally (Paper 1.21.5 bui
 - [ ] Signed commands (`chat_command_signed`) for /msg, /me, /say with enforce-secure-profile
 
 ## M5 - Voice
-- [ ] Simple Voice Chat client: secret handshake over the plugin channel, encrypted UDP, Opus
+- [x] Simple Voice Chat client (SpawnDev.Minecraft.VoiceChat, compatibility 20 = 2.6.x): channel registration,
+  secret over the plugin channel, AES-GCM UDP (authenticate, connection check, keep-alive, ping), Opus via
+  Concentus, paced 20 ms frames + stop packet, per-speaker decoders, player voice states. Live-tested with the
+  real voicechat-bukkit 2.6.16 plugin: one Vertex hears another (pitch verified)
 - [ ] Speech-to-text (Whisper on SpawnDev.ILGPU.ML) per speaking player, voice activity detection
 - [ ] Text-to-speech (Kokoro on SpawnDev.ILGPU.ML) back into proximity voice
 - [ ] Falls back to text chat on servers without Simple Voice Chat

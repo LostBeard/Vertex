@@ -39,7 +39,7 @@ public sealed class PaperServer : IAsyncDisposable
 
     /// <summary>Starts a fresh server (world, lists and config wiped; Paper's downloaded libraries kept).</summary>
     public static async Task<PaperServer> StartAsync(string name, int port, TimeSpan timeout,
-        IDictionary<string, string>? properties = null)
+        IDictionary<string, string>? properties = null, Func<string, Task>? beforeStart = null)
     {
         var jar = await EnsureJarAsync();
         var dir = Path.Combine(CacheRoot, "servers", "vertex-" + name);
@@ -68,6 +68,8 @@ public sealed class PaperServer : IAsyncDisposable
         };
         if (properties != null) foreach (var (k, v) in properties) props[k] = v;
         File.WriteAllText(Path.Combine(dir, "server.properties"), string.Join('\n', props.Select(p => $"{p.Key}={p.Value}")) + "\n");
+
+        if (beforeStart != null) await beforeStart(dir); // e.g. install plugins and their config
 
         var psi = new ProcessStartInfo(await Jdk.JavaAsync(), ["-Xms512M", "-Xmx1G", "-jar", jar, "--nogui"])
         {

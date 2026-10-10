@@ -1,0 +1,16 @@
+<Project Sdk="Microsoft.NET.Sdk">
+	<PropertyGroup>
+		<Version>0.1.0-local.1</Version>
+		<Description>Simple Voice Chat (henkelmax) client for SpawnDev.Minecraft: hear and speak proximity voice on servers that run the mod/plugin.</Description>
+		<PackageTags>minecraft;voicechat;opus;bot</PackageTags>
+		<GenerateDocumentationFile>true</GenerateDocumentationFile>
+		<NoWarn>$(NoWarn);CS1591</NoWarn>
+	</PropertyGroup>
+	<ItemGroup>
+		<PackageReference Include="Concentus" Version="2.2.2" />
+		<ProjectReference Include="..\SpawnDev.Minecraft\SpawnDev.Minecraft.csproj" />
+	</ItemGroup>
+	<ItemGroup>
+		<InternalsVisibleTo Include="Vertex.Tests" />
+	</ItemGroup>
+</Project>
