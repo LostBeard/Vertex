@@ -11,5 +11,7 @@
 		<InternalsVisibleTo Include="Vertex.Tests" />
 		<PackageReference Include="System.Security.Cryptography.ProtectedData" Version="9.0.0" />
 		<EmbeddedResource Include="Data\en_us.json.br" LogicalName="SpawnDev.Minecraft.Data.en_us.json.br" />
+		<EmbeddedResource Include="Data\game-data.json.br" LogicalName="SpawnDev.Minecraft.Data.game-data.json.br" />
+		<EmbeddedResource Include="Data\protocol-types.json.br" LogicalName="SpawnDev.Minecraft.Data.protocol-types.json.br" />
 	</ItemGroup>
 </Project>

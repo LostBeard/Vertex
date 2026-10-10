@@ -14,11 +14,14 @@ Every milestone is tested against REAL servers started locally (Paper 1.21.5 bui
 - [x] Keep-alive (red-checked), ping/pong, teleport confirm, player loaded, 20 TPS client tick
 - [x] Send and receive chat (player chat between two clients, console /say, /me), kick reason
 
-## M2 - World model
-- [ ] Block state table from the vanilla data report (`tools/DataGen`)
-- [ ] Chunk sections (paletted containers), block updates, section updates, unload
-- [ ] Entities (spawn, move, remove, metadata), players (tab list), health, food, XP
-- [ ] Inventory and containers
+## M2 - World model (done 2026-10-10)
+- [x] Game data from the game itself (`tools/DataGen`): vanilla reports + a Java dump of the Mojang-mapped server
+  (hardness, collision boxes, friction, fluids, entity sizes, block items), recipes and tags from the jar
+- [x] Chunk sections (paletted containers), block updates, section updates, unload, block entities - checked
+  block-for-block against the server (`execute if block`)
+- [x] Entities (spawn, move, sync, teleport, remove, metadata, equipment), players (tab list), health, food, XP,
+  attributes, time, tags
+- [x] Item stacks with data components (ProtoDef over minecraft-data's 1.21.5 types), inventory, containers
 
 ## M3 - Body
 - [ ] Vanilla-accurate player physics (gravity, drag, collision, step-up, jump, sprint, swim, ladders)

@@ -30,7 +30,7 @@ public sealed class ClientOptions
 /// player's own position, health and game mode. One receive loop handles packets in order; events are raised on
 /// that loop, so handlers must not block.
 /// </summary>
-public sealed class MinecraftClient : IAsyncDisposable
+public sealed partial class MinecraftClient : IAsyncDisposable
 {
     public const int ProtocolVersion = 770;
     public const string GameVersion = "1.21.5";
@@ -317,8 +317,11 @@ public sealed class MinecraftClient : IAsyncDisposable
             }
             case CB.Configuration.Clientbound.Transfer:
                 return DisconnectReason = "the server asked to transfer to another server (not supported yet)";
+            case CB.Configuration.Clientbound.UpdateTags:
+                ReadTags(packet);
+                return null;
             default:
-                return null; // tags, features, links, report details: not needed yet
+                return null; // features, links, report details: not needed
         }
     }
 
@@ -513,14 +516,16 @@ public sealed class MinecraftClient : IAsyncDisposable
             case CB.Play.Clientbound.Transfer:
                 return DisconnectReason = "the server asked to transfer to another server (not supported yet)";
             default:
+                OnWorldPacket(packet);
                 return null;
         }
     }
 
     private void ReadSpawnInfo(ref PacketReader r)
     {
-        r.ReadVarInt(); // dimension type id
+        var dimensionType = r.ReadVarInt();
         WorldName = r.ReadString();
+        ApplyDimension(dimensionType, WorldName);
         r.ReadLong();   // hashed seed
         GameMode = (GameMode)r.ReadSByte();
         r.ReadByte();   // previous game mode
