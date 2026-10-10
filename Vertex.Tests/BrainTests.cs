@@ -44,7 +44,10 @@ public class BrainTests
     private async Task<(MinecraftClient Vertex, VertexBrain Brain, MinecraftClient Aubs, ConcurrentQueue<string> Log)> JoinAsync(string folder)
     {
         var log = new ConcurrentQueue<string>();
-        var vertex = new MinecraftClient(GameProfile.Offline("VertexBrain"));
+        var vertex = new MinecraftClient(GameProfile.Offline("VertexBrain"), new ClientOptions
+        {
+            Log = m => { if (m.Contains("path") || m.Contains("replan")) { log.Enqueue("[client] " + m); TestContext.Out.WriteLine("[client] " + m); } },
+        });
         var aubs = new MinecraftClient(GameProfile.Offline("Aubri"));
         using var cts = new CancellationTokenSource(Timeout);
         await vertex.ConnectAsync("127.0.0.1", Port, cts.Token);
@@ -68,10 +71,15 @@ public class BrainTests
         var heard = new ConcurrentQueue<ChatMessage>();
         aubs.ChatReceived += heard.Enqueue;
 
-        // Put Aubri 12 blocks away on the same ground.
-        var (vx, vy, vz) = vertex.Position;
-        await _server.CommandAsync($"spreadplayers {vx + 12} {vz} 0 1 false Aubri");
-        await Wait.UntilAsync(() => Math.Abs(aubs.Position.X - (vx + 12)) < 2, Timeout, () => $"aubs at {aubs.Position}");
+        // A fixed stage (natural terrain made this flaky: players rejoin where they left, and spreadplayers can put
+        // Aubri on a tree top). Vertex at one end of a sky platform, Aubri 12 blocks along it.
+        var (vx, _, vz) = vertex.Position;
+        int ax = (int)Math.Floor(vx), az = (int)Math.Floor(vz);
+        await _server.CommandAsync($"fill {ax - 2} 200 {az - 4} {ax + 16} 204 {az + 4} minecraft:air");
+        await _server.CommandAsync($"fill {ax - 2} 199 {az - 4} {ax + 16} 199 {az + 4} minecraft:stone");
+        await _server.CommandAsync($"tp VertexBrain {ax + 0.5} 200 {az + 0.5}");
+        await _server.CommandAsync($"tp Aubri {ax + 12.5} 200 {az + 0.5}");
+        await Wait.UntilAsync(() => Math.Abs(aubs.Position.X - (ax + 12.5)) < 0.1 && Math.Abs(vertex.Position.Y - 200) < 1e-9 && vertex.OnGround, Timeout, () => $"aubs at {aubs.Position}, vertex at {vertex.Position}");
         await aubs.WaitTicksAsync(20);
 
         await aubs.SendChatAsync("Vertex, come here please!");

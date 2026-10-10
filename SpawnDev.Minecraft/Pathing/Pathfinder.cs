@@ -53,7 +53,7 @@ public sealed class GoalReachBlock(int x, int y, int z, double reach = 4.0) : Go
         Math.Max(0, Math.Sqrt((bx + 0.5 - x - 0.5) * (bx + 0.5 - x - 0.5) + (by - y) * (by - y) + (bz + 0.5 - z - 0.5) * (bz + 0.5 - z - 0.5)) - reach);
 }
 
-public enum MoveKind { Walk, Diagonal, JumpUp, Drop, Swim, Climb, DigThrough, Pillar }
+public enum MoveKind { Walk, Diagonal, JumpUp, Drop, Swim, Climb, DigThrough, DigDown, Pillar }
 
 /// <summary>One step of a path: stand at To (feet block), after doing Kind. Dig/Place list blocks to change first.</summary>
 public sealed record PathStep(int X, int Y, int Z, MoveKind Kind, (int X, int Y, int Z)[] Dig, (int X, int Y, int Z)? Place);
@@ -302,6 +302,17 @@ public sealed class Pathfinder
             if (Clear(n.X, n.Y + 2, n.Z) && (IsWater(State(n.X, n.Y + 1, n.Z)) || (State(n.X, n.Y + 1, n.Z) is var a && a > 0 && _climbable.Contains(_data.StateBlock[a])) || FeetHeight(n.X, n.Y + 1, n.Z) is double))
                 if (FeetHeight(n.X, n.Y + 1, n.Z) is double)
                     yield return (new Node(n.X, n.Y + 1, n.Z), 1.5, new PathStep(n.X, n.Y + 1, n.Z, inWater ? MoveKind.Swim : MoveKind.Climb, [], null));
+        }
+
+        // Dig straight down one block (the way out of a tree top, a pit, or onto a lower level): needs a solid floor
+        // under the dug block and no fluid around it to flood in.
+        if (o.CanDig && o.DigTicks != null && !inWater)
+        {
+            var below = State(n.X, n.Y - 1, n.Z);
+            var under = State(n.X, n.Y - 2, n.Z);
+            if (Solid(below) && !Dangerous(below) && o.DigTicks(below) is int t && Solid(under) && Top(under) >= 1.0 && !Dangerous(under)
+                && !IsFluid(State(n.X + 1, n.Y - 1, n.Z)) && !IsFluid(State(n.X - 1, n.Y - 1, n.Z)) && !IsFluid(State(n.X, n.Y - 1, n.Z + 1)) && !IsFluid(State(n.X, n.Y - 1, n.Z - 1)))
+                yield return (new Node(n.X, n.Y - 1, n.Z), 1.5 + t / 10.0, new PathStep(n.X, n.Y - 1, n.Z, MoveKind.DigDown, [(n.X, n.Y - 1, n.Z)], null));
         }
 
         // Pillar: jump and place a block under ourselves. A node with no support is one we pillared up to (nodes are

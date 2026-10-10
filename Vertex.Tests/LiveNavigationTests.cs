@@ -81,6 +81,27 @@ public class LiveNavigationTests
         Assert.That(client.TeleportCount, Is.EqualTo(teleports), "the server corrected our movement");
     }
 
+    /// <summary>
+    /// Stranded on top of a pillar (like spawning on a tree): every way down is a drop of more than 3, so a
+    /// fussy plan finds nothing. GoToAsync must escalate (a fall that hurts but is survivable, or digging down).
+    /// </summary>
+    [Test]
+    public async Task GetsDownFromAPillar()
+    {
+        const string name = "VertexPillar";
+        var (client, x, z) = await JoinCourseAsync(name, (ax, az) => [$"fill {ax + 5} 200 {az} {ax + 5} 206 {az} minecraft:dirt"]);
+        await using var _ = client;
+        await _server.CommandAsync($"gamemode survival {name}");
+        await _server.CommandAsync($"tp {name} {x + 5.5} 207 {z + 0.5}");
+        await Wait.UntilAsync(() => Math.Abs(client.Position.Y - 207) < 1e-9 && client.OnGround, Timeout, () => $"{client.Position}");
+        var teleports = client.TeleportCount;
+
+        Assert.That(await client.GoToAsync(Goal.Block(x + 10, 200, z)), $"got down; at {client.Position}");
+        Assert.That(client.FeetBlock, Is.EqualTo((x + 10, 200, z)));
+        Assert.That(client.Health, Is.GreaterThanOrEqualTo(4f), "survived");
+        Assert.That(client.TeleportCount, Is.EqualTo(teleports), "the server corrected our movement");
+    }
+
     [Test]
     public async Task DigsThrough_AndPillarsUp_WhenAllowed()
     {

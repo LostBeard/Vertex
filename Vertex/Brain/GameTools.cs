@@ -11,15 +11,24 @@ public sealed class GameTool(string name, string description, string schema, Fun
     public string Description => description;
     public string ParametersJsonSchema => schema;
 
+    /// <summary>
+    /// Called with every execution. AiChatEngine runs tools inside its own loop and reports only calls it did NOT
+    /// execute in AiChatResult.ToolCalls, so the tool itself is where "what did Vertex do" is visible.
+    /// </summary>
+    public Action<string>? OnRun { get; set; }
+
     public async Task<AiToolExecutionResult> ExecuteAsync(string argumentsJson, CancellationToken ct = default)
     {
         try
         {
             using var doc = JsonDocument.Parse(string.IsNullOrWhiteSpace(argumentsJson) ? "{}" : argumentsJson);
-            return new AiToolExecutionResult(await run(doc.RootElement));
+            var result = await run(doc.RootElement);
+            OnRun?.Invoke($"tool {name}({argumentsJson}) -> {result}");
+            return new AiToolExecutionResult(result);
         }
         catch (Exception e)
         {
+            OnRun?.Invoke($"tool {name}({argumentsJson}) failed: {e.Message}");
             return new AiToolExecutionResult("error: " + e.Message) { IsError = true };
         }
     }
@@ -57,12 +66,12 @@ public static class GameTools
         yield return new GameTool("follow_player",
             "Follow a player around (keeps going until told to stop or given another job). Use when asked to follow or come along.",
             """{"type":"object","properties":{"player":{"type":"string","description":"player name, or 'me' for the person talking"}}}""",
-            a => { var p = Who(a); tasks.Start($"following {p}", ct => skills.FollowAsync(p, ct)); return Task.FromResult($"started following {p}"); });
+            a => { var p = Who(a); tasks.Start($"following {p}", ct => skills.FollowAsync(p, ct)); return Task.FromResult($"OK: I started following {p}. I keep following until told to stop."); });
 
         yield return new GameTool("come_here",
             "Walk over to a player (the person talking by default).",
             """{"type":"object","properties":{"player":{"type":"string"}}}""",
-            a => { var p = Who(a); tasks.Start($"walking to {p}", ct => skills.GoToPlayerAsync(p, ct)); return Task.FromResult($"walking to {p}"); });
+            a => { var p = Who(a); tasks.Start($"walking to {p}", ct => skills.GoToPlayerAsync(p, ct)); return Task.FromResult($"OK: I started walking over to {p}. It takes a few seconds - I am NOT there yet."); });
 
         yield return new GameTool("go_to",
             "Walk to coordinates x y z.",
@@ -71,7 +80,7 @@ public static class GameTools
             {
                 int x = Int(a, "x", 0), y = Int(a, "y", 64), z = Int(a, "z", 0);
                 tasks.Start($"walking to {x} {y} {z}", ct => skills.GoToAsync(x, y, z, ct));
-                return Task.FromResult($"walking to {x} {y} {z}");
+                return Task.FromResult($"OK: I started walking to {x} {y} {z}. I am not there yet.");
             });
 
         yield return new GameTool("collect",
@@ -82,7 +91,7 @@ public static class GameTools
                 var what = Str(a, "block") ?? "wood";
                 var count = Math.Clamp(Int(a, "count", 8), 1, 64);
                 tasks.Start($"collecting {count} {what}", ct => skills.CollectAsync(what, count, ct));
-                return Task.FromResult($"started collecting {count} {what}");
+                return Task.FromResult($"OK: I started collecting {count} {what}. It takes a while; I will say when I am done.");
             });
 
         yield return new GameTool("give",
@@ -94,7 +103,7 @@ public static class GameTools
                 var item = Str(a, "item") ?? "";
                 var count = Int(a, "count", 0);
                 tasks.Start($"giving {item} to {p}", ct => skills.GiveAsync(p, item, count, ct));
-                return Task.FromResult($"bringing {item} to {p}");
+                return Task.FromResult($"OK: I am bringing {item} to {p} now.");
             });
 
         yield return new GameTool("attack",
@@ -104,14 +113,14 @@ public static class GameTools
             {
                 var t = Str(a, "target") ?? "monsters";
                 tasks.Start($"fighting {t}", ct => skills.AttackAsync(t, ct));
-                return Task.FromResult($"attacking {t}");
+                return Task.FromResult($"OK: I am going after the {t} now.");
             });
 
         yield return new GameTool("eat", "Eat some food from your inventory.", NoArgs,
             async _ => (await skills.EatAsync(CancellationToken.None)).Item2);
 
         yield return new GameTool("stop", "Stop what you are doing and stand still.", NoArgs,
-            _ => { tasks.Stop(); client.Controls.Clear(); return Task.FromResult("stopped"); });
+            _ => { tasks.Stop(); client.Controls.Clear(); return Task.FromResult("OK: I stopped and I am standing still."); });
 
         yield return new GameTool("look_at", "Turn to look at a player.",
             """{"type":"object","properties":{"player":{"type":"string"}}}""",

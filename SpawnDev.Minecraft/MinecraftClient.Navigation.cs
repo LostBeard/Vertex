@@ -41,6 +41,10 @@ public sealed partial class MinecraftClient
     {
         options ??= new PathOptions();
         options.DigTicks ??= BestDigTicks;
+        // When stuck, get less fussy like a player would: first accept a fall that hurts (but leaves at least 4
+        // health), then dig. The caller's options are the starting point, never made stricter.
+        var escalation = 0;
+        var current = options;
         try
         {
             for (var attempt = 0; attempt < 12; attempt++)
@@ -48,8 +52,24 @@ public sealed partial class MinecraftClient
                 cancellationToken.ThrowIfCancellationRequested();
                 var feet = FeetBlock;
                 if (goal.IsReached(feet.X, feet.Y, feet.Z)) return true;
-                var (steps, complete) = Pathfinder.FindPath(feet, goal, options);
+                var (steps, complete) = Pathfinder.FindPath(feet, goal, current);
+                if (steps.Count == 0 && escalation < 2)
+                {
+                    escalation++;
+                    current = new PathOptions
+                    {
+                        CanDig = current.CanDig || escalation >= 2,
+                        CanPlace = current.CanPlace,
+                        MaxDrop = Math.Max(current.MaxDrop, 3 + Math.Max(0, (int)Health - 4)),
+                        MaxNodes = current.MaxNodes,
+                        DigTicks = current.DigTicks,
+                    };
+                    Log($"no path with the current rules: escalating to max drop {current.MaxDrop}{(current.CanDig ? ", digging" : "")}");
+                    (steps, complete) = Pathfinder.FindPath(feet, goal, current);
+                }
                 PathPlanned?.Invoke(steps);
+                Log($"path attempt {attempt}: from {feet} (at {Position.X:0.##} {Position.Y:0.##} {Position.Z:0.##}), {steps.Count} steps, {(complete ? "complete" : "partial")}"
+                    + (steps.Count > 0 ? $", first {steps[0].Kind}({steps[0].X},{steps[0].Y},{steps[0].Z}) last {steps[^1].Kind}({steps[^1].X},{steps[^1].Y},{steps[^1].Z})" : ""));
                 if (steps.Count == 0)
                 {
                     Log($"no path from {feet} ({(complete ? "already there" : "nothing reachable closer")})");
@@ -58,7 +78,7 @@ public sealed partial class MinecraftClient
                 var followed = await FollowAsync(steps, cancellationToken);
                 feet = FeetBlock;
                 if (goal.IsReached(feet.X, feet.Y, feet.Z)) return true;
-                if (!followed) Log("path interrupted, replanning");
+                if (!followed) Log($"path interrupted at {FeetBlock} (at {Position.X:0.##} {Position.Y:0.##} {Position.Z:0.##}, onGround {OnGround}), replanning");
                 else if (!complete) Log("partial path done, replanning");
             }
             var end = FeetBlock;

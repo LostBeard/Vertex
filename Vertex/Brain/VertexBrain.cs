@@ -70,7 +70,11 @@ public sealed class VertexBrain : IAsyncDisposable
         try { if (File.Exists(_memoryFile)) _memory.AddRange(JsonSerializer.Deserialize<List<string>>(File.ReadAllText(_memoryFile)) ?? []); }
         catch (JsonException) { }
 
-        foreach (var tool in GameTools.Create(this)) ai.Tools.Register(tool);
+        foreach (var tool in GameTools.Create(this))
+        {
+            if (tool is GameTool g) g.OnRun = m => Log?.Invoke("  " + m);
+            ai.Tools.Register(tool);
+        }
         client.ChatReceived += OnChat;
         Tasks.Finished += o => _events.Writer.TryWrite(new TaskEvent(o));
     }
@@ -124,7 +128,7 @@ public sealed class VertexBrain : IAsyncDisposable
                         Log?.Invoke($"task ended: {t.Outcome.Task}: {t.Outcome.Summary}");
                         // Report back in character (failures always; successes unless very quiet).
                         if (!t.Outcome.Success || Character.Style.Chattiness >= 0.2)
-                            await RespondAsync($"(Your task \"{t.Outcome.Task}\" just ended: {t.Outcome.Summary}. Tell your friends in one short sentence, without calling tools.)", ct, allowTools: false);
+                            await RespondAsync($"[Game update, not a friend talking: you finished {t.Outcome.Task}. Result: {t.Outcome.Summary}] Tell your friends how it went, in one short first-person sentence.", ct, allowTools: false);
                         break;
                 }
             }
@@ -146,7 +150,8 @@ public sealed class VertexBrain : IAsyncDisposable
         sb.AppendLine($"Your name is {Character.Name}. You are playing Minecraft Java Edition together with your friends, as a real player in the world. " +
                       "Your friends talk to you out loud or in chat.");
         sb.AppendLine("Rules:");
-        sb.AppendLine("- Answer in one or two short spoken sentences, friendly and simple (a child may be listening). No lists, emojis or markdown.");
+        sb.AppendLine("- Speak as yourself in the first person (\"I\"), to your friends (\"you\"). Answer in one or two short spoken sentences, friendly and simple (a child may be listening). No lists, emojis or markdown.");
+        sb.AppendLine("- Tool results describe what YOU are doing. If a job has only started, say you are on your way or working on it, not that it is done.");
         sb.AppendLine("- To DO anything in the game, call a tool. Never claim you did something unless a tool did it.");
         sb.AppendLine("- If you are asked to do something you have no tool for, say so kindly and suggest something you can do.");
         sb.AppendLine("- Never be mean, never use bad words, and never attack players.");
@@ -200,7 +205,8 @@ public sealed class VertexBrain : IAsyncDisposable
             _history.Add(new AiChatMessage("assistant", reply.Length > 0 ? reply : "(did it)"));
             if (_history.Count > 40) _history.RemoveRange(0, _history.Count - 40);
         }
-        if (reply.Length > 0) Mouth.Say(reply);
+        // Never speak a fragment ("I", ".") - a model that only called a tool sometimes leaves one behind.
+        if (reply.Count(char.IsLetter) >= 4) Mouth.Say(reply);
         return reply;
     }
 
