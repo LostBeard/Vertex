@@ -47,4 +47,23 @@ public class LiveProductionTests
         Assert.That(client.Players[profile.Id].ChatSessionId, Is.Not.Null, "secure chat session accepted by the proxy/server");
         Assert.That(client.TeleportCount, Is.EqualTo(1), "only the spawn teleport: standing still must not be corrected");
     }
+
+    [Test]
+    public async Task AubsCraft_VoiceChatConnectsThroughTheProxy()
+    {
+        var store = DpapiAccountStore.ForAccount("Vertex", "default");
+        if (!File.Exists(store.Path)) Assert.Ignore("no account cached (run `vertex login`)");
+        var profile = await new MicrosoftAuth(store, _ => throw new AssertionException("needs a device code")).SignInAsync();
+
+        await using var client = new MinecraftClient(profile);
+        await using var voice = new SpawnDev.Minecraft.VoiceChat.SimpleVoiceChat(client, "mc.spawndev.com");
+        voice.Log += m => TestContext.Out.WriteLine("[voice] " + m);
+        using var cts = new CancellationTokenSource(Timeout);
+        await client.ConnectAsync("mc.spawndev.com", 25565, cts.Token);
+        await voice.WaitConnectedAsync(cts.Token);
+        Assert.That(voice.IsConnected);
+        TestContext.Out.WriteLine($"codec {voice.Codec}, distance {voice.VoiceDistance}, groups {voice.GroupsEnabled}, {voice.PlayerStates.Count} voice states");
+        await client.WaitTicksAsync(100); // keep-alives over the real network
+        Assert.That(voice.IsConnected, "voice stayed up");
+    }
 }
