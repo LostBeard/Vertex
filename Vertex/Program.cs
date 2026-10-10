@@ -15,10 +15,15 @@ using Vertex.Brain;
 
 const string App = "Vertex";
 
-if (args.Length == 0)
+if (args.Length == 0 || args[0] == "ui")
 {
-    Console.WriteLine("usage: vertex play <host[:port]> [--offline <name>] [--character <name>] [--model <model>] | login|logout [account] | ping <host[:port]> | join <host[:port]> [account | --offline <name>]");
-    return 2;
+    // The dashboard: http://localhost:5280 (and on the LAN, so it can be opened from another device).
+    return await RunDashboardAsync(args);
+}
+if (args[0] is "help" or "--help" or "-h")
+{
+    Console.WriteLine("usage: vertex [ui] | play <host[:port]> [--offline <name>] [--character <name>] [--model <model>] | login|logout [account] | ping <host[:port]> | join <host[:port]> [account | --offline <name>]");
+    return 0;
 }
 
 try
@@ -130,5 +135,26 @@ static async Task<int> PlayAsync(string[] args)
             if (line.Length > 0) brain.Post(new SaidEvent(Guid.Empty, "Console", line, false));
     });
     Log("disconnected: " + await done.Task);
+    return 0;
+}
+
+static async Task<int> RunDashboardAsync(string[] args)
+{
+    var builder = Microsoft.AspNetCore.Builder.WebApplication.CreateBuilder();
+    builder.WebHost.UseUrls(Option(args, "--urls") ?? "http://0.0.0.0:5280");
+    // Serve the framework's static files (blazor.web.js) when running from the build output, not only when published
+    // or in Development: without them the page renders but nothing on it responds.
+    builder.WebHost.UseStaticWebAssets();
+    builder.Services.AddSingleton<Vertex.Host.VertexHost>();
+    builder.Services.AddRazorComponents().AddInteractiveServerComponents();
+    var app = builder.Build();
+    app.UseAntiforgery();
+    app.MapStaticAssets(); // serves _framework/blazor.web.js (without it the page renders but nothing is clickable)
+    app.MapRazorComponents<Vertex.Components.App>().AddInteractiveServerRenderMode();
+    Console.WriteLine("Vertex dashboard: http://localhost:5280");
+    if (!args.Contains("--no-browser"))
+        try { System.Diagnostics.Process.Start(new System.Diagnostics.ProcessStartInfo("http://localhost:5280") { UseShellExecute = true }); } catch { }
+    await app.RunAsync();
+    await app.Services.GetRequiredService<Vertex.Host.VertexHost>().DisposeAsync();
     return 0;
 }

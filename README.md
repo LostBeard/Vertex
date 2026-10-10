@@ -7,8 +7,9 @@ characters in game.
 
 Named by Aubriella, who it was built to play with.
 
-> **Status: early development.** Vertex can sign in with a Microsoft account, join online-mode servers, stay
-> connected and chat (signed). It does not move or play yet. See [PLAN.md](PLAN.md) for the roadmap and what works today.
+> **Status: early, playable.** Vertex joins servers (Microsoft accounts, signed chat), moves with vanilla physics,
+> pathfinds, digs, builds up, crafts, fights, hears and speaks in proximity voice, and takes requests through a local
+> language model. See [PLAN.md](PLAN.md) for what is done and what is next. See [PLAN.md](PLAN.md) for the roadmap and what works today.
 
 ## Goals
 
@@ -23,6 +24,24 @@ Named by Aubriella, who it was built to play with.
   switch between them in game.
 - **Everything local.** Speech, language model and planning run on your own GPU through the SpawnDev libraries.
   No cloud AI service required.
+
+## Running it
+
+Vertex runs on Windows with an NVIDIA GPU (CUDA; it falls back to OpenCL/CPU, slowly).
+
+1. Install a chat model into the Ollama cache, e.g. `ollama pull llama3.1:8b` (Vertex reads Ollama's model files
+   directly; Ollama itself does not need to be running). The speech models download on first use.
+2. `Vertex.exe` opens the dashboard at http://localhost:5280 (also reachable from other devices on your network).
+   Pick the server, sign in with the Microsoft account Vertex should play as (a device code appears), choose a
+   character, press **Start playing**.
+3. Talk to it in game: say its name ("Vertex, follow me", "Vertex, get some wood", "Vertex, make a wooden pickaxe",
+   "Vertex, be Pixel"), in proximity voice (Simple Voice Chat) or in chat. You can also type to it on the dashboard.
+
+Command line: `vertex login`, `vertex play <host> [--character Pixel] [--model llama3.1:8b] [--offline Name]`,
+`vertex ping <host>`.
+
+Characters live in `%APPDATA%\Vertex\characters\*.json` (name, personality, voice, play style) and can be edited
+on the dashboard. Built in: Vertex, Pixel, Captain, Bolt.
 
 ## Built on
 

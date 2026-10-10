@@ -1,0 +1,185 @@
+@page "/"
+@inject VertexHost Host
+@implements IDisposable
+
+<header>
+    <h1>Vertex</h1>
+    <span class="status">@Host.Status</span>
+</header>
+
+<main>
+    <div>
+        <section>
+            <h2>Play</h2>
+            <label>Server</label>
+            <div class="row">
+                <input @bind="Host.Settings.Server" disabled="@Busy" />
+                <input type="number" style="max-width:90px" @bind="Host.Settings.Port" disabled="@Busy" />
+            </div>
+            <label>Account</label>
+            <select @bind="AccountMode" disabled="@Busy">
+                <option value="microsoft">Microsoft account (signed in)</option>
+                <option value="offline">Offline name (local test servers)</option>
+            </select>
+            @if (AccountMode == "offline")
+            {
+                <label>Offline name</label>
+                <input @bind="Host.Settings.OfflineName" disabled="@Busy" />
+            }
+            <label>Brain (language model)</label>
+            <select @bind="Host.Settings.Model" disabled="@Busy">
+                @if (Host.Models.Count == 0) { <option value="@Host.Settings.Model">@(string.IsNullOrEmpty(Host.Settings.Model) ? "(loads on start)" : Host.Settings.Model)</option> }
+                @foreach (var m in Host.Models) { <option value="@m">@m</option> }
+            </select>
+            <label><input type="checkbox" style="width:auto" @bind="Host.Settings.Voice" disabled="@Busy" /> Voice chat (Simple Voice Chat)</label>
+            <div class="row" style="margin-top:12px">
+                @if (Host.State == HostState.Idle)
+                {
+                    <button @onclick="Host.StartAsync">Start playing</button>
+                }
+                else
+                {
+                    <button class="secondary" @onclick="Host.StopAsync" disabled="@(Host.State != HostState.Playing)">Leave</button>
+                    <button class="secondary" @onclick="Host.StopTask" disabled="@(Host.State != HostState.Playing)">Stop task</button>
+                }
+            </div>
+            @if (Host.SignInPrompt is { } p)
+            {
+                <p>Sign in at <a href="@p.DirectLink" target="_blank">microsoft.com/link</a> with the code</p>
+                <div class="code">@p.UserCode</div>
+            }
+        </section>
+
+        <section style="margin-top:16px">
+            <h2>Character</h2>
+            <select value="@Host.Settings.Character" @onchange="OnCharacter">
+                @foreach (var c in Characters) { <option value="@c.Name">@c.Name</option> }
+            </select>
+            @if (Editing is { } e)
+            {
+                <label>Personality</label>
+                <textarea @bind="e.Persona"></textarea>
+                <label>Voice</label>
+                <select @bind="e.Voice">
+                    @foreach (var v in Vertex.AI.VertexAi.Voices) { <option value="@v">@v.Replace("kokoro:", "")</option> }
+                </select>
+                <label>Chatty @e.Style.Chattiness.ToString("0.0") / Brave @e.Style.Bravery.ToString("0.0") / Helpful @e.Style.Helpfulness.ToString("0.0") / Playful @e.Style.Playfulness.ToString("0.0")</label>
+                <div class="row">
+                    <input type="range" min="0" max="1" step="0.1" @bind="e.Style.Chattiness" @bind:event="oninput" title="Chatty" />
+                    <input type="range" min="0" max="1" step="0.1" @bind="e.Style.Bravery" @bind:event="oninput" title="Brave" />
+                </div>
+                <div class="row">
+                    <input type="range" min="0" max="1" step="0.1" @bind="e.Style.Helpfulness" @bind:event="oninput" title="Helpful" />
+                    <input type="range" min="0" max="1" step="0.1" @bind="e.Style.Playfulness" @bind:event="oninput" title="Playful" />
+                </div>
+                <div class="row" style="margin-top:10px">
+                    <button class="secondary" @onclick="SaveCharacter">Save character</button>
+                </div>
+                <label>New character name</label>
+                <div class="row">
+                    <input @bind="NewName" placeholder="e.g. Sparkle" />
+                    <button class="secondary" style="flex:0" @onclick="NewCharacter">Add</button>
+                </div>
+            }
+        </section>
+    </div>
+
+    <div>
+        <section>
+            <div class="stats">
+                <div class="stat"><b>@(Host.Client?.Health / 2 ?? 0)</b><span>hearts</span></div>
+                <div class="stat"><b>@(Host.Client?.Food / 2 ?? 0)</b><span>food</span></div>
+                <div class="stat"><b>@Position</b><span>position</span></div>
+                <div class="stat"><b>@(Host.Brain?.Tasks.Current ?? "idle")</b><span>doing</span></div>
+                <div class="stat"><b>@(Host.Voice?.IsConnected == true ? "on" : "off")</b><span>voice</span></div>
+            </div>
+            <div class="row" style="margin-bottom:10px">
+                <input @bind="Message" @bind:event="oninput" @onkeydown="OnKey" placeholder="Tell Vertex something, e.g. follow Aubri" disabled="@(Host.State != HostState.Playing)" />
+                <button style="flex:0" @onclick="Send" disabled="@(Host.State != HostState.Playing)">Say</button>
+            </div>
+            <div class="log">
+                @foreach (var line in Host.Lines.AsEnumerable().Reverse())
+                {
+                    <div class="@line.Kind"><span class="t">@line.Time.ToString("HH:mm:ss")</span>@Label(line.Kind)@line.Text</div>
+                }
+            </div>
+            <p class="hint">Heard = what Vertex heard (voice or chat). Said = what it answered. Tool = what it did.</p>
+        </section>
+    </div>
+</main>
+
+@code {
+    private string Message = "";
+    private string NewName = "";
+    private Character? Editing;
+    private IReadOnlyList<Character> Characters = [];
+    private Timer? _timer;
+
+    private bool Busy => Host.State != HostState.Idle;
+
+    private string AccountMode
+    {
+        get => string.IsNullOrWhiteSpace(Host.Settings.Account) ? "offline" : "microsoft";
+        set => Host.Settings.Account = value == "offline" ? "" : "default";
+    }
+
+    private string Position => Host.Client is { } c ? $"{c.Position.X:0} {c.Position.Y:0} {c.Position.Z:0}" : "-";
+
+    private static string Label(LineKind kind) => kind switch
+    {
+        LineKind.Heard => "heard: ", LineKind.Said => "said: ", LineKind.Tool => "", LineKind.Error => "error: ", _ => "",
+    };
+
+    protected override void OnInitialized()
+    {
+        Characters = Host.Characters.All();
+        Editing = Host.Characters.Find(Host.Settings.Character) ?? Characters.FirstOrDefault();
+        Host.Changed += OnChanged;
+        // Health, position and the current task change without an event: refresh twice a second.
+        _timer = new Timer(_ => InvokeAsync(StateHasChanged), null, 500, 500);
+    }
+
+    private void OnChanged() => InvokeAsync(StateHasChanged);
+
+    private void OnCharacter(ChangeEventArgs e)
+    {
+        var name = e.Value?.ToString() ?? "Vertex";
+        Host.SwitchCharacter(name);
+        Editing = Host.Characters.Find(name);
+    }
+
+    private void SaveCharacter()
+    {
+        if (Editing == null) return;
+        Host.Characters.Save(Editing);
+        if (Host.Brain != null && Host.Brain.Character.Name == Editing.Name) Host.SwitchCharacter(Editing.Name);
+        Characters = Host.Characters.All();
+    }
+
+    private void NewCharacter()
+    {
+        if (string.IsNullOrWhiteSpace(NewName)) return;
+        var c = new Character { Name = NewName.Trim(), Persona = $"You are {NewName.Trim()}, a friendly Minecraft companion.", Voice = "kokoro:af_heart" };
+        Host.Characters.Save(c);
+        Characters = Host.Characters.All();
+        Editing = c;
+        NewName = "";
+    }
+
+    private void Send()
+    {
+        Host.Tell(Message);
+        Message = "";
+    }
+
+    private void OnKey(KeyboardEventArgs e)
+    {
+        if (e.Key == "Enter") Send();
+    }
+
+    public void Dispose()
+    {
+        Host.Changed -= OnChanged;
+        _timer?.Dispose();
+    }
+}
