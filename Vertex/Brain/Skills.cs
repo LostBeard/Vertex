@@ -431,6 +431,102 @@ public sealed class Skills(MinecraftClient client)
         return (morning, morning ? "I slept. Good morning!" : "I had to get out of bed (it's still night).");
     }
 
+    // ---------------------------------------------------------------- building
+
+    /// <summary>
+    /// Builds a small house near a player (or here): picks the material we have most of, the bigger size (7) when
+    /// there is enough for it, a flat clear spot, the door facing the player, then walks out through the door.
+    /// </summary>
+    public async Task<(bool, string)> BuildHouseAsync(string? nearPlayer, string? material, CancellationToken ct)
+    {
+        var inv = client.Inventory.Slots.Skip(PlayerInventory.MainStart).Where(s => !s.IsEmpty).ToList();
+        int Have(Func<ItemStack, bool> m) => inv.Where(m).Sum(s => s.Count);
+        string? chosen = null;
+        if (!string.IsNullOrWhiteSpace(material))
+        {
+            var m = material.Trim().ToLowerInvariant().Replace(' ', '_').TrimEnd('s');
+            chosen = Blueprints.HouseMaterials.FirstOrDefault(x => x.Contains(m) || m.Contains(x.Replace("minecraft:", "")));
+            if (chosen == null) return (false, $"I can't build a house out of {material}.");
+        }
+        chosen ??= Blueprints.HouseMaterials.OrderByDescending(x => Have(Blueprints.MaterialMatch(x))).First();
+        var wall = Blueprints.MaterialMatch(chosen);
+        var glass = Have(Blueprints.IsGlass) >= 3;
+        var size = Have(wall) >= Blueprints.HouseBlocks(7, glass) ? 7 : 5;
+        var need = Blueprints.HouseBlocks(size, glass);
+        var pretty = chosen == "planks" ? "wooden" : chosen.Replace("minecraft:", "").Replace('_', ' ');
+        if (Have(wall) < need)
+            return (false, $"I need {need} {(chosen == "planks" ? "planks" : pretty)} to build a house and I only have {Have(wall)}. (Wood works: one log makes 4 planks.)");
+
+        var player = FindPlayer(nearPlayer);
+        var (ox, oy, oz) = player != null ? (player.X, player.Y, player.Z) : client.Position;
+        if (FindHouseSite(ox, oy, oz, size, player) is not { } site) return (false, "I can't find a flat, clear spot for a house around here.");
+        var (cx, y, cz) = site;
+        // The door faces whoever asked (or us), so they can walk right in.
+        double fx = ox - (cx + 0.5), fz = oz - (cz + 0.5);
+        var doorSide = Math.Abs(fx) > Math.Abs(fz) ? (fx > 0 ? BlockFace.East : BlockFace.West) : (fz > 0 ? BlockFace.South : BlockFace.North);
+        var plan = Blueprints.House(cx, y, cz, size, doorSide, wall, glass, Have(s => s.Name == "minecraft:torch") > 0, Have(Blueprints.IsDoor) > 0);
+
+        if (!await client.GoToAsync(Goal.Block(cx, y, cz), new PathOptions { MaxNodes = 20_000 }, ct))
+            return (false, "I couldn't get to the spot I picked for the house.");
+        var (placed, failed, missing) = await client.BuildAsync(plan, ct);
+        // Out through the doorway (the door opens and closes behind us).
+        var (dx, dz) = Blueprints.Dir(doorSide);
+        var r = size / 2;
+        await client.GoToAsync(Goal.Block(cx + dx * (r + 1), y, cz + dz * (r + 1)), new PathOptions { MaxNodes = 5_000 }, ct);
+        if (missing != null) return (false, $"I ran out of {missing} while building the house ({placed} blocks placed).");
+        var side = doorSide.ToString().ToLowerInvariant();
+        return failed == 0
+            ? (true, $"I built a {size} by {size} {pretty} house! The door is on the {side} side.")
+            : (true, $"I built the house, but {failed} {(failed == 1 ? "block" : "blocks")} didn't go where I wanted. The door is on the {side} side.");
+    }
+
+    /// <summary>
+    /// The nearest spot (within 14 blocks) for a size x size house: solid full ground under every cell at one level,
+    /// four blocks of air (or grass and flowers) above it, and nobody standing there.
+    /// </summary>
+    public (int X, int Y, int Z)? FindHouseSite(double nearX, double nearY, double nearZ, int size, Entity? keepClear)
+    {
+        var r = size / 2;
+        var w = client.World;
+        bool Open(int s) => s >= 0 && (D.IsAir(s) || (D.StateFlags[s] & GameData.FlagReplaceable) != 0) && (D.StateFlags[s] & (GameData.FlagWater | GameData.FlagLava)) == 0;
+        bool Ground(int s) => s > 0 && D.HasCollision(s) && !D.IsAir(s) && (D.StateFlags[s] & GameData.FlagReplaceable) == 0
+            && D.CollisionBoxes(s).Any(b => b.MaxY >= 1.0) && !client.IsBuiltBlock(D.BlockOf(s)) && D.BlockOf(s).Name is not ("minecraft:sand" or "minecraft:gravel");
+        var bx = (int)Math.Floor(nearX);
+        var bz = (int)Math.Floor(nearZ);
+        var by = (int)Math.Floor(nearY + 1e-6);
+        // Not on top of the player: start a little way off and work outward.
+        var candidates = new List<(int X, int Z, int D2)>();
+        for (var dx = -14; dx <= 14; dx++)
+        for (var dz = -14; dz <= 14; dz++)
+        {
+            var d2 = dx * dx + dz * dz;
+            if (d2 <= 196 && Math.Max(Math.Abs(dx), Math.Abs(dz)) > r + 1) candidates.Add((bx + dx, bz + dz, d2));
+        }
+        foreach (var (x, z, _) in candidates.OrderBy(c => c.D2))
+        {
+            if (!w.IsLoaded(x - r, z - r) || !w.IsLoaded(x + r, z + r) || !w.IsLoaded(x - r, z + r) || !w.IsLoaded(x + r, z - r)) continue;
+            // The ground level under the centre, near the player's height.
+            int? level = null;
+            for (var y = by + 3; y >= by - 4 && level == null; y--)
+                if (Ground(w.GetState(x, y - 1, z)) && Open(w.GetState(x, y, z))) level = y;
+            if (level is not int ly) continue;
+            var ok = true;
+            for (var dx = -r; dx <= r && ok; dx++)
+            for (var dz = -r; dz <= r && ok; dz++)
+            {
+                if (!Ground(w.GetState(x + dx, ly - 1, z + dz))) ok = false;
+                for (var dy = 0; dy < 4 && ok; dy++)
+                    if (!Open(w.GetState(x + dx, ly + dy, z + dz))) ok = false;
+            }
+            if (!ok) continue;
+            // Nobody inside the footprint (or right next to it).
+            if (client.Entities.Values.Any(e => e.IsPlayer && Math.Abs(e.X - (x + 0.5)) < r + 1.5 && Math.Abs(e.Z - (z + 0.5)) < r + 1.5)) continue;
+            if (keepClear != null && Math.Abs(keepClear.X - (x + 0.5)) < r + 1.5 && Math.Abs(keepClear.Z - (z + 0.5)) < r + 1.5) continue;
+            return (x, ly, z);
+        }
+        return null;
+    }
+
     // ---------------------------------------------------------------- creepers
 
     /// <summary>

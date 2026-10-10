@@ -169,4 +169,29 @@ public class VertexUnitTests
         await Wait.UntilAsync(() => tasks.Current == null, TimeSpan.FromSeconds(5), () => $"now {tasks.Current}");
         Assert.That(followStarts, Is.EqualTo(3));
     }
+
+    [Test]
+    public void HouseBlueprint_CountsAndOrder()
+    {
+        static bool Planks(SpawnDev.Minecraft.Items.ItemStack s) => s.Name.EndsWith("_planks");
+        var plan = Blueprints.House(0, 64, 0, 5, BlockFace.North, Planks, glass: true, torch: true, door: true);
+        Assert.That(plan.Count(p => p.Description is "wall blocks" or "roof blocks"), Is.EqualTo(Blueprints.HouseBlocks(5, glass: true)).And.EqualTo(68));
+        Assert.That(plan.Count(p => p.Description == "glass"), Is.EqualTo(3));
+        Assert.That(plan.Count, Is.EqualTo(68 + 3 + 1 + 1));
+        Assert.That(plan.Select(p => (p.X, p.Y, p.Z)).Distinct().Count(), Is.EqualTo(plan.Count), "no cell twice");
+        Assert.That(plan[^1], Is.EqualTo(plan.Single(p => p.Description == "a door")), "door last");
+        Assert.That((plan[^1].X, plan[^1].Y, plan[^1].Z, plan[^1].Facing), Is.EqualTo((0, 64, -2, (BlockFace?)BlockFace.North)));
+        Assert.That(plan.Any(p => p.X == 0 && p.Z == 0 && p.Y < 66), Is.False, "nothing where the builder stands");
+        Assert.That(plan.Any(p => p.X == 0 && p.Z == -2 && p.Y == 65), Is.False, "the doorway's top half stays open");
+        // Every block leans on the ground or on a block placed before it.
+        var placed = new HashSet<(int, int, int)>();
+        foreach (var p in plan)
+        {
+            var leans = p.Y == 64 || placed.Contains((p.X, p.Y - 1, p.Z)) || placed.Contains((p.X + 1, p.Y, p.Z)) || placed.Contains((p.X - 1, p.Y, p.Z))
+                || placed.Contains((p.X, p.Y, p.Z + 1)) || placed.Contains((p.X, p.Y, p.Z - 1));
+            Assert.That(leans, $"{p} has nothing to be placed against");
+            placed.Add((p.X, p.Y, p.Z));
+        }
+        Assert.That(Blueprints.HouseBlocks(7, glass: false), Is.EqualTo(24 * 3 - 2 + 49));
+    }
 }

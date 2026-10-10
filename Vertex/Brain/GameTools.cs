@@ -166,6 +166,17 @@ public static class GameTools
                 return Task.FromResult("OK: I am going to bed.");
             });
 
+        yield return new GameTool("build_house",
+            "Build a small house near the person talking (walls, roof, windows if you have glass, a door and a torch if you have them). Needs about 70 blocks of one kind (planks, cobblestone...); 7x7 with about 115.",
+            """{"type":"object","properties":{"material":{"type":"string","description":"what to build with, e.g. planks, cobblestone; empty = what you have most of"},"player":{"type":"string","description":"who to build it near; 'me' = the person talking"}}}""",
+            a =>
+            {
+                var p = Who(a);
+                var material = Str(a, "material");
+                tasks.Start("building a house", ct => skills.BuildHouseAsync(p, material, ct));
+                return Task.FromResult("OK: I started building a house. It takes a minute; I am NOT done yet.");
+            });
+
         yield return new GameTool("smelt",
             "Smelt or cook in a furnace: iron_ingot from raw iron, glass from sand, cooked_beef from beef, charcoal from logs. Builds a furnace from cobblestone if none is near. Takes 10 seconds per item.",
             """{"type":"object","properties":{"result":{"type":"string","description":"what to make, e.g. iron_ingot, glass, cooked_porkchop"},"count":{"type":"integer"}},"required":["result"]}""",

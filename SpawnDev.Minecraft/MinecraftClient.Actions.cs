@@ -417,6 +417,18 @@ public sealed partial class MinecraftClient
     /// Places the held block AT x,y,z by clicking a solid neighbour's face. Returns false if there is nothing to
     /// place against, the spot is occupied, or the server refused.
     /// </summary>
+    private static readonly string[] InteractiveParts =
+    [
+        "chest", "barrel", "crafting_table", "furnace", "smoker", "door", "fence_gate", "_bed", "lever", "_button", "anvil",
+        "enchanting_table", "brewing_stand", "hopper", "dispenser", "dropper", "shulker_box", "loom", "stonecutter", "grindstone",
+        "cartography_table", "smithing_table", "lectern", "note_block", "repeater", "comparator", "daylight_detector", "bell",
+        "cake", "beacon", "jukebox", "crafter", "_sign", "composter", "cauldron", "flower_pot", "respawn_anchor", "campfire",
+        "decorated_pot", "chiseled_bookshelf", "lodestone", "command_block", "structure_block", "jigsaw",
+    ];
+
+    /// <summary>Blocks that do something when right-clicked (open, toggle, edit): clicking one does not place against it.</summary>
+    private bool Interactive(int state) => World.Data.BlockOf(state).Name is var n && InteractiveParts.Any(n.Contains);
+
     public async Task<bool> PlaceBlockAsync(int x, int y, int z, CancellationToken cancellationToken = default)
     {
         var here = World.GetState(x, y, z);
@@ -426,7 +438,7 @@ public sealed partial class MinecraftClient
         var (ex, ey, ez) = EyePosition;
         var candidates = new[] { BlockFace.Down, BlockFace.North, BlockFace.South, BlockFace.West, BlockFace.East, BlockFace.Up }
             .Select(f => (Face: f, N: Offset((x, y, z), f)))
-            .Where(c => { var s = World.GetState(c.N.X, c.N.Y, c.N.Z); return s > 0 && World.Data.HasCollision(s) && (World.Data.StateFlags[s] & GameData.FlagReplaceable) == 0; })
+            .Where(c => { var s = World.GetState(c.N.X, c.N.Y, c.N.Z); return s > 0 && World.Data.HasCollision(s) && (World.Data.StateFlags[s] & GameData.FlagReplaceable) == 0 && !Interactive(s); })
             .OrderBy(c => Math.Pow(c.N.X + 0.5 - ex, 2) + Math.Pow(c.N.Y + 0.5 - ey, 2) + Math.Pow(c.N.Z + 0.5 - ez, 2))
             .ToList();
         if (candidates.Count == 0) return false;

@@ -47,6 +47,7 @@ What you can ask it (any wording; the language model picks the tool):
 | "smelt the iron", "cook the beef" | builds a furnace if needed, fuels it, waits, takes the output |
 | "protect me", "fight the zombies" | guards a player, fighting monsters that come near them |
 | "put your stuff in the chest", "get bread from the chest" | stores and takes items (keeps its tools, armor, food) |
+| "build us a house" | finds a flat spot near you and builds a small house (walls, windows, roof, torch, a door facing you) |
 | "go to bed" | sleeps in the nearest bed (the night passes when everyone sleeps) |
 | "give me your diamonds", "eat something" | walks over and drops items; eats when hungry (also by reflex) |
 | "remember this is home", "go home" | remembers named places per server and walks back to them |

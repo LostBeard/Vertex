@@ -165,6 +165,52 @@ public class LiveNavigationTests
     }
 
     [Test]
+    public async Task BuildsAHouse_AndWalksOutThroughTheDoor()
+    {
+        const string name = "VertexHouse";
+        var (client, x, z) = await JoinCourseAsync(name, (_, _) => []);
+        await using var _ = client;
+        foreach (var (item, count) in new[] { ("oak_planks", 64), ("oak_planks", 64), ("glass", 3), ("torch", 1), ("oak_door", 1) })
+            await _server.CommandAsync($"give {name} minecraft:{item} {count}");
+        await Wait.UntilAsync(() => client.Inventory.Count("oak_planks") == 128 && client.Inventory.Count("oak_door") == 1 && client.Inventory.Count("glass") == 3,
+            Timeout, () => client.Inventory.ToString());
+        // Stand out on the course: the nearest site is then west of us, so the door must face east, away from the
+        // north-west corner the builder last looked at (placing the torch). Facing comes from our rotation.
+        await _server.CommandAsync($"tp {name} {x + 30.5} 200 {z + 0.5}");
+        await Wait.UntilAsync(() => Math.Abs(client.Position.X - (x + 30.5)) < 1e-9 && client.OnGround, Timeout, () => $"{client.Position}");
+        var teleports = client.TeleportCount;
+
+        var skills = new Vertex.Brain.Skills(client);
+        var (ok, message) = await skills.BuildHouseAsync(null, null, CancellationToken.None).WaitAsync(TimeSpan.FromMinutes(2));
+        TestContext.Out.WriteLine(message);
+        Assert.That(ok, message);
+        Assert.That(message, Does.Contain("7 by 7 wooden house").And.Contain("east side"));
+
+        var data = client.World.Data;
+        List<(int X, int Y, int Z)> Find(string block) =>
+            client.World.FindBlocks(st => st > 0 && data.BlockOf(st).Name == block, (x + 25, 201, z), 15, 500);
+        Assert.That(Find("minecraft:oak_planks"), Has.Count.EqualTo(Vertex.Brain.Blueprints.HouseBlocks(7, glass: true)));
+        Assert.That(Find("minecraft:glass"), Has.Count.EqualTo(3));
+        Assert.That(Find("minecraft:torch"), Has.Count.EqualTo(1));
+        var door = Find("minecraft:oak_door");
+        Assert.That(door, Has.Count.EqualTo(2), "both halves of the door");
+        Assert.That(client.Inventory.Count("oak_planks"), Is.EqualTo(128 - Vertex.Brain.Blueprints.HouseBlocks(7, glass: true)));
+
+        // Outside, and the door shut behind us.
+        await client.WaitTicksAsync(5);
+        var lower = door.OrderBy(d => d.Y).First();
+        Assert.That(data.GetProperty(client.World.GetState(lower.X, lower.Y, lower.Z), "open"), Is.EqualTo("false"), "closed the door behind it");
+        var side = System.Text.RegularExpressions.Regex.Match(message, @"on the (\w+) side").Groups[1].Value;
+        Assert.That(data.GetProperty(client.World.GetState(lower.X, lower.Y, lower.Z), "facing"), Is.EqualTo(side), "the door faces out of its wall");
+        var planks = Find("minecraft:oak_planks");
+        int minX = planks.Min(p => p.X), maxX = planks.Max(p => p.X), minZ = planks.Min(p => p.Z), maxZ = planks.Max(p => p.Z);
+        Assert.That((maxX - minX, maxZ - minZ), Is.EqualTo((6, 6)), "7 by 7");
+        var (px, _, pz) = client.Position;
+        Assert.That(px < minX || px > maxX + 1 || pz < minZ || pz > maxZ + 1, $"outside the house at {client.Position}");
+        Assert.That(client.TeleportCount, Is.EqualTo(teleports), "the server corrected our movement");
+    }
+
+    [Test]
     public async Task NeverDigsThroughABuild()
     {
         const string name = "VertexPolite";
