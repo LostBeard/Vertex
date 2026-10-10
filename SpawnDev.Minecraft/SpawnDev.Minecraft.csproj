@@ -1,0 +1,14 @@
+<Project Sdk="Microsoft.NET.Sdk">
+	<PropertyGroup>
+		<Version>0.1.0-local.1</Version>
+		<Description>A Minecraft Java Edition client library for .NET: protocol, login, world model and physics. Built for Vertex.</Description>
+		<PackageTags>minecraft;protocol;client;bot</PackageTags>
+		<AllowUnsafeBlocks>true</AllowUnsafeBlocks>
+		<GenerateDocumentationFile>true</GenerateDocumentationFile>
+		<NoWarn>$(NoWarn);CS1591</NoWarn>
+	</PropertyGroup>
+	<ItemGroup>
+		<InternalsVisibleTo Include="Vertex.Tests" />
+		<EmbeddedResource Include="Data\en_us.json.br" LogicalName="SpawnDev.Minecraft.Data.en_us.json.br" />
+	</ItemGroup>
+</Project>
