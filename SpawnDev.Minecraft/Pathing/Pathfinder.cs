@@ -14,6 +14,15 @@ public abstract class Goal
     public static Goal Block(int x, int y, int z) => new GoalNear(x, y, z, 0);
     public static Goal Near(double x, double y, double z, double range) => new GoalNear(x, y, z, range);
     public static Goal XZ(int x, int z) => new GoalXZ(x, z);
+    public static Goal AwayFrom(double x, double z, double distance) => new GoalAwayFrom(x, z, distance);
+}
+
+/// <summary>At least `distance` blocks (horizontally) from a point: running away, wherever the ground allows.</summary>
+public sealed class GoalAwayFrom(double x, double z, double distance) : Goal
+{
+    private double Dist(int bx, int bz) => Math.Sqrt((bx + 0.5 - x) * (bx + 0.5 - x) + (bz + 0.5 - z) * (bz + 0.5 - z));
+    public override bool IsReached(int bx, int by, int bz) => Dist(bx, bz) >= distance;
+    public override double Heuristic(int bx, int by, int bz) => Math.Max(0, distance - Dist(bx, bz));
 }
 
 /// <summary>Within range (blocks, Euclidean) of a point; range 0 = exactly that feet block.</summary>
@@ -67,6 +76,8 @@ public sealed class PathOptions
     /// <summary>Highest drop taken without hesitation (3 = no fall damage).</summary>
     public int MaxDrop { get; set; } = 3;
     public int MaxNodes { get; set; } = 60_000;
+    /// <summary>Sprint along the way (getting away from danger; costs food).</summary>
+    public bool Sprint { get; set; }
     /// <summary>Estimated ticks to break a block state with the best tool we have; null = cannot.</summary>
     public Func<int, int?>? DigTicks { get; set; }
 }

@@ -126,6 +126,68 @@ public sealed partial class MinecraftClient
         return condition();
     }
 
+    // ---------------------------------------------------------------- armor
+
+    private static readonly (string Slot, int Index)[] ArmorSlots = [("head", 5), ("chest", 6), ("legs", 7), ("feet", 8)];
+
+    /// <summary>How good a stack is as armor for one slot (armor + half its toughness), or null if it is not armor for it.</summary>
+    public static double? ArmorScore(ItemStack stack, string slot)
+    {
+        if (stack.IsEmpty) return null;
+        double? score = null;
+        foreach (var m in ItemModifiers(stack))
+        {
+            if (m.Slot != slot) continue;
+            if (m.Attribute == "minecraft:armor") score = (score ?? 0) + m.Amount;
+            else if (m.Attribute == "minecraft:armor_toughness") score = (score ?? 0) + m.Amount * 0.5;
+        }
+        return score;
+    }
+
+    /// <summary>The inventory slot of a piece better than what we wear in an armor slot, or -1.</summary>
+    private int BetterArmor(string slot, int index)
+    {
+        var worn = ArmorScore(Inventory[index], slot) ?? -1;
+        var best = -1;
+        var bestScore = worn;
+        foreach (var i in Inventory.Find(s => ArmorScore(s, slot) != null))
+        {
+            var score = ArmorScore(Inventory[i], slot)!.Value;
+            if (score > bestScore) { best = i; bestScore = score; }
+        }
+        return best;
+    }
+
+    /// <summary>True when we carry armor better than what we wear (cheap: no clicks).</summary>
+    public bool HasBetterArmor => ArmorSlots.Any(a => BetterArmor(a.Slot, a.Index) >= 0);
+
+    /// <summary>
+    /// Wears the best armor we carry, like a player shift-clicking it in the inventory screen (a worse piece comes
+    /// off first, into a free slot). Returns how many pieces were put on.
+    /// </summary>
+    public async Task<int> EquipBestArmorAsync(CancellationToken cancellationToken = default)
+    {
+        if (OpenWindow != null) return 0; // the inventory screen is not ours while a container is open
+        var put = 0;
+        foreach (var (slot, index) in ArmorSlots)
+        {
+            var from = BetterArmor(slot, index);
+            if (from < 0) continue;
+            if (!Inventory[index].IsEmpty)
+            {
+                if (Inventory.FirstEmpty() == null) continue;
+                await ClickAsync(0, index, 0, 1, cancellationToken); // shift-click: off, into the inventory
+                if (!await WaitUntilAsync(() => Inventory[index].IsEmpty, 20, cancellationToken)) continue;
+                from = BetterArmor(slot, index);
+                if (from < 0) continue;
+            }
+            var name = Inventory[from].Name;
+            await ClickAsync(0, from, 0, 1, cancellationToken); // shift-click armor: onto its slot
+            if (await WaitUntilAsync(() => Inventory[index].Name == name, 20, cancellationToken)) put++;
+        }
+        return put;
+    }
+
     // ---------------------------------------------------------------- containers
 
     /// <summary>

@@ -2,6 +2,7 @@ using SpawnDev.Minecraft;
 using SpawnDev.Minecraft.Data;
 using Vertex.AI;
 using Vertex.Brain;
+using Vertex.Tests.Live;
 
 namespace Vertex.Tests;
 
@@ -131,5 +132,41 @@ public class VertexUnitTests
             "raw_copper_block", "redstone_ore", "deepslate_diamond_ore", "glowstone", "basalt", "oak_leaves", "cobblestone", "andesite", "clay", "snow_block", "ice"];
         Assert.That(built.Where(n => !Built(n)), Is.Empty, "should be protected");
         Assert.That(natural.Where(Built), Is.Empty, "should be diggable");
+    }
+
+    [Test]
+    public async Task TaskRunner_Interrupt_RunsTheUrgentJob_ThenResumes()
+    {
+        var tasks = new TaskRunner();
+        var ended = new List<string>();
+        tasks.Finished += o => { lock (ended) ended.Add(o.Task); };
+        var followStarts = 0;
+        async Task<(bool, string)> Follow(CancellationToken ct)
+        {
+            Interlocked.Increment(ref followStarts);
+            await Task.Delay(Timeout.Infinite, ct);
+            return (true, "");
+        }
+        tasks.Start("following Aubri", Follow);
+        await Wait.UntilAsync(() => followStarts == 1, TimeSpan.FromSeconds(5), () => "follow started");
+
+        tasks.Interrupt("getting away from a creeper", async ct => { await Task.Delay(50, ct); return (true, "ran"); });
+        Assert.That(tasks.Current, Is.EqualTo("getting away from a creeper"));
+        await Wait.UntilAsync(() => followStarts == 2, TimeSpan.FromSeconds(5), () => $"{followStarts} follow starts, now {tasks.Current}");
+        Assert.That(tasks.Current, Is.EqualTo("following Aubri"), "back to following");
+        lock (ended) Assert.That(ended, Is.EqualTo(new[] { "getting away from a creeper" }), "the interrupted job is not reported as ended");
+
+        // Something new started during the urgent job wins: no resume over it.
+        tasks.Interrupt("getting away from a creeper", async ct => { await Task.Delay(100, ct); return (true, "ran"); });
+        tasks.Start("collecting wood", Follow);
+        await Task.Delay(300);
+        Assert.That(tasks.Current, Is.EqualTo("collecting wood"));
+        Assert.That(followStarts, Is.EqualTo(3));
+
+        // Idle when interrupted: idle afterwards.
+        tasks.Stop();
+        tasks.Interrupt("getting away from a creeper", async ct => { await Task.Delay(10, ct); return (true, "ran"); });
+        await Wait.UntilAsync(() => tasks.Current == null, TimeSpan.FromSeconds(5), () => $"now {tasks.Current}");
+        Assert.That(followStarts, Is.EqualTo(3));
     }
 }

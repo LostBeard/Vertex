@@ -59,10 +59,12 @@ Every milestone is tested against REAL servers started locally (Paper 1.21.5 bui
 - [x] Doors and fence gates: opened on the way, closed behind
 - [x] Never digs through player builds while walking (planks, glass, bricks, doors...)
 - [x] Named places per server ("remember this is home", "go home"), long-distance travel
+- [x] Creeper reflex: a lit fuse (entity data 16/18) interrupts any job, sprint 8+ blocks away, then resume the job
+- [x] Wears the best armor it carries (armor + toughness from the item's own modifiers)
 - [ ] More skills: build structures, explore
 - [x] Characters: name, personality (system prompt), voice, play style knobs; switch in game by voice or chat
 - [x] Memory: remembered facts (persisted)
-- [ ] Per-player memory, places, long-running goals
+- [ ] Per-player memory, long-running goals
 - [x] Reflexes ("System One"): eat, fight back or flee, surface for air, every few ticks without the LLM
 - [ ] A learned fast policy for reflexes (SpawnDev.ILGPU.ML)
 

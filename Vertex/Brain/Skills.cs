@@ -431,6 +431,43 @@ public sealed class Skills(MinecraftClient client)
         return (morning, morning ? "I slept. Good morning!" : "I had to get out of bed (it's still night).");
     }
 
+    // ---------------------------------------------------------------- creepers
+
+    /// <summary>
+    /// A creeper about to blow up within `within` blocks: its fuse is burning (swell direction, entity data 16 above 0)
+    /// or it was lit with flint and steel (ignited, 18). Ids from the server jar's own Creeper class.
+    /// </summary>
+    public Entity? LitCreeper(double within = 7)
+    {
+        var (x, y, z) = client.Position;
+        return client.Entities.Values
+            .Where(e => e.Name == "minecraft:creeper" && e.DistanceTo(x, y, z) < within
+                && ((e.Metadata.TryGetValue(16, out var dir) && Convert.ToInt32(dir) > 0) || (e.Metadata.TryGetValue(18, out var lit) && lit is true)))
+            .OrderBy(e => e.DistanceTo(x, y, z)).FirstOrDefault();
+    }
+
+    /// <summary>
+    /// Sprints away from a creeper until 8 blocks clear: a creeper's fuse stops when its target is more than 7
+    /// blocks away (SwellGoal), and the explosion (power 3) barely reaches that far.
+    /// </summary>
+    public async Task<(bool, string)> EscapeCreeperAsync(int creeperId, CancellationToken ct)
+    {
+        var health = client.Health;
+        for (var hop = 0; hop < 8; hop++)
+        {
+            if (!client.Entities.TryGetValue(creeperId, out var c))
+                return client.Health < health ? (false, "A creeper blew up next to me!") : (true, "A creeper was about to blow up, so I ran.");
+            var (px, py, pz) = client.Position;
+            if (Math.Sqrt((px - c.X) * (px - c.X) + (pz - c.Z) * (pz - c.Z)) >= 8)
+                return (true, "A creeper was about to blow up, so I ran away from it.");
+            using var step = CancellationTokenSource.CreateLinkedTokenSource(ct);
+            step.CancelAfter(TimeSpan.FromSeconds(1)); // re-aim as it follows
+            try { await client.GoToAsync(Goal.AwayFrom(c.X, c.Z, 9), new PathOptions { Sprint = true, MaxNodes = 3_000 }, step.Token); }
+            catch (OperationCanceledException) when (!ct.IsCancellationRequested) { }
+        }
+        return (false, "A creeper is chasing me!");
+    }
+
     public async Task EquipWeaponAsync(CancellationToken ct)
     {
         string[] order = ["netherite_sword", "diamond_sword", "iron_sword", "stone_sword", "golden_sword", "wooden_sword", "netherite_axe", "diamond_axe", "iron_axe", "stone_axe", "wooden_axe"];

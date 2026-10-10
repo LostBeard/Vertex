@@ -1,3 +1,5 @@
+using SpawnDev.Minecraft;
+
 namespace Vertex.Brain;
 
 /// <summary>
@@ -7,35 +9,66 @@ namespace Vertex.Brain;
 /// </summary>
 public sealed class Reflexes : IDisposable
 {
-    private readonly VertexBrain _brain;
+    private readonly MinecraftClient _client;
+    private readonly Skills _skills;
+    private readonly TaskRunner _tasks;
+    private readonly Func<PlayStyle> _style;
     private float _lastHealth = 20;
     private int _tick;
     private bool _busy;
+    private int _escaping = -1;
 
     public bool Enabled { get; set; } = true;
 
-    public Reflexes(VertexBrain brain)
+    public Reflexes(VertexBrain brain) : this(brain.Client, brain.Skills, brain.Tasks, () => brain.Character.Style) { }
+
+    /// <summary>Reflexes without a language model (tests, or a body with no brain).</summary>
+    public Reflexes(MinecraftClient client, Skills skills, TaskRunner tasks, Func<PlayStyle> style)
     {
-        _brain = brain;
-        brain.Client.Tick += OnTick;
+        _client = client;
+        _skills = skills;
+        _tasks = tasks;
+        _style = style;
+        client.Tick += OnTick;
     }
 
     private void OnTick()
     {
-        if (!Enabled || _busy || ++_tick % 5 != 0) return;
-        var c = _brain.Client;
+        if (!Enabled || ++_tick % 2 != 0) return;
+        var c = _client;
+
+        // A creeper about to explode beats everything: run now (checked every 2 ticks; the fuse is 30), then go
+        // back to whatever we were doing.
+        if (_escaping < 0 && _skills.LitCreeper() is { } creeper)
+        {
+            var id = _escaping = creeper.Id;
+            _tasks.Interrupt("getting away from a creeper", async ct =>
+            {
+                try { return await _skills.EscapeCreeperAsync(id, ct); }
+                finally { _escaping = -1; }
+            });
+            return;
+        }
+        if (_busy || _tick % 6 != 0) return;
         var hurt = c.Health < _lastHealth - 0.01f;
         _lastHealth = c.Health;
 
         // Come up for air: under water and not on a job that is steering.
         var body = c.BodySnapshot();
-        if (body.InWater && body.WaterHeight > 1.7 && !_brain.Tasks.IsBusy) c.Controls.Jump = true;
-        else if (!_brain.Tasks.IsBusy && c.Controls.Jump && !body.InWater) c.Controls.Jump = false;
+        if (body.InWater && body.WaterHeight > 1.7 && !_tasks.IsBusy) c.Controls.Jump = true;
+        else if (!_tasks.IsBusy && c.Controls.Jump && !body.InWater) c.Controls.Jump = false;
+
+        // Wear better armor as soon as we have it (idle, so clicks do not fight a crafting or chest job).
+        if (!_tasks.IsBusy && _tick % 60 == 0 && c.HasBetterArmor)
+        {
+            Run(async () => await c.EquipBestArmorAsync(CancellationToken.None));
+            return;
+        }
 
         // Eat when hungry and idle (eating mid-dig would cancel the dig).
-        if (c.Food <= 14 && !_brain.Tasks.IsBusy && _brain.Skills.HasFood)
+        if (c.Food <= 14 && !_tasks.IsBusy && _skills.HasFood)
         {
-            Run(async () => await _brain.Skills.EatAsync(CancellationToken.None));
+            Run(async () => await _skills.EatAsync(CancellationToken.None));
             return;
         }
 
@@ -45,10 +78,10 @@ public sealed class Reflexes : IDisposable
             var (x, y, z) = c.Position;
             var attacker = c.Entities.Values.Where(e => Skills.Hostile.Contains(e.Name) && e.DistanceTo(x, y, z) < 6).OrderBy(e => e.DistanceTo(x, y, z)).FirstOrDefault();
             if (attacker == null) return;
-            if (_brain.Character.Style.Bravery >= 0.5 && c.Health > 8)
-                _brain.Tasks.Start($"fighting a {attacker.Name.Replace("minecraft:", "")} that attacked me", ct => _brain.Skills.AttackAsync(attacker.Name.Replace("minecraft:", ""), ct));
+            if (_style().Bravery >= 0.5 && c.Health > 8)
+                _tasks.Start($"fighting a {attacker.Name.Replace("minecraft:", "")} that attacked me", ct => _skills.AttackAsync(attacker.Name.Replace("minecraft:", ""), ct));
             else
-                _brain.Tasks.Start("running away from a monster", async ct =>
+                _tasks.Start("running away from a monster", async ct =>
                 {
                     var (px, py, pz) = c.Position;
                     double dx = px - attacker.X, dz = pz - attacker.Z;
@@ -70,5 +103,5 @@ public sealed class Reflexes : IDisposable
         });
     }
 
-    public void Dispose() => _brain.Client.Tick -= OnTick;
+    public void Dispose() => _client.Tick -= OnTick;
 }

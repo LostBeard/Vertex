@@ -93,6 +93,7 @@ public sealed partial class MinecraftClient
                         MaxDrop = Math.Max(current.MaxDrop, 3 + Math.Max(0, (int)Health - 4)),
                         MaxNodes = current.MaxNodes,
                         DigTicks = current.DigTicks,
+                        Sprint = current.Sprint,
                     };
                     Log($"no path with the current rules: escalating to max drop {current.MaxDrop}{(current.CanDig ? ", digging" : "")}");
                     (steps, complete) = Pathfinder.FindPath(feet, goal, current);
@@ -105,7 +106,7 @@ public sealed partial class MinecraftClient
                     Log($"no path from {feet} ({(complete ? "already there" : "nothing reachable closer")})");
                     return goal.IsReached(feet.X, feet.Y, feet.Z);
                 }
-                var followed = await FollowAsync(steps, cancellationToken);
+                var followed = await FollowAsync(steps, current.Sprint, cancellationToken);
                 feet = FeetBlock;
                 if (goal.IsReached(feet.X, feet.Y, feet.Z)) return true;
                 if (!followed) Log($"path interrupted at {FeetBlock} (at {Position.X:0.##} {Position.Y:0.##} {Position.Z:0.##}, onGround {OnGround}), replanning");
@@ -165,7 +166,7 @@ public sealed partial class MinecraftClient
     private bool CanHarvestWith(ItemStack tool, int state) =>
         (World.Data.StateFlags[state] & GameData.FlagNeedsTool) == 0 || IsCorrectTool(tool, state);
 
-    private async Task<bool> FollowAsync(List<PathStep> steps, CancellationToken ct)
+    private async Task<bool> FollowAsync(List<PathStep> steps, bool sprint, CancellationToken ct)
     {
         var startTeleports = TeleportCount;
         var opened = new List<(int X, int Y, int Z)>();
@@ -205,7 +206,7 @@ public sealed partial class MinecraftClient
                 continue;
             }
 
-            if (!await MoveToStepAsync(step, last, ct)) return false;
+            if (!await MoveToStepAsync(step, last, sprint, ct)) return false;
             if (TeleportCount != startTeleports) return false; // the server disagreed with us: replan
         }
         Controls.Clear();
@@ -242,7 +243,7 @@ public sealed partial class MinecraftClient
     private bool IsDoorwayOpen(int x, int y, int z) => World.GetState(x, y, z) is var s && s > 0 && World.Data.GetProperty(s, "open") == "true";
 
     /// <summary>Steers onto one step's block. False when it stops making progress.</summary>
-    private async Task<bool> MoveToStepAsync(PathStep step, bool last, CancellationToken ct)
+    private async Task<bool> MoveToStepAsync(PathStep step, bool last, bool sprint, CancellationToken ct)
     {
         double tx = step.X + 0.5, tz = step.Z + 0.5;
         var bestDist = double.MaxValue;
@@ -269,7 +270,7 @@ public sealed partial class MinecraftClient
             // Coasting distance on the ground after letting go: v * f / (1 - f), f = 0.546 on normal blocks.
             var speed = Math.Sqrt(body.VelX * body.VelX + body.VelZ * body.VelZ);
             Controls.Forward = !(last && dist < speed * 1.2 + 0.02);
-            Controls.Sprint = false;
+            Controls.Sprint = sprint && !last && step.Kind is MoveKind.Walk or MoveKind.Diagonal;
             Controls.Jump = step.Kind switch
             {
                 MoveKind.JumpUp => dist < 1.3 || body.HorizontalCollision,

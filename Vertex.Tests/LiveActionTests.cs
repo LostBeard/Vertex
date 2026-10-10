@@ -289,6 +289,73 @@ public class LiveActionTests
     }
 
     [Test]
+    public async Task Reflex_RunsFromALitCreeper_ThenGoesBackToItsJob()
+    {
+        const string name = "VertexDodge";
+        // A 41x41 floor to run on; explosions must not eat it if the reflex fails.
+        await _server.CommandAsync("gamerule mobGriefing false");
+        var (client, x, z) = await JoinOnArenaAsync(name, (ax, az) =>
+            [$"fill {ax - 20} 200 {az - 20} {ax + 20} 203 {az + 20} minecraft:air", $"fill {ax - 20} 199 {az - 20} {ax + 20} 199 {az + 20} minecraft:stone"]);
+        await using var _ = client;
+        await Wait.UntilAsync(() => client.World.IsLoaded(x - 20, z - 20) && client.World.IsLoaded(x + 20, z + 20)
+            && client.World.IsLoaded(x - 20, z + 20) && client.World.IsLoaded(x + 20, z - 20), Timeout, () => "floor chunks");
+        var skills = new Vertex.Brain.Skills(client);
+        var tasks = new Vertex.Brain.TaskRunner();
+        var ended = new List<Vertex.Brain.TaskOutcome>();
+        tasks.Finished += o => { lock (ended) ended.Add(o); };
+        using var reflexes = new Vertex.Brain.Reflexes(client, skills, tasks, () => new Vertex.Brain.PlayStyle());
+        tasks.Start("standing around", async ct => { await Task.Delay(System.Threading.Timeout.Infinite, ct); return (true, ""); });
+
+        await _server.CommandAsync($"summon minecraft:creeper {x + 4.5} 200 {z + 0.5} {{Tags:[\"vdodge\"],active_effects:[{{id:\"minecraft:fire_resistance\",duration:1000000}}]}}");
+        try
+        {
+            await Wait.UntilAsync(() => client.Entities.Values.Any(e => e.Name == "minecraft:creeper"), Timeout, () => "creeper");
+            var creeper = client.Entities.Values.First(e => e.Name == "minecraft:creeper");
+            // It walks up, its fuse starts; Vertex must be gone before the 30-tick fuse ends.
+            await Wait.UntilAsync(() => ended.Count > 0 || !client.Entities.ContainsKey(creeper.Id), TimeSpan.FromSeconds(30),
+                () => $"creeper at {creeper.DistanceTo(client.Position.X, client.Position.Y, client.Position.Z):0.0}, fuse {creeper.Metadata.GetValueOrDefault(16)}, task {tasks.Current}");
+            Assert.That(client.Entities.ContainsKey(creeper.Id), "the creeper did not explode");
+            Assert.That(client.Health, Is.EqualTo(20f), "not hurt");
+            lock (ended) Assert.That(ended[0].Success, ended[0].Summary);
+            var (px, _, pz) = client.Position;
+            Assert.That(Math.Sqrt((px - creeper.X) * (px - creeper.X) + (pz - creeper.Z) * (pz - creeper.Z)), Is.GreaterThanOrEqualTo(7.5), "out of its reach");
+            await Wait.UntilAsync(() => tasks.Current == "standing around", TimeSpan.FromSeconds(2), () => $"task {tasks.Current}");
+        }
+        finally
+        {
+            reflexes.Enabled = false;
+            tasks.Stop();
+            await _server.CommandAsync("kill @e[tag=vdodge]");
+        }
+    }
+
+    [Test]
+    public async Task Armor_WearsTheBestItCarries()
+    {
+        const string name = "VertexArmor";
+        var (client, x, z) = await JoinOnArenaAsync(name, (_, _) => []);
+        await using var _ = client;
+        await GiveAsync(client, name, "minecraft:leather_helmet", 1, () => client.Inventory.Count("leather_helmet") == 1);
+        await GiveAsync(client, name, "minecraft:iron_chestplate", 1, () => client.Inventory.Count("iron_chestplate") == 1);
+        Assert.That(client.HasBetterArmor);
+        Assert.That(await client.EquipBestArmorAsync(), Is.EqualTo(2));
+        Assert.That((client.Inventory.Head.Name, client.Inventory.Chest.Name), Is.EqualTo(("minecraft:leather_helmet", "minecraft:iron_chestplate")));
+        Assert.That(client.HasBetterArmor, Is.False);
+
+        // A better helmet replaces the leather one, which goes back into the inventory.
+        await GiveAsync(client, name, "minecraft:diamond_helmet", 1, () => client.Inventory.Count("diamond_helmet") == 1);
+        Assert.That(await client.EquipBestArmorAsync(), Is.EqualTo(1));
+        Assert.That(client.Inventory.Head.Name, Is.EqualTo("minecraft:diamond_helmet"));
+        Assert.That(client.Inventory.Find(s => s.Name == "minecraft:leather_helmet").Any(), "the old helmet is kept");
+        // 3 (diamond helmet) + 6 (iron chestplate), and the server agrees about the head.
+        // (The server syncs the attribute on its next tick, after the slot update.)
+        await Wait.UntilAsync(() => client.Attribute("armor") == 9, Timeout, () => $"armor {client.Attribute("armor")}");
+        var line = _server.WaitForLineAsync(l => l.Contains("has the following entity data"), Timeout);
+        await _server.CommandAsync($"data get entity {name} equipment.head.id");
+        Assert.That(await line, Does.Contain("minecraft:diamond_helmet"));
+    }
+
+    [Test]
     public async Task Guard_FightsMonstersNearThePlayer_AndOnlyThose()
     {
         const string name = "VertexGuard", ward = "VertexWard";
