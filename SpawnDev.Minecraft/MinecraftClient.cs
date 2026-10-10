@@ -55,8 +55,14 @@ public sealed partial class MinecraftClient : IAsyncDisposable
     private Task? _tickLoop;
     private TaskCompletionSource? _spawned;
     private bool _awaitingLoaded;
-    private double _x, _y, _z;
-    private float _yaw, _pitch;
+    private readonly Physics.PlayerState _body = new();
+    private Physics.PlayerPhysics? _physics;
+    // What we last told the server (LocalPlayer.sendPosition bookkeeping).
+    private double _sentX, _sentY, _sentZ;
+    private float _sentYaw, _sentPitch;
+    private bool _sentOnGround, _sentHorizontalCollision, _sentSprinting, _sentSneaking;
+    private byte _sentInput;
+    private int _positionReminder;
 
     public MinecraftClient(GameProfile profile, ClientOptions? options = null)
     {
@@ -77,8 +83,51 @@ public sealed partial class MinecraftClient : IAsyncDisposable
     public bool IsSpawned { get; private set; }
     public string? DisconnectReason { get; private set; }
 
-    public (double X, double Y, double Z) Position { get { lock (_positionLock) return (_x, _y, _z); } }
-    public (float Yaw, float Pitch) Rotation { get { lock (_positionLock) return (_yaw, _pitch); } }
+    public (double X, double Y, double Z) Position { get { lock (_positionLock) return (_body.X, _body.Y, _body.Z); } }
+    public (float Yaw, float Pitch) Rotation { get { lock (_positionLock) return (_body.Yaw, _body.Pitch); } }
+    public (double X, double Y, double Z) Velocity { get { lock (_positionLock) return (_body.VelX, _body.VelY, _body.VelZ); } }
+    public bool OnGround { get { lock (_positionLock) return _body.OnGround; } }
+
+    /// <summary>The keys Vertex is "pressing". Read by the physics every tick.</summary>
+    public Physics.PlayerControls Controls { get; } = new();
+
+    /// <summary>
+    /// When true (the default) the client simulates vanilla movement every tick and reports it like a real
+    /// client. When false it stands still and only answers teleports.
+    /// </summary>
+    public bool PhysicsEnabled { get; set; } = true;
+
+    /// <summary>
+    /// Raised on the tick loop at the start of every client tick, before physics: the place to steer
+    /// (set Controls, Look). Must not block.
+    /// </summary>
+    public event Action? Tick;
+
+    /// <summary>A copy of the simulated body (position, velocity, collision and fluid flags).</summary>
+    public Physics.PlayerState BodySnapshot()
+    {
+        lock (_positionLock) return _body.Clone();
+    }
+
+    /// <summary>Turns the head/body (degrees, vanilla convention: yaw 0 = +Z/south, 90 = -X/west; pitch +90 = down).</summary>
+    public void Look(float yaw, float pitch)
+    {
+        lock (_positionLock)
+        {
+            _body.Yaw = yaw;
+            _body.Pitch = Math.Clamp(pitch, -90f, 90f);
+        }
+    }
+
+    /// <summary>Looks at a point from the eyes.</summary>
+    public void LookAt(double x, double y, double z)
+    {
+        var (px, py, pz) = Position;
+        double dx = x - px, dy = y - (py + Physics.PlayerState.EyeHeight), dz = z - pz;
+        var yaw = (float)(Math.Atan2(-dx, dz) * 180 / Math.PI);
+        var pitch = (float)(-Math.Atan2(dy, Math.Sqrt(dx * dx + dz * dz)) * 180 / Math.PI);
+        Look(yaw, pitch);
+    }
 
     public event Action<ChatMessage>? ChatReceived;
     /// <summary>Raised once when the connection ends, with the server's reason (or the error).</summary>
@@ -378,19 +427,35 @@ public sealed partial class MinecraftClient : IAsyncDisposable
                     var r = packet.Reader();
                     teleportId = r.ReadVarInt();
                     x = r.ReadDouble(); y = r.ReadDouble(); z = r.ReadDouble();
-                    r.ReadDouble(); r.ReadDouble(); r.ReadDouble(); // velocity: used once physics lands
+                    double vx = r.ReadDouble(), vy = r.ReadDouble(), vz = r.ReadDouble();
                     yaw = r.ReadFloat(); pitch = r.ReadFloat();
                     var flags = r.ReadInt();
                     lock (_positionLock)
                     {
-                        _x = (flags & 0x01) != 0 ? _x + x : x;
-                        _y = (flags & 0x02) != 0 ? _y + y : y;
-                        _z = (flags & 0x04) != 0 ? _z + z : z;
-                        _yaw = (flags & 0x08) != 0 ? _yaw + yaw : yaw;
-                        _pitch = (flags & 0x10) != 0 ? _pitch + pitch : pitch;
-                        (x, y, z, yaw, pitch) = (_x, _y, _z, _yaw, _pitch);
+                        var b = _body;
+                        b.X = (flags & 0x01) != 0 ? b.X + x : x;
+                        b.Y = (flags & 0x02) != 0 ? b.Y + y : y;
+                        b.Z = (flags & 0x04) != 0 ? b.Z + z : z;
+                        var oldYaw = b.Yaw;
+                        b.Yaw = (flags & 0x08) != 0 ? b.Yaw + yaw : yaw;
+                        b.Pitch = (flags & 0x10) != 0 ? b.Pitch + pitch : pitch;
+                        // PlayerPositionUpdate: relative velocity keeps ours (optionally rotated by the yaw change).
+                        double ox = b.VelX, oy = b.VelY, oz = b.VelZ;
+                        if ((flags & 0x100) != 0)
+                        {
+                            var turn = (oldYaw - b.Yaw) * Physics.Mth.DegToRad;
+                            double cos = Math.Cos(turn), sin = Math.Sin(turn);
+                            (ox, oz) = (ox * cos - oz * sin, oz * cos + ox * sin);
+                        }
+                        b.VelX = (flags & 0x20) != 0 ? ox + vx : vx;
+                        b.VelY = (flags & 0x40) != 0 ? oy + vy : vy;
+                        b.VelZ = (flags & 0x80) != 0 ? oz + vz : vz;
+                        b.OnGround = false;
+                        b.FallDistance = 0;
+                        (x, y, z, yaw, pitch) = (b.X, b.Y, b.Z, b.Yaw, b.Pitch);
                     }
                 }
+                OnTeleported();
                 using (var accept = new PacketWriter(CB.Play.Serverbound.AcceptTeleportation))
                 {
                     accept.WriteVarInt(teleportId);
@@ -414,8 +479,8 @@ public sealed partial class MinecraftClient : IAsyncDisposable
                 var r = packet.Reader();
                 lock (_positionLock)
                 {
-                    _yaw = r.ReadFloat();
-                    _pitch = r.ReadFloat();
+                    _body.Yaw = r.ReadFloat();
+                    _body.Pitch = r.ReadFloat();
                 }
                 return null;
             }
@@ -679,13 +744,9 @@ public sealed partial class MinecraftClient : IAsyncDisposable
             {
                 if (State != ConnectionState.Play || !IsSpawned) continue;
                 tick++;
-                if (tick % 20 == 0)
-                {
-                    // Vanilla resends its position at least once a second even when standing still.
-                    var (x, y, z) = Position;
-                    var (yaw, pitch) = Rotation;
-                    await SendPositionAsync(x, y, z, yaw, pitch, onGround: true, ct);
-                }
+                try { Tick?.Invoke(); }
+                catch (Exception e) { Log("tick handler failed: " + e); }
+                await PhysicsTickAsync(ct);
                 using var end = new PacketWriter(CB.Play.Serverbound.ClientTickEnd);
                 await _connection!.SendAsync(end, ct);
             }

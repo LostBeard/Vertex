@@ -96,9 +96,12 @@ public sealed class PaperServer : IAsyncDisposable
         return server;
     }
 
+    private static readonly System.Text.RegularExpressions.Regex Ansi = new(@"\x1b\[[0-9;]*m", System.Text.RegularExpressions.RegexOptions.Compiled);
+
     private void OnLine(string? line)
     {
         if (line == null) return;
+        line = Ansi.Replace(line, ""); // Paper colors console output (numbers in /data get, join messages)
         List<TaskCompletionSource<string>>? hits = null;
         lock (_output)
         {
