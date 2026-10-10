@@ -81,6 +81,9 @@ public class LiveConnectTests
         await console;
 
         var message = await WaitForAsync(heard, m => m.Content == text, Timeout);
+        // Both players are in each other's player list (player_info_update add + game mode + listed).
+        Assert.That(listener.Players.Values.Select(p => p.Name), Does.Contain("VertexA").And.Contain("VertexB"));
+        Assert.That(listener.Players[GameProfile.OfflineUuid("VertexA")].GameMode, Is.EqualTo(GameMode.Survival));
         Assert.That(message.Kind, Is.EqualTo(ChatKind.Player));
         Assert.That(message.SenderName, Is.EqualTo("VertexA"));
         Assert.That(message.SenderId, Is.EqualTo(GameProfile.OfflineUuid("VertexA")));

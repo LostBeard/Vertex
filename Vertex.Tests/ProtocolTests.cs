@@ -141,6 +141,31 @@ public class ProtocolTests
     }
 
     [Test]
+    public void XboxSignature_HasVersionTimestampAndVerifiableEs256()
+    {
+        using var key = ECDsa.Create(ECCurve.NamedCurves.nistP256);
+        var body = System.Text.Encoding.UTF8.GetBytes("{\"a\":1}");
+        var header = Convert.FromBase64String(MicrosoftAuth.Sign(key, "/device/authenticate", body, unixSeconds: 0));
+        Assert.That(header.Length, Is.EqualTo(12 + 64));
+        Assert.That(System.Buffers.Binary.BinaryPrimitives.ReadInt32BigEndian(header), Is.EqualTo(1));
+        // Unix 0 as a Windows FILETIME (100 ns ticks since 1601-01-01).
+        Assert.That(System.Buffers.Binary.BinaryPrimitives.ReadInt64BigEndian(header.AsSpan(4)), Is.EqualTo(116444736000000000L));
+
+        // The signed message, built independently: version, 0, filetime, 0, then NUL-terminated POST/path/auth/body.
+        var message = new List<byte> { 0, 0, 0, 1, 0 };
+        message.AddRange(header.AsSpan(4, 8).ToArray());
+        message.Add(0);
+        foreach (var part in new[] { "POST", "/device/authenticate", "" })
+        {
+            message.AddRange(System.Text.Encoding.ASCII.GetBytes(part));
+            message.Add(0);
+        }
+        message.AddRange(body);
+        message.Add(0);
+        Assert.That(key.VerifyData(message.ToArray(), header.AsSpan(12), HashAlgorithmName.SHA256, DSASignatureFormat.IeeeP1363FixedFieldConcatenation));
+    }
+
+    [Test]
     public void LastSeen_AcknowledgesOldestFirstInJavaBitSetOrder()
     {
         var seen = new LastSeenMessages();

@@ -1,0 +1,11 @@
+<Project Sdk="Microsoft.NET.Sdk">
+	<PropertyGroup>
+		<OutputType>Exe</OutputType>
+		<TargetFramework>net10.0-windows</TargetFramework>
+		<Version>0.1.0</Version>
+		<Description>Vertex: an AI that plays Minecraft with you.</Description>
+	</PropertyGroup>
+	<ItemGroup>
+		<ProjectReference Include="..\SpawnDev.Minecraft\SpawnDev.Minecraft.csproj" />
+	</ItemGroup>
+</Project>

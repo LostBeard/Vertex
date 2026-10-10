@@ -9,6 +9,7 @@
 	</PropertyGroup>
 	<ItemGroup>
 		<InternalsVisibleTo Include="Vertex.Tests" />
+		<PackageReference Include="System.Security.Cryptography.ProtectedData" Version="9.0.0" />
 		<EmbeddedResource Include="Data\en_us.json.br" LogicalName="SpawnDev.Minecraft.Data.en_us.json.br" />
 	</ItemGroup>
 </Project>

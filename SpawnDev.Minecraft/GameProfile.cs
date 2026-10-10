@@ -3,8 +3,11 @@ using System.Text;
 
 namespace SpawnDev.Minecraft;
 
-/// <summary>Who the client logs in as. An access token is present only for a signed-in (online-mode) account.</summary>
-public sealed record GameProfile(Guid Id, string Name, string? AccessToken = null)
+/// <summary>
+/// Who the client logs in as. An access token is present only for a signed-in (online-mode) account; Keys (the
+/// Mojang-issued chat key pair) lets it sign chat on servers that enforce secure profiles.
+/// </summary>
+public sealed record GameProfile(Guid Id, string Name, string? AccessToken = null, Auth.ProfileKeys? Keys = null)
 {
     /// <summary>
     /// An offline-mode profile. The UUID is the one the server derives itself: Java's

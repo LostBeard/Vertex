@@ -3,5 +3,6 @@
     <Project Path="tools/DataGen/DataGen.csproj" />
   </Folder>
   <Project Path="SpawnDev.Minecraft/SpawnDev.Minecraft.csproj" />
+  <Project Path="Vertex/Vertex.csproj" />
   <Project Path="Vertex.Tests/Vertex.Tests.csproj" />
 </Solution>

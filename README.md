@@ -7,8 +7,8 @@ characters in game.
 
 Named by Aubriella, who it was built to play with.
 
-> **Status: early development.** Vertex can join a server, stay connected and chat (milestone M1). It does
-> not move or play yet. See [PLAN.md](PLAN.md) for the roadmap and what works today.
+> **Status: early development.** Vertex can sign in with a Microsoft account, join online-mode servers, stay
+> connected and chat (signed). It does not move or play yet. See [PLAN.md](PLAN.md) for the roadmap and what works today.
 
 ## Goals
 

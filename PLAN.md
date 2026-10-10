@@ -26,10 +26,14 @@ Every milestone is tested against REAL servers started locally (Paper 1.21.5 bui
 - [ ] Pathfinding (A*, walk/jump/fall/swim/pillar/dig-through)
 - [ ] Dig (correct break time per tool/enchant/effect), place, use, attack, eat, craft, smelt, chests
 
-## M4 - Accounts
-- [ ] Microsoft account sign-in (device code) -> Xbox Live -> XSTS -> Minecraft token, cached securely (DPAPI)
-- [ ] Online-mode login (session server join)
-- [ ] Signed chat (profile key pair) for servers with `enforce-secure-profile=true`
+## M4 - Accounts (pulled ahead: done 2026-10-10 except signed commands)
+- [x] Microsoft account sign-in: live.com device code under a public Minecraft title client id (no app
+  registration), ECDSA-signed Xbox device/title/user tokens, XSTS, Minecraft token; cached with DPAPI,
+  silent refresh. `vertex login`.
+- [x] Online-mode login (session server join) - live test against a local online-mode Paper with a real account
+- [x] Signed chat (Mojang profile key, chat session, last-seen signatures) for `enforce-secure-profile=true`
+  (Paper's default and AubsCraft's). Waits for the server's INITIALIZE_CHAT before the first signed message.
+- [ ] Signed commands (`chat_command_signed`) for /msg, /me, /say with enforce-secure-profile
 
 ## M5 - Voice
 - [ ] Simple Voice Chat client: secret handshake over the plugin channel, encrypted UDP, Opus

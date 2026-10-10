@@ -37,6 +37,17 @@ public sealed class MinecraftClient : IAsyncDisposable
 
     private readonly ClientOptions _options;
     private readonly LastSeenMessages _lastSeen = new();
+    private readonly SemaphoreSlim _chatLock = new(1, 1);
+    private ChatSession? _chatSession;
+    private TaskCompletionSource? _chatSessionAccepted;
+    private readonly System.Collections.Concurrent.ConcurrentDictionary<Guid, PlayerInfo> _players = new();
+
+    /// <summary>The server's player list (tab list), keyed by player UUID.</summary>
+    public IReadOnlyDictionary<Guid, PlayerInfo> Players => _players;
+    /// <summary>A player was added to the player list (joined the server, or was already on when we joined).</summary>
+    public event Action<PlayerInfo>? PlayerAdded;
+    /// <summary>A player left the player list.</summary>
+    public event Action<PlayerInfo>? PlayerRemoved;
     private readonly object _positionLock = new();
     private MinecraftConnection? _connection;
     private CancellationTokenSource? _cts;
@@ -344,6 +355,7 @@ public sealed class MinecraftClient : IAsyncDisposable
                 _awaitingLoaded = true;
                 Log($"joined {WorldName} as entity {EntityId} in {GameMode}");
                 _tickLoop ??= Task.Run(() => TickLoopAsync(_cts!.Token));
+                await StartChatSessionAsync(ct);
                 return null;
             }
             case CB.Play.Clientbound.Respawn:
@@ -469,6 +481,17 @@ public sealed class MinecraftClient : IAsyncDisposable
             case CB.Play.Clientbound.CustomPayload:
                 RaisePluginMessage(packet);
                 return null;
+            case CB.Play.Clientbound.PlayerInfoUpdate:
+                OnPlayerInfoUpdate(packet);
+                return null;
+            case CB.Play.Clientbound.PlayerInfoRemove:
+            {
+                var r = packet.Reader();
+                var count = r.ReadVarInt();
+                for (var i = 0; i < count; i++)
+                    if (_players.TryRemove(r.ReadUuid(), out var gone)) PlayerRemoved?.Invoke(gone);
+                return null;
+            }
             case CB.Play.Clientbound.StartConfiguration:
             {
                 // The server (or a proxy switching servers) sends us back to configuration.
@@ -477,6 +500,7 @@ public sealed class MinecraftClient : IAsyncDisposable
                     await c.SendAsync(ack, ct);
                 State = ConnectionState.Configuration;
                 Registries.Clear();
+                _players.Clear(); // the next server sends its own list
                 await SendClientInformationAsync(CB.Configuration.Serverbound.ClientInformation, ct);
                 return null;
             }
@@ -505,6 +529,65 @@ public sealed class MinecraftClient : IAsyncDisposable
         if (r.ReadBool()) { r.ReadString(); r.ReadPosition(); } // death location
         r.ReadVarInt(); // portal cooldown
         r.ReadVarInt(); // sea level
+    }
+
+    /// <summary>
+    /// ClientboundPlayerInfoUpdatePacket. Action bits and per-entry field order are the 1.21.5 Action enum order
+    /// (read from the server bytecode; minecraft-data swaps the last two): add player, initialize chat, game mode,
+    /// listed, latency, display name, list order, hat.
+    /// </summary>
+    private void OnPlayerInfoUpdate(ReceivedPacket packet)
+    {
+        var r = packet.Reader();
+        var actions = r.ReadByte();
+        var count = r.ReadVarInt();
+        List<PlayerInfo>? added = null;
+        for (var i = 0; i < count; i++)
+        {
+            var id = r.ReadUuid();
+            PlayerInfo? player;
+            if ((actions & 0x01) != 0)
+            {
+                var name = r.ReadString(16);
+                var properties = r.ReadVarInt();
+                for (var p = 0; p < properties; p++)
+                {
+                    r.ReadString(); // name (e.g. "textures")
+                    r.ReadString(); // value
+                    if (r.ReadBool()) r.ReadString(); // signature
+                }
+                player = new PlayerInfo(id, name);
+                _players[id] = player;
+                (added ??= []).Add(player);
+            }
+            else _players.TryGetValue(id, out player);
+
+            if ((actions & 0x02) != 0)
+            {
+                Guid? session = null;
+                if (r.ReadBool())
+                {
+                    session = r.ReadUuid();
+                    r.ReadLong();       // key expiry
+                    r.ReadByteArray();  // public key
+                    r.ReadByteArray();  // Mojang's signature of it
+                }
+                if (player != null) player.ChatSessionId = session;
+                // The server applied OUR chat session: signed chat from here on is decoded with it.
+                if (id == Profile.Id && session != null && session == _chatSession?.SessionId) _chatSessionAccepted?.TrySetResult();
+            }
+            if ((actions & 0x04) != 0) { var mode = (GameMode)r.ReadVarInt(); if (player != null) player.GameMode = mode; }
+            if ((actions & 0x08) != 0) { var listed = r.ReadBool(); if (player != null) player.Listed = listed; }
+            if ((actions & 0x10) != 0) { var latency = r.ReadVarInt(); if (player != null) player.LatencyMs = latency; }
+            if ((actions & 0x20) != 0)
+            {
+                var display = r.ReadBool() ? TextComponent.ToPlainText(r.ReadNbt()) : null;
+                if (player != null) player.DisplayName = display;
+            }
+            if ((actions & 0x40) != 0) r.ReadVarInt(); // list order
+            if ((actions & 0x80) != 0) r.ReadBool();   // show hat
+        }
+        if (added != null && PlayerAdded != null) foreach (var p in added) PlayerAdded(p);
     }
 
     private void OnPlayerChat(ReceivedPacket packet)
@@ -624,16 +707,74 @@ public sealed class MinecraftClient : IAsyncDisposable
             return;
         }
         if (message.Length > 256) throw new ArgumentException("chat messages are at most 256 characters", nameof(message));
-        var (offset, acknowledged) = _lastSeen.TakeUpdate();
-        using var chat = new PacketWriter(CB.Play.Serverbound.Chat);
-        chat.WriteString(message)
-            .WriteLong(DateTimeOffset.UtcNow.ToUnixTimeMilliseconds())
-            .WriteLong(Random.Shared.NextInt64())
-            .WriteBool(false) // unsigned (signing arrives with Microsoft accounts)
-            .WriteVarInt(offset)
-            .WriteBytes(acknowledged)
-            .WriteByte(0); // checksum 0 = "not checked" (LastSeenMessages$Update.verifyChecksum)
-        await c.SendAsync(chat, cancellationToken);
+
+        // Paper applies a chat session on its main thread (next tick) but decodes chat on the network thread, so a
+        // signed message sent right after joining arrives before the session and is dropped ("Chat disabled due to
+        // missing profile public key"; reproduced in LiveOnlineTests). Wait for the server's own confirmation: the
+        // INITIALIZE_CHAT player-info entry it broadcasts once our session is in place.
+        if (_chatSessionAccepted is { Task.IsCompleted: false } accepted)
+        {
+            var confirmed = await Task.WhenAny(accepted.Task, Task.Delay(TimeSpan.FromSeconds(10), cancellationToken));
+            if (confirmed != accepted.Task) Log("server never confirmed our chat session; sending anyway");
+        }
+
+        // One chat at a time: the server checks that the session index counts up and timestamps never go back.
+        await _chatLock.WaitAsync(cancellationToken);
+        try
+        {
+            var now = DateTimeOffset.UtcNow;
+            var salt = Random.Shared.NextInt64();
+            var (offset, acknowledged, seenSignatures) = _lastSeen.TakeUpdate();
+            var signature = _chatSession?.Sign(Profile.Id, message, now, salt, seenSignatures);
+            using var chat = new PacketWriter(CB.Play.Serverbound.Chat);
+            chat.WriteString(message)
+                .WriteLong(now.ToUnixTimeMilliseconds())
+                .WriteLong(salt)
+                .WriteBool(signature != null);
+            if (signature != null) chat.WriteBytes(signature);
+            chat.WriteVarInt(offset)
+                .WriteBytes(acknowledged)
+                .WriteByte(0); // checksum 0 = "not checked" (LastSeenMessages$Update.verifyChecksum)
+            await c.SendAsync(chat, cancellationToken);
+        }
+        finally
+        {
+            _chatLock.Release();
+        }
+    }
+
+    /// <summary>
+    /// Like vanilla's handleLogin: each join (including a proxy server switch) starts a new chat session with
+    /// the account's profile key, so the server accepts our signed chat. Offline profiles have no key and chat
+    /// unsigned.
+    /// </summary>
+    private async ValueTask StartChatSessionAsync(CancellationToken ct)
+    {
+        var keys = Profile.Keys;
+        if (keys == null || keys.ExpiresAt <= DateTimeOffset.UtcNow)
+        {
+            if (keys != null) Log("profile key expired: chat will be unsigned");
+            _chatSession = null;
+            return;
+        }
+        await _chatLock.WaitAsync(ct);
+        try
+        {
+            _chatSession?.Dispose();
+            _chatSession = new ChatSession(keys);
+            _chatSessionAccepted = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+            using var update = new PacketWriter(CB.Play.Serverbound.ChatSessionUpdate, 1024);
+            update.WriteUuid(_chatSession.SessionId)
+                .WriteLong(keys.ExpiresAt.ToUnixTimeMilliseconds())
+                .WriteByteArray(keys.PublicKeyDer)
+                .WriteByteArray(keys.PublicKeySignatureV2);
+            await _connection!.SendAsync(update, ct);
+            Log($"chat session {_chatSession.SessionId} started (key expires {keys.ExpiresAt:u})");
+        }
+        finally
+        {
+            _chatLock.Release();
+        }
     }
 
     private async ValueTask SendPositionAsync(double x, double y, double z, float yaw, float pitch, bool onGround, CancellationToken ct)
