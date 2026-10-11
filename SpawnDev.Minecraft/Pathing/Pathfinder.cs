@@ -142,11 +142,14 @@ public sealed class Pathfinder
     private bool OverClimbable(int x, int y, int z) => Clear(x, y, z) && IsClimbable(State(x, y - 1, z));
     private bool IsFluid(int state) => state > 0 && (_data.StateFlags[state] & (GameData.FlagWater | GameData.FlagLava)) != 0;
     private bool IsWater(int state) => state > 0 && (_data.StateFlags[state] & GameData.FlagWater) != 0;
-    /// <summary>A wooden door or fence gate: walked through (opened first when closed), straight along its axis.</summary>
-    public bool IsDoorway(int state) => state > 0 && _doorways.Contains(_data.StateBlock[state]);
+    /// <summary>
+    /// A wooden door or fence gate, or a modded block learned to be one (MinecraftClient.LearnUseAsync): walked
+    /// through (opened first when closed), straight along its axis.
+    /// </summary>
+    public bool IsDoorway(int state) => state > 0 && (_doorways.Contains(_data.StateBlock[state]) || _data.IsLearnedDoorway(state));
 
     /// <summary>Whether a door or gate lets you through moving along x (it faces east or west) rather than z.</summary>
-    private bool DoorAlongX(int state) => _data.GetProperty(state, "facing") is "east" or "west";
+    private bool DoorAlongX(int state) => _data.Learned(state) is { Doorway: true } l ? l.AlongX : _data.GetProperty(state, "facing") is "east" or "west";
 
     private bool Dangerous(int state) => state > 0 && (_avoidBlocks.Contains(_data.StateBlock[state]) || (_data.StateFlags[state] & (GameData.FlagLava | GameData.FlagSticky)) != 0);
 

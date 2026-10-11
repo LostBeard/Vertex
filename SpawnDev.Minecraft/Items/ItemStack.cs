@@ -13,13 +13,17 @@ public sealed class ItemStack
 {
     public static readonly ItemStack Empty = new(0, 0, new Dictionary<string, object?>(), []);
 
-    public ItemStack(int itemId, int count, IReadOnlyDictionary<string, object?> components, IReadOnlyList<string> removedComponents)
+    /// <param name="type">The item's type when the vanilla table does not say (a modded server's items, by its registry).</param>
+    public ItemStack(int itemId, int count, IReadOnlyDictionary<string, object?> components, IReadOnlyList<string> removedComponents, ItemType? type = null)
     {
         ItemId = itemId;
         Count = count;
         Components = components;
         RemovedComponents = removedComponents;
+        _type = type;
     }
+
+    private readonly ItemType? _type;
 
     public int ItemId { get; }
     public int Count { get; }
@@ -27,7 +31,7 @@ public sealed class ItemStack
     public IReadOnlyList<string> RemovedComponents { get; }
 
     public bool IsEmpty => Count <= 0;
-    public ItemType? Type => IsEmpty ? null : GameData.Vanilla.Item(ItemId);
+    public ItemType? Type => IsEmpty ? null : _type ?? GameData.Vanilla.Item(ItemId);
     public string Name => Type?.Name ?? "minecraft:air";
 
     public int Damage => Components.TryGetValue("damage", out var d) && d is int i ? i : 0;
@@ -48,16 +52,20 @@ public sealed class ItemStack
         }
     }
 
+    /// <summary>The same item, a different count (empty at 0).</summary>
+    public ItemStack WithCount(int count) => count <= 0 ? Empty : new ItemStack(ItemId, count, Components, RemovedComponents, _type);
+
     public override string ToString() => IsEmpty ? "empty" : $"{Count}x {Name}" + (CustomName is string n ? $" \"{n}\"" : "");
 
     /// <summary>Reads a Slot (protocol 770 item stack with components).</summary>
-    public static ItemStack Read(ref PacketReader r)
+    /// <param name="types">Item id -> type on a server that numbers items its own way (null: the vanilla table).</param>
+    public static ItemStack Read(ref PacketReader r, Func<int, ItemType?>? types = null)
     {
         var value = ProtoDef.Vanilla.Read(ref r, "Slot") as Dictionary<string, object?>;
-        return FromProtoDef(value);
+        return FromProtoDef(value, types);
     }
 
-    internal static ItemStack FromProtoDef(object? value)
+    internal static ItemStack FromProtoDef(object? value, Func<int, ItemType?>? types = null)
     {
         if (value is not Dictionary<string, object?> d || d.GetValueOrDefault("itemCount") is not int count || count <= 0) return Empty;
         var components = new Dictionary<string, object?>(StringComparer.Ordinal);
@@ -69,6 +77,7 @@ public sealed class ItemStack
         if (d.GetValueOrDefault("removeComponents") is List<object?> rl)
             foreach (var c in rl)
                 if (c is Dictionary<string, object?> comp && comp.GetValueOrDefault("type") is string type) removed.Add(type);
-        return new ItemStack((int)d["itemId"]!, count, components, removed);
+        var id = (int)d["itemId"]!;
+        return new ItemStack(id, count, components, removed, types?.Invoke(id));
     }
 }

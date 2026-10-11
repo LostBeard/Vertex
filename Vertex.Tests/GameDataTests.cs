@@ -127,8 +127,10 @@ public class GameDataTests
     public void LearnedShapes_ApplyToTheirStates_OthersStayUnknown()
     {
         var mat = new[] { new Box(0, 0, 0, 1, 0.0625, 1) };
-        var l = D.WithLearnedStates(new Dictionary<int, Box[]> { [D.KnownStateCount + 5] = mat, [D.KnownStateCount + 9] = [], [3] = [] },
-            new HashSet<int> { D.KnownStateCount + 9 });
+        var l = D.WithLearnedStates(new Dictionary<int, LearnedState>
+        {
+            [D.KnownStateCount + 5] = new() { Shape = mat }, [D.KnownStateCount + 9] = new() { Shape = [], Sticky = true }, [3] = new() { Shape = [] },
+        });
         Assert.That(l.LearnedStateCount, Is.EqualTo(2), "a vanilla state is never relearned");
         Assert.That(l.CollisionBoxes(D.KnownStateCount + 5), Is.EqualTo(mat));
         Assert.That(l.HasCollision(D.KnownStateCount + 9), Is.False);
@@ -143,14 +145,63 @@ public class GameDataTests
         }
         Assert.That(l.Known(D.KnownStateCount + 5), Is.EqualTo(D.KnownStateCount + 5));
         Assert.That(l.BlockOf(l.UnknownState).Name, Is.EqualTo("vertex:unknown_modded_block"));
-        Assert.That(D.WithLearnedStates(new Dictionary<int, Box[]>()), Is.SameAs(D));
+        Assert.That(D.WithLearnedStates(new Dictionary<int, LearnedState>()), Is.SameAs(D));
 
         // On a modded server tables cover every state id from the start, so learning never changes their length:
         // an id read through a newer table is always safe to look up in an older one some code still holds.
         var before = D.ForModdedServer();
-        var after = before.WithLearnedStates(new Dictionary<int, Box[]> { [60_000] = mat });
+        var after = before.WithLearnedStates(new Dictionary<int, LearnedState> { [60_000] = new() { Shape = mat } });
         Assert.That((before.StateCount, after.StateCount), Is.EqualTo((GameData.ModdedTableSize, GameData.ModdedTableSize)));
         Assert.That(before.CollisionBoxes(after.Known(60_000)), Is.EqualTo(new[] { new Box(0, 0, 0, 1, 1, 1) }), "the older table: still unknown, no exception");
         Assert.That(after.CollisionBoxes(after.Known(60_000)), Is.EqualTo(mat));
+    }
+
+    [Test]
+    public void LearnedDoorways_OpenAndWalkThrough_LikeRealDoors()
+    {
+        int closed = D.KnownStateCount + 20, open = D.KnownStateCount + 24, upperClosed = D.KnownStateCount + 21, upperOpen = D.KnownStateCount + 25;
+        var plate = new[] { new Box(0, 0, 0, 0.1875, 1, 1) };
+        var l = D.ForModdedServer().WithLearnedStates(new Dictionary<int, LearnedState>
+        {
+            [closed] = new() { Shape = plate, UseTurnsInto = open, Doorway = true, AlongX = true },
+            [open] = new() { Shape = [], UseTurnsInto = closed, Doorway = true, Open = true, AlongX = true },
+            [upperClosed] = new() { Shape = plate, UseTurnsInto = upperOpen, Doorway = true, AlongX = true },
+            [upperOpen] = new() { Shape = [], UseTurnsInto = upperClosed, Doorway = true, Open = true, AlongX = true },
+            [D.KnownStateCount + 30] = new() { Name = "spooky:lamp", UseDoesNothing = true }, // no shape: still a solid cube
+        });
+        Assert.That(l.IsLearnedDoorway(closed) && l.IsLearnedDoorway(open) && !l.IsLearnedDoorway(D.KnownStateCount + 30));
+        Assert.That((l.IsOpen(closed), l.IsOpen(open)), Is.EqualTo((false, true)));
+        Assert.That(l.IsOpen(D.Block("oak_door")!.DefaultState), Is.False, "vanilla doors still read their property");
+        Assert.That(l.LearnedStateCount, Is.EqualTo(4), "four shapes felt; a name alone changes no shape");
+        Assert.That(l.CollisionBoxes(l.Known(D.KnownStateCount + 30)), Is.EqualTo(new[] { new Box(0, 0, 0, 1, 1, 1) }));
+        Assert.That(l.Learned(D.KnownStateCount + 30)!.Name, Is.EqualTo("spooky:lamp"));
+
+        // Facts learned later add to what was known, a group at a time.
+        var felt = new LearnedState { Shape = plate };
+        var used = felt.With(new LearnedState { UseTurnsInto = open, Doorway = true, AlongX = true });
+        Assert.That(used.Shape, Is.SameAs(plate));
+        Assert.That(used.Doorway && used.AlongX && used.UseTurnsInto == open);
+        var dug = used.With(new LearnedState { DigTicks = 45, Name = "spooky:door" });
+        Assert.That((dug.DigTicks, dug.Name, dug.Doorway), Is.EqualTo(((int?)45, "spooky:door", true)));
+    }
+
+    [Test]
+    public void ServerItems_ResolveModdedItemsByTheServersNumbering()
+    {
+        var stick = D.Item("stick")!;
+        // A Fabric server: vanilla items where it put them (here moved by one), modded items after them.
+        var ids = new Dictionary<string, int> { ["minecraft:stick"] = stick.Id + 1, ["spookydoors:spooky_oak_door"] = 5000, ["mod:gem"] = 5001 };
+        var s = D.WithServerItems(ids, ["spookydoors:spooky_oak_door"]);
+        Assert.That(s.Item(stick.Id + 1), Is.SameAs(stick));
+        Assert.That(s.Item(5000)!.Name, Is.EqualTo("spookydoors:spooky_oak_door"));
+        Assert.That(s.Item(5000)!.Block, Is.EqualTo("spookydoors:spooky_oak_door"), "a block item places its block");
+        Assert.That(s.Item(5001)!.Block, Is.Null);
+        Assert.That(s.Item("mod:gem")!.Id, Is.EqualTo(5001));
+        Assert.That(s.ModdedItems.Select(i => i.Name), Is.EquivalentTo(new[] { "spookydoors:spooky_oak_door", "mod:gem" }));
+        Assert.That(D.Item(5000), Is.Null, "the vanilla table is unchanged");
+
+        var stack = new SpawnDev.Minecraft.Items.ItemStack(5000, 3, new Dictionary<string, object?>(), [], s.Item(5000));
+        Assert.That(stack.Name, Is.EqualTo("spookydoors:spooky_oak_door"));
+        Assert.That(stack.WithCount(2).Name, Is.EqualTo("spookydoors:spooky_oak_door"), "a predicted stack keeps its type");
     }
 }

@@ -52,14 +52,21 @@ public class LiveFabricTests
             // Same jars as the server, so the same facts as the built-in catalog (dumped from the server's own mods).
             foreach (var name in GameData.ModdedCatalog.Keys)
             {
-                Assert.That(learned.ContainsKey(name), "the pack did not teach " + name);
-                var (a, b) = (learned[name], GameData.ModdedCatalog[name]);
+                Assert.That(learned.Blocks.ContainsKey(name), "the pack did not teach " + name);
+                var (a, b) = (learned.Blocks[name], GameData.ModdedCatalog[name]);
                 Assert.That((a.StateCount, a.DefaultIndex, a.Hardness, a.Flags, a.Friction), Is.EqualTo((b.StateCount, b.DefaultIndex, b.Hardness, b.Flags, b.Friction)), name);
                 Assert.That(a.Shapes.Zip(b.Shapes).All(z => z.First.SequenceEqual(z.Second)), name + " shapes");
             }
-            Vertex.Mods.ModpackBlocks.SaveWorld(world, learned.Values, "test");
+            // Items and mobs too: the same as the built-in catalog's, and what the mods really are.
+            Assert.That(learned.Items.Keys, Is.EquivalentTo(GameData.EmbeddedModded.Items.Keys));
+            Assert.That(learned.Entities.Keys, Is.EquivalentTo(GameData.EmbeddedModded.Entities.Keys));
+            Assert.That(learned.Items["mcwholidays:bat_doormat"].Block, Is.EqualTo("mcwholidays:bat_doormat"));
+            Assert.That(learned.Entities["mutantmonsters:mutant_zombie"].Height, Is.GreaterThan(2.5f), "a mutant zombie is no player-sized mob");
+            Vertex.Mods.ModpackBlocks.SaveWorld(world, learned, "test");
             var saved = Vertex.Mods.ModpackBlocks.LoadWorld(world)!;
-            Assert.That(saved.Keys, Is.EquivalentTo(learned.Keys), "saved for the world and read back");
+            Assert.That(saved.Blocks.Keys, Is.EquivalentTo(learned.Blocks.Keys), "saved for the world and read back");
+            Assert.That(saved.Items.Keys, Is.EquivalentTo(learned.Items.Keys));
+            Assert.That(saved.Entities.Values, Is.EquivalentTo(learned.Entities.Values));
 
             // Joining with nothing: the check at join lists every modded block as unknown.
             await using (var blind = new MinecraftClient(GameProfile.Offline("VertexBlind"), new ClientOptions { UseEmbeddedModdedBlocks = false }))
@@ -71,7 +78,7 @@ public class LiveFabricTests
                 Assert.That(blind.World.Data.ModdedBlockCount, Is.Zero);
             }
             // Joining with what it learned: all known.
-            await using var client = new MinecraftClient(GameProfile.Offline("VertexLearned"), new ClientOptions { UseEmbeddedModdedBlocks = false, ModdedBlocks = saved });
+            await using var client = new MinecraftClient(GameProfile.Offline("VertexLearned"), new ClientOptions { UseEmbeddedModdedBlocks = false, Modded = saved });
             using (var cts = new CancellationTokenSource(Timeout)) await client.ConnectAsync("127.0.0.1", Port, cts.Token);
             Assert.That(client.UnknownModdedBlocks, Is.Empty);
             Assert.That(client.World.Data.ModdedBlockCount, Is.EqualTo(client.FabricRegistries["minecraft:block"].Count - (GameData.Vanilla.Blocks.Length - 1)));
@@ -168,8 +175,10 @@ public class LiveFabricTests
             {
                 using (var cts = new CancellationTokenSource(Timeout)) await client.ConnectAsync("127.0.0.1", Port, cts.Token);
                 (x0, y, z0) = client.FeetBlock;
-                await _server!.CommandAsync($"fill {x0 - 6} {y} {z0 - 6} {x0 + 6} {y + 4} {z0 + 6} minecraft:air");
-                await _server!.CommandAsync($"fill {x0 - 6} {y - 1} {z0 - 6} {x0 + 6} {y - 1} {z0 + 6} minecraft:stone");
+                // Clear everything within the radius it studies: other tests leave modded blocks around spawn, and
+                // Vertex may have spawned on top of one of their arenas, with its leftovers a few blocks below.
+                await _server!.CommandAsync($"fill {x0 - 17} {y} {z0 - 17} {x0 + 17} {y + 6} {z0 + 17} minecraft:air");
+                await _server!.CommandAsync($"fill {x0 - 17} {y - 8} {z0 - 17} {x0 + 17} {y - 1} {z0 + 17} minecraft:stone");
                 // Two of the same kind (studied once) and two other kinds, spread out.
                 await _server!.CommandAsync($"setblock {x0 + 3} {y} {z0} mcwholidays:bat_doormat");
                 await _server!.CommandAsync($"setblock {x0 - 3} {y} {z0} mcwholidays:bat_doormat");
@@ -177,27 +186,28 @@ public class LiveFabricTests
                 await _server!.CommandAsync($"setblock {x0} {y} {z0 - 3} mcwholidays:hanging_cobweb");
                 await Wait.UntilAsync(() => client.World.GetRawState(x0, y, z0 - 3) >= client.World.Data.KnownStateCount, TimeSpan.FromSeconds(10), () => "placed");
                 var skills = new Vertex.Brain.Skills(client);
-                kinds = skills.UnstudiedBlocks(16).Select(b => b.Raw).ToHashSet();
-                Assert.That(kinds, Has.Count.EqualTo(3), "three kinds to study");
+                var found = skills.UnstudiedBlocks(16);
+                kinds = found.Select(b => b.Raw).ToHashSet();
+                Assert.That(kinds, Has.Count.EqualTo(3), $"three kinds to study; Vertex at {(x0, y, z0)}, found " + string.Join(" ", found));
 
                 var (ok, message) = await skills.StudyBlocksAsync(16, CancellationToken.None).WaitAsync(TimeSpan.FromMinutes(3));
                 TestContext.Out.WriteLine(message);
                 Assert.That(ok, message);
                 Assert.That(message, Does.Contain("studied 3 kinds").And.Contain("1 of them would trap me"));
-                Assert.That(client.LearnedShapes.Keys, Is.EquivalentTo(kinds));
+                Assert.That(client.LearnedStates.Keys, Is.EquivalentTo(kinds));
                 Assert.That(skills.UnstudiedBlocks(16), Is.Empty, "nothing left to study");
-                Vertex.Mods.TouchedBlocks.Save(file, new Vertex.Mods.TouchedBlocks(client.BlockRegistryFingerprint!, client.LearnedShapes.ToDictionary(), client.StickyStates.ToList()));
+                Vertex.Mods.TouchedBlocks.Save(file, new Vertex.Mods.TouchedBlocks(client.BlockRegistryFingerprint!, client.LearnedStates.ToDictionary()));
             }
 
             // Next visit: it starts out knowing them.
             var touched = Vertex.Mods.TouchedBlocks.Load(file)!;
             await using var again = new MinecraftClient(GameProfile.Offline("VertexStudent"), new ClientOptions
             {
-                UseEmbeddedModdedBlocks = false, LearnedShapes = touched.Shapes, LearnedSticky = touched.Sticky, LearnedFingerprint = touched.Fingerprint,
+                UseEmbeddedModdedBlocks = false, Learned = touched.States, LearnedFingerprint = touched.Fingerprint,
             });
             using (var cts = new CancellationTokenSource(Timeout)) await again.ConnectAsync("127.0.0.1", Port, cts.Token);
             await Wait.UntilAsync(() => again.World.GetRawState(x0, y, z0 - 3) >= again.World.Data.KnownStateCount, TimeSpan.FromSeconds(10), () => "chunks arrived");
-            Assert.That(again.LearnedShapes.Keys, Is.EquivalentTo(kinds));
+            Assert.That(again.LearnedStates.Keys, Is.EquivalentTo(kinds));
             Assert.That(again.World.Data.LearnedStateCount, Is.EqualTo(3));
             var mat = again.World.GetState(x0 + 3, y, z0);
             Assert.That(again.World.Data.CollisionBoxes(mat).Single().MaxY, Is.EqualTo(0.0625).Within(1.0 / 64));
@@ -210,6 +220,132 @@ public class LiveFabricTests
 
     private static void PhysicsCheck(MinecraftClient client) =>
         Assert.That(client.PhysicsEnabled, "physics back on after probing");
+
+    /// <summary>
+    /// A door Vertex has no data for (catalog off): a solid unknown block until it studies it. It feels a thin plate,
+    /// the server's block names say there are doors here, so it right-clicks: both halves switch to states it can
+    /// walk through, and it puts the door back. From then on it opens the door, walks through and shuts it behind.
+    /// The real catalog checks what it learned: the state it calls open is the door with open=true.
+    /// </summary>
+    [Test]
+    public async Task LearnsADoor_ByUsingIt_ThenWalksThrough()
+    {
+        await using var client = new MinecraftClient(GameProfile.Offline("VertexDoorman"), new ClientOptions { UseEmbeddedModdedBlocks = false });
+        using (var cts = new CancellationTokenSource(Timeout)) await client.ConnectAsync("127.0.0.1", Port, cts.Token);
+        var (x0, y, z0) = client.FeetBlock;
+        await _server!.CommandAsync($"fill {x0 - 6} {y} {z0 - 7} {x0 + 9} {y + 4} {z0 + 7} minecraft:air");
+        await _server.CommandAsync($"fill {x0 - 6} {y - 1} {z0 - 7} {x0 + 9} {y - 1} {z0 + 7} minecraft:stone");
+        // A short wall (there is a way round it) with the door in the middle.
+        await _server.CommandAsync($"fill {x0 + 3} {y} {z0 - 3} {x0 + 3} {y + 2} {z0 + 3} minecraft:stone");
+        await _server.CommandAsync($"setblock {x0 + 3} {y} {z0} spookydoors:spooky_oak_door[facing=east,half=lower,open=false]");
+        await _server.CommandAsync($"setblock {x0 + 3} {y + 1} {z0} spookydoors:spooky_oak_door[facing=east,half=upper,open=false]");
+        await Wait.UntilAsync(() => client.World.GetRawState(x0 + 3, y + 1, z0) >= client.World.Data.KnownStateCount, TimeSpan.FromSeconds(10), () => "door placed");
+        var lower = client.World.GetRawState(x0 + 3, y, z0);
+        var upper = client.World.GetRawState(x0 + 3, y + 1, z0);
+        Assert.That(client.UnknownDoorNames(), Does.Contain("spookydoors:spooky_oak_door"), "the names say there are doors to find");
+
+        var goal = SpawnDev.Minecraft.Pathing.Goal.Block(x0 + 5, y, z0);
+        bool ThroughDoor(SpawnDev.Minecraft.Pathing.PathStep st) => (st.X, st.Y, st.Z) == (x0 + 3, y, z0);
+        var before = new SpawnDev.Minecraft.Pathing.Pathfinder(client.World).FindPath(client.FeetBlock, goal, new SpawnDev.Minecraft.Pathing.PathOptions());
+        Assert.That(before.Steps.Any(ThroughDoor), Is.False, "unknown, the door is a wall: the way round");
+
+        var skills = new Vertex.Brain.Skills(client);
+        var (ok, message) = await skills.StudyBlocksAsync(8, CancellationToken.None).WaitAsync(TimeSpan.FromMinutes(4));
+        TestContext.Out.WriteLine(message);
+        Assert.That(ok, message);
+        Assert.That(message, Does.Contain("door"));
+        Assert.That(client.World.GetRawState(x0 + 3, y, z0), Is.EqualTo(lower), "put the door back the way it was");
+
+        var data = client.World.Data;
+        var closed = data.Learned(lower)!;
+        Assert.That(closed is { Doorway: true, Open: false, AlongX: true }, $"learned {closed}");
+        var open = data.Learned(closed.UseTurnsInto!.Value)!;
+        Assert.That(open is { Doorway: true, Open: true }, $"learned {open}");
+        Assert.That(data.Learned(upper) is { Doorway: true, Open: false }, "the upper half too");
+        // What the mod really says about those states.
+        var truth = GameData.Vanilla.WithModdedBlocks(client.FabricRegistries["minecraft:block"]);
+        Assert.That(truth.BlockOf(closed.UseTurnsInto!.Value).Name, Is.EqualTo("spookydoors:spooky_oak_door"));
+        Assert.That((truth.GetProperty(lower, "open"), truth.GetProperty(closed.UseTurnsInto!.Value, "open")), Is.EqualTo(("false", "true")));
+        Assert.That(truth.GetProperty(upper, "half"), Is.EqualTo("upper"));
+
+        // Studying ends wherever the last probe stood: back to the west side first.
+        Assert.That(await client.GoToAsync(SpawnDev.Minecraft.Pathing.Goal.Block(x0, y, z0), new SpawnDev.Minecraft.Pathing.PathOptions()), $"back west; at {client.Position}");
+        await client.WaitTicksAsync(5);
+        Assert.That(client.World.GetRawState(x0 + 3, y, z0), Is.EqualTo(lower), "the door is shut");
+        var after = new SpawnDev.Minecraft.Pathing.Pathfinder(client.World).FindPath(client.FeetBlock, goal, new SpawnDev.Minecraft.Pathing.PathOptions());
+        Assert.That(after.Complete && after.Steps.Any(ThroughDoor), "learned, the door is the way through");
+        var opened = false;
+        var teleports = client.TeleportCount;
+        using (var watch = new Timer(_ => { if (client.World.GetRawState(x0 + 3, y, z0) == closed.UseTurnsInto) opened = true; }, null, 0, 20))
+            Assert.That(await client.GoToAsync(goal, new SpawnDev.Minecraft.Pathing.PathOptions()), $"through the door; at {client.Position}");
+        await client.WaitTicksAsync(5);
+        Assert.That(opened, "opened it on the way");
+        Assert.That(client.World.GetRawState(x0 + 3, y, z0), Is.EqualTo(lower), "and shut it behind");
+        Assert.That(client.TeleportCount, Is.EqualTo(teleports), "the server corrected our movement");
+    }
+
+    /// <summary>
+    /// Names and hardness by experience. A modded item reads by its own name (the server's item registry); placing
+    /// it names the block it makes. Breaking with an empty hand, the server finishes the dig itself (vanilla's
+    /// delayed destroy) on the tick the block's hardness says, so the time is the server's; the drop names the block.
+    /// </summary>
+    [Test]
+    public async Task LearnsNames_ByPlacingAndBreaking_WithTheServerTimingTheDig()
+    {
+        await using var client = new MinecraftClient(GameProfile.Offline("VertexBreaker"), new ClientOptions { UseEmbeddedModdedBlocks = false });
+        using (var cts = new CancellationTokenSource(Timeout)) await client.ConnectAsync("127.0.0.1", Port, cts.Token);
+        var (x0, y, z0) = client.FeetBlock;
+        await _server!.CommandAsync("gamemode survival VertexBreaker");
+        await _server.CommandAsync("clear VertexBreaker");
+        await _server.CommandAsync($"fill {x0 - 4} {y} {z0 - 4} {x0 + 4} {y + 3} {z0 + 4} minecraft:air");
+        await _server.CommandAsync($"fill {x0 - 4} {y - 1} {z0 - 4} {x0 + 4} {y - 1} {z0 + 4} minecraft:stone");
+        await _server.CommandAsync("give VertexBreaker mcwholidays:bat_doormat 2");
+        await Wait.UntilAsync(() => client.Inventory.Count("mcwholidays:bat_doormat") == 2, TimeSpan.FromSeconds(10),
+            () => "inventory: " + string.Join(", ", Enumerable.Range(9, 36).Select(i => client.Inventory[i]).Where(s => !s.IsEmpty)));
+
+        // Placing names it.
+        Assert.That(await client.EquipAsync("mcwholidays:bat_doormat"));
+        Assert.That(await client.PlaceBlockAsync(x0 + 2, y, z0), "placed the doormat");
+        var mat = client.World.GetRawState(x0 + 2, y, z0);
+        Assert.That(mat, Is.GreaterThanOrEqualTo(client.World.Data.KnownStateCount));
+        Assert.That(client.World.Data.Learned(mat)?.Name, Is.EqualTo("mcwholidays:bat_doormat"));
+        await client.WaitUntilAsync(() => client.Inventory.Count("mcwholidays:bat_doormat") == 1, 20);
+        Assert.That(client.Inventory.Count("mcwholidays:bat_doormat"), Is.EqualTo(1));
+
+        // The server as the clock: dirt first (vanilla, known hardness), then a modded block by its real hardness.
+        Assert.That(await client.HoldInertAsync() && client.Inventory.MainHand.IsEmpty, "an empty hand");
+        var truth = GameData.Vanilla.WithModdedBlocks(client.FabricRegistries["minecraft:block"]);
+        foreach (var (block, at) in new[] { ("minecraft:dirt", (X: x0 - 2, Y: y, Z: z0)), ("mcwholidays:blue_candy_cane_block", (X: x0, Y: y, Z: z0 + 2)) })
+        {
+            await _server.CommandAsync($"setblock {at.X} {at.Y} {at.Z} {block}");
+            await Wait.UntilAsync(() => client.World.GetRawState(at.X, at.Y, at.Z) > 0, TimeSpan.FromSeconds(10), () => block + " placed");
+            var raw = client.World.GetRawState(at.X, at.Y, at.Z);
+            var h = truth.Hardness[raw];
+            var needsTool = (truth.StateFlags[raw] & GameData.FlagNeedsTool) != 0;
+            var expected = (int)Math.Ceiling(h * (needsTool ? 100 : 30)) - 1; // progress (1/h/30, or /100 without the tool) per tick reaches 1
+            var b = await client.LearnByBreakingAsync(at.X, at.Y, at.Z).WaitAsync(TimeSpan.FromMinutes(1));
+            Assert.That(b, Is.Not.Null, block + " broken");
+            TestContext.Out.WriteLine($"{block}: hardness {h}{(needsTool ? " (needs a tool)" : "")}, expected ~{expected} ticks, the server took {b!.Ticks}; dropped {string.Join(", ", b.Drops)}");
+            // Counted in our ticks from sending START to the block update arriving: travel adds a tick or two, and
+            // under load our tick clock and the server's drift a few ticks apart either way (seen: 14-16 for dirt's 14,
+            // 18-23 for the candy cane's 20). Close enough to tell a soft block from a hard one.
+            Assert.That(b.Ticks, Is.InRange(expected - 4, expected + 5), block);
+            Assert.That(b.Drops, Does.Contain(block), "it drops itself");
+            if (raw >= client.World.Data.KnownStateCount)
+                Assert.That(client.World.Data.Learned(raw) is { Name: var n, DigTicks: int t } && n == block && t == b.Ticks, $"learned {client.World.Data.Learned(raw)}");
+        }
+
+        // Named now, it can be asked for: another one a few blocks off, collected by what a player would call it.
+        await _server.CommandAsync($"setblock {x0 + 3} {y} {z0 - 3} mcwholidays:blue_candy_cane_block");
+        await Wait.UntilAsync(() => client.World.GetRawState(x0 + 3, y, z0 - 3) > 0, TimeSpan.FromSeconds(10), () => "placed");
+        var skills = new Vertex.Brain.Skills(client);
+        var (ok, message) = await skills.CollectAsync("candy cane block", 1, CancellationToken.None).WaitAsync(TimeSpan.FromMinutes(1));
+        TestContext.Out.WriteLine(message);
+        Assert.That(ok, message);
+        Assert.That(client.World.GetRawState(x0 + 3, y, z0 - 3), Is.Zero, "mined it");
+        await client.WaitUntilAsync(() => client.Inventory.Count("mcwholidays:blue_candy_cane_block") >= 1, 40);
+        Assert.That(client.Inventory.Count("mcwholidays:blue_candy_cane_block"), Is.GreaterThanOrEqualTo(1), "picked it up");
+    }
 
     [Test]
     public async Task JoinsTheModdedServer_AndStaysOnline()
@@ -290,6 +426,10 @@ public class LiveFabricTests
             () => string.Join(", ", client.Entities.Values.Select(e => e.Name).Distinct()));
         await client.WaitTicksAsync(40);
         Assert.That(disconnect, Is.Null, disconnect);
-        TestContext.Out.WriteLine($"modded mob {mob}; skipped packets: {client.PacketErrors}");
+        // Its real size, from the mod's own code (tools/ModDump), not the player-sized guess.
+        var spawned = client.Entities.Values.First(e => e.Name == mob);
+        Assert.That((spawned.Type.Width, spawned.Type.Height), Is.EqualTo((GameData.EmbeddedModded.Entities[mob].Width, GameData.EmbeddedModded.Entities[mob].Height)));
+        Assert.That(spawned.Type.Height, Is.Not.EqualTo(1.8f), mob + " is no player-sized mob");
+        TestContext.Out.WriteLine($"modded mob {mob} ({spawned.Type.Width} x {spawned.Type.Height}); skipped packets: {client.PacketErrors}");
     }
 }

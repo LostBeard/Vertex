@@ -28,17 +28,20 @@ public sealed class ModdedBlock
 // the rest come from tools/ModDump, run once against the server's mod set; this turns them into state tables.
 public sealed partial class GameData
 {
-    private static readonly Lazy<IReadOnlyDictionary<string, ModdedBlock>> _modded = new(() => LoadModded("SpawnDev.Minecraft.Data.modded-blocks.json.br"));
+    private static readonly Lazy<ModdedContent> _modded = new(() => LoadModded("SpawnDev.Minecraft.Data.modded-blocks.json.br"));
+
+    /// <summary>Every modded block, item and entity type tools/ModDump has data for (empty if none was generated).</summary>
+    public static ModdedContent EmbeddedModded => _modded.Value;
 
     /// <summary>Every modded block tools/ModDump has data for, by name (empty if none was generated).</summary>
-    public static IReadOnlyDictionary<string, ModdedBlock> ModdedCatalog => _modded.Value;
+    public static IReadOnlyDictionary<string, ModdedBlock> ModdedCatalog => _modded.Value.Blocks;
 
-    private static IReadOnlyDictionary<string, ModdedBlock> LoadModded(string resource)
+    private static ModdedContent LoadModded(string resource)
     {
         using var stream = typeof(GameData).Assembly.GetManifestResourceStream(resource);
-        if (stream == null) return new Dictionary<string, ModdedBlock>();
+        if (stream == null) return ModdedContent.Empty;
         using var brotli = new BrotliStream(stream, CompressionMode.Decompress);
-        return ReadModdedCatalog(JsonNode.Parse(brotli)!);
+        return ModdedContent.Read(JsonNode.Parse(brotli)!);
     }
 
     /// <summary>Reads a modded block catalog (the embedded one, or one ModDump.ToCatalog wrote for a server).</summary>
@@ -175,16 +178,27 @@ public sealed partial class GameData
     }
 
     /// <summary>
-    /// This table plus shapes learned by touch for states it has no data for (raw state id -> collision boxes, from
-    /// MinecraftClient.MeasureBlockAsync). They stay "unknown blocks" (no name, never dug, hardness unknown) but
-    /// physics and pathing use their real shape: a carpet you walk over, a door plate, a small pumpkin. States that
-    /// are neither known nor learned stay solid unknown cubes.
+    /// This table plus what Vertex learned by experience about states it has no data for (raw state id -> facts):
+    /// physics and pathing use a touched state's real shape (a carpet you walk over, a door plate, a small pumpkin),
+    /// avoid sticky ones, and walk through learned doorways. They stay "unknown blocks" (never dug on the way).
+    /// States that are neither known nor learned stay solid unknown cubes.
     /// </summary>
-    public GameData WithLearnedStates(IReadOnlyDictionary<int, Box[]> learned, IReadOnlySet<int>? sticky = null)
+    public GameData WithLearnedStates(IReadOnlyDictionary<int, LearnedState> learned)
     {
         var mine = learned.Where(kv => kv.Key >= KnownStateCount && kv.Key < ModdedTableSize - 1).ToList();
-        return mine.Count == 0 ? this : Padded(mine, sticky);
+        return mine.Count == 0 ? this : Padded(mine);
     }
+
+    /// <summary>What was learned about a state by experience (WithLearnedStates), if anything.</summary>
+    public LearnedState? Learned(int state) => _learnedStates?.GetValueOrDefault(state);
+
+    /// <summary>A state learned to be a door or gate (right-clicking switches it between blocking and letting you through).</summary>
+    public bool IsLearnedDoorway(int state) => _learnedStates != null && _learnedStates.TryGetValue(state, out var l) && l.Doorway;
+
+    /// <summary>An open door, gate or trapdoor: its "open" property, or for a learned doorway, its open state.</summary>
+    public bool IsOpen(int state) => Learned(state) is { Doorway: true } l ? l.Open : state > 0 && GetProperty(state, "open") == "true";
+
+    private Dictionary<int, LearnedState>? _learnedStates;
 
     /// <summary>Every 16-bit state id a server can send, plus the unknown stand-in at the end.</summary>
     public const int ModdedTableSize = 65537;
@@ -194,9 +208,9 @@ public sealed partial class GameData
     /// Learning then changes entries but never the length, so a state id read through a newer table can never index
     /// past an older one that some code still holds.
     /// </summary>
-    public GameData ForModdedServer() => StateBlock.Length >= ModdedTableSize ? this : Padded([], null);
+    public GameData ForModdedServer() => StateBlock.Length >= ModdedTableSize ? this : Padded([]);
 
-    private GameData Padded(List<KeyValuePair<int, Box[]>> mine, IReadOnlySet<int>? sticky)
+    private GameData Padded(List<KeyValuePair<int, LearnedState>> mine)
     {
         var unknown = UnknownState;
         var n = Math.Max(ModdedTableSize, StateBlock.Length);
@@ -213,12 +227,17 @@ public sealed partial class GameData
         var flags = Grow(StateFlags);
         var shape = Grow(StateShape);
         var shapes = Shapes.ToList();
-        foreach (var (id, boxes) in mine)
+        var learned = new Dictionary<int, LearnedState>(_learnedStates ?? []);
+        var touched = 0;
+        foreach (var (id, l) in mine)
         {
+            learned[id] = l;
+            if (l.Shape is not { } boxes) continue;
+            touched++;
             shape[id] = (ushort)shapes.Count;
             shapes.Add(boxes);
             flags[id] = boxes.Length == 0 ? (byte)0 : GameData.FlagBlocksMotion;
-            if (sticky?.Contains(id) == true) flags[id] |= GameData.FlagSticky;
+            if (l.Sticky) flags[id] |= GameData.FlagSticky;
         }
         var blocks = Blocks.ToArray();
         var u = blocks[^1];
@@ -230,8 +249,9 @@ public sealed partial class GameData
             StateBlock = stateBlock, Hardness = hardness, StateFlags = flags, StateShape = shape, Friction = Grow(Friction),
             SpeedFactor = Grow(SpeedFactor), JumpFactor = Grow(JumpFactor), FluidAmount = Grow(FluidAmount), Shapes = shapes.ToArray(),
             VanillaStateCount = VanillaStateCount, KnownStateCount = KnownStateCount, ModdedBlockCount = ModdedBlockCount,
-            LearnedStateCount = LearnedStateCount + mine.Count,
+            LearnedStateCount = LearnedStateCount + touched,
         };
+        data._learnedStates = learned.Count == 0 ? null : learned;
         data._blocksByName = blocks.ToDictionary(b => b.Name);
         data._itemsByName = _itemsByName;
         data._entitiesByName = _entitiesByName;
@@ -257,4 +277,32 @@ public sealed partial class GameData
         data._blockTags = resolved;
         return data;
     }
+
+    /// <summary>
+    /// This table numbering items the way a Fabric server does (its synced minecraft:item registry, name -> raw id):
+    /// vanilla items by name, wherever the server put them, and its modded items under their own names. A modded
+    /// item named like one of the server's blocks places that block (a mod's block items share their block's name),
+    /// which is how placing one tells Vertex what it just made. Facts we have no data for keep vanilla's defaults.
+    /// </summary>
+    /// <param name="catalog">The mods' items as tools/ModDump dumped them (stack sizes, tools, food): used by name.</param>
+    public GameData WithServerItems(IReadOnlyDictionary<string, int> itemRawIds, IReadOnlyCollection<string>? blockNames = null, IReadOnlyDictionary<string, ItemType>? catalog = null)
+    {
+        var byId = new Dictionary<int, ItemType>(itemRawIds.Count);
+        var byName = new Dictionary<string, ItemType>(_itemsByName);
+        foreach (var (name, id) in itemRawIds)
+        {
+            if (_itemsByName.TryGetValue(name, out var vanilla)) { byId[id] = vanilla; continue; }
+            var modded = catalog?.GetValueOrDefault(name) is { } known ? known.WithId(id)
+                : new ItemType { Id = id, Name = name, Block = blockNames?.Contains(name) == true ? name : null };
+            byId[id] = modded;
+            byName[name] = modded;
+        }
+        var data = (GameData)MemberwiseClone();
+        data._serverItems = byId;
+        data._itemsByName = byName;
+        return data;
+    }
+
+    /// <summary>Items a modded server added (WithServerItems), by name.</summary>
+    public IEnumerable<ItemType> ModdedItems => _itemsByName.Values.Where(i => i.Id >= Items.Length || Items[i.Id] != i);
 }

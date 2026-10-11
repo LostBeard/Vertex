@@ -39,6 +39,14 @@ public sealed class ItemType
     public bool IsFood => FoodNutrition > 0;
     /// <summary>The vanilla components Vertex keeps (tool, food, weapon, equippable, attribute modifiers...).</summary>
     public JsonObject Components { get; init; } = [];
+
+    /// <summary>The same item under another id (a modded server numbers items its own way).</summary>
+    public ItemType WithId(int id) => new()
+    {
+        Id = id, Name = Name, MaxStackSize = MaxStackSize, MaxDamage = MaxDamage, Block = Block, ToolRules = ToolRules,
+        ToolDefaultSpeed = ToolDefaultSpeed, FoodNutrition = FoodNutrition, FoodSaturation = FoodSaturation, Components = Components,
+    };
+
     public override string ToString() => Name;
 }
 
@@ -95,6 +103,7 @@ public sealed partial class GameData
     private Dictionary<string, EntityTypeInfo> _entitiesByName = [];
     private Dictionary<string, HashSet<string>> _itemTags = [];
     private Dictionary<string, HashSet<string>> _blockTags = [];
+    private Dictionary<int, ItemType>? _serverItems; // a modded server's item numbering (WithServerItems)
 
     /// <summary>The vanilla block states (the same in every GameData of this version).</summary>
     public int VanillaStateCount { get; private init; }
@@ -118,7 +127,7 @@ public sealed partial class GameData
     public BlockType? Block(string name) => _blocksByName.GetValueOrDefault(Normalize(name));
     public ItemType? Item(string name) => _itemsByName.GetValueOrDefault(Normalize(name));
     public EntityTypeInfo? Entity(string name) => _entitiesByName.GetValueOrDefault(Normalize(name));
-    public ItemType? Item(int id) => id >= 0 && id < Items.Length ? Items[id] : null;
+    public ItemType? Item(int id) => _serverItems != null ? _serverItems.GetValueOrDefault(id) : id >= 0 && id < Items.Length ? Items[id] : null;
     public EntityTypeInfo? Entity(int id) => id >= 0 && id < Entities.Length ? Entities[id] : null;
 
     public static string Normalize(string name) => name.Contains(':') ? name : "minecraft:" + name;
@@ -222,25 +231,7 @@ public sealed partial class GameData
         speed[n] = 1;
         jump[n] = 1;
 
-        var items = root["items"]!.AsArray().Select((it, i) =>
-        {
-            var c = it!["components"]!.AsObject();
-            var tool = c["tool"];
-            var food = c["food"];
-            return new ItemType
-            {
-                Id = i,
-                Name = it["name"]!.GetValue<string>(),
-                MaxStackSize = c["max_stack_size"]?.GetValue<int>() ?? 64,
-                MaxDamage = c["max_damage"]?.GetValue<int>() ?? 0,
-                Block = it["block"]?.GetValue<string>(),
-                ToolRules = tool?["rules"]?.AsArray().Select(r => ParseToolRule(r!)).ToArray() ?? [],
-                ToolDefaultSpeed = tool?["default_mining_speed"]?.GetValue<float>() ?? 1,
-                FoodNutrition = food?["nutrition"]?.GetValue<int>() ?? 0,
-                FoodSaturation = food?["saturation"]?.GetValue<float>() ?? 0,
-                Components = c,
-            };
-        }).ToArray();
+        var items = root["items"]!.AsArray().Select((it, i) => ParseItem(i, it!)).ToArray();
 
         var entities = root["entities"]!.AsArray().Select((e, i) => new EntityTypeInfo(i, e![0]!.GetValue<string>(),
             e[1]!.GetValue<float>(), e[2]!.GetValue<float>(), e[3]!.GetValue<float>())).ToArray();
@@ -275,6 +266,33 @@ public sealed partial class GameData
     }
 
     // A tool rule's "blocks" is a tag ("#minecraft:mineable/pickaxe"), one block name, or a list of names.
+    /// <summary>
+    /// One item from its name, the block it places and its default components as the game's codec writes them
+    /// (the vanilla item report, or tools/ModDump for a mod's items): {"name", "block"?, "components": {...}}.
+    /// </summary>
+    internal static ItemType ParseItem(int id, JsonNode it)
+    {
+        var c = it["components"]!.AsObject();
+        var tool = c["tool"];
+        var food = c["food"];
+        return new ItemType
+        {
+            Id = id,
+            Name = it["name"]!.GetValue<string>(),
+            MaxStackSize = c["max_stack_size"]?.GetValue<int>() ?? 64,
+            MaxDamage = c["max_damage"]?.GetValue<int>() ?? 0,
+            Block = it["block"]?.GetValue<string>(),
+            ToolRules = tool?["rules"]?.AsArray().Select(r => ParseToolRule(r!)).ToArray() ?? [],
+            ToolDefaultSpeed = tool?["default_mining_speed"]?.GetValue<float>() ?? 1,
+            FoodNutrition = food?["nutrition"]?.GetValue<int>() ?? 0,
+            FoodSaturation = food?["saturation"]?.GetValue<float>() ?? 0,
+            Components = c,
+        };
+    }
+
+    /// <summary>The item components Vertex keeps (DataGen keeps the same ones for vanilla items).</summary>
+    public static readonly string[] KeptItemComponents = ["max_stack_size", "max_damage", "tool", "food", "consumable", "weapon", "equippable", "attribute_modifiers", "use_remainder"];
+
     private static ToolRule ParseToolRule(JsonNode rule)
     {
         string[]? names = null;

@@ -74,13 +74,13 @@ public sealed class VertexHost : IAsyncDisposable
     /// <summary>Where downloaded mods, the Fabric server and Java are kept.</summary>
     internal string ModsCache { get; set; } = Mods.ModpackBlocks.DefaultCache;
 
-    /// <summary>Block shapes learned by touch on this server.</summary>
+    /// <summary>What Vertex learned by experience about this server's blocks (shapes, doors, names, dig times).</summary>
     private string WorldTouchedFile => WorldFileBase + ".touched.json";
 
     private void SaveTouched()
     {
-        if (_client is { LearnedShapes.Count: > 0, BlockRegistryFingerprint: { } fp } c)
-            Mods.TouchedBlocks.Save(WorldTouchedFile, new Mods.TouchedBlocks(fp, c.LearnedShapes.ToDictionary(), c.StickyStates.ToList()));
+        if (_client is { LearnedStates.Count: > 0, BlockRegistryFingerprint: { } fp } c)
+            Mods.TouchedBlocks.Save(WorldTouchedFile, new Mods.TouchedBlocks(fp, c.LearnedStates.ToDictionary()));
     }
 
     /// <summary>What Vertex has learned about this server's modded blocks (next to its world memory).</summary>
@@ -185,9 +185,8 @@ public sealed class VertexHost : IAsyncDisposable
             {
                 Brand = "vertex",
                 Log = m => { if (m.StartsWith("disconnected") || m.StartsWith("joined") || m.StartsWith("spawned") || m.StartsWith("modded blocks")) Add(LineKind.System, m); },
-                ModdedBlocks = Mods.ModpackBlocks.LoadWorld(WorldBlocksFile),
-                LearnedShapes = touched?.Shapes,
-                LearnedSticky = touched?.Sticky,
+                Modded = Mods.ModpackBlocks.LoadWorld(WorldBlocksFile),
+                Learned = touched?.States,
                 LearnedFingerprint = touched?.Fingerprint,
                 UseEmbeddedModdedBlocks = UseEmbeddedModdedBlocks,
             });
@@ -249,12 +248,12 @@ public sealed class VertexHost : IAsyncDisposable
             {
                 var learner = new Mods.ModpackBlocks(ModsCache, m => Add(LineKind.System, m));
                 var learned = await learner.DumpAsync(pack);
-                var known = Mods.ModpackBlocks.LoadWorld(WorldBlocksFile)?.Values ?? [];
-                Mods.ModpackBlocks.SaveWorld(WorldBlocksFile, known.Where(k => !learned.ContainsKey(k.Name)).Concat(learned.Values), pack);
-                var missing = unknown.Where(n => !learned.ContainsKey(n)).ToList();
+                var known = Mods.ModpackBlocks.LoadWorld(WorldBlocksFile) ?? SpawnDev.Minecraft.Data.ModdedContent.Empty;
+                Mods.ModpackBlocks.SaveWorld(WorldBlocksFile, known.With(learned), pack);
+                var missing = unknown.Where(n => !learned.Blocks.ContainsKey(n)).ToList();
                 if (missing.Count > 0) Add(LineKind.System, $"the modpack does not have {missing.Count} of them: {string.Join(", ", missing.Take(10))}");
                 if (State != HostState.Playing || _client == null) return;
-                _client.AddModdedBlocks(learned); // applies at once: chunks keep raw state ids, no rejoin needed
+                _client.AddModded(learned); // applies at once: chunks keep raw state ids, no rejoin needed
                 _brain?.Mouth.Say("Got it, I know this server's blocks now!");
             }
             catch (Exception e)

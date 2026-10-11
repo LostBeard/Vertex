@@ -42,7 +42,7 @@ public sealed class PlayerInventory
     internal void PredictOneUsed(int slot, ItemStack before)
     {
         if ((uint)slot >= Size || before.IsEmpty) return;
-        var after = before.Count > 1 ? new ItemStack(before.ItemId, before.Count - 1, before.Components, before.RemovedComponents) : ItemStack.Empty;
+        var after = before.WithCount(before.Count - 1);
         Interlocked.CompareExchange(ref _slots[slot], after, before);
     }
 

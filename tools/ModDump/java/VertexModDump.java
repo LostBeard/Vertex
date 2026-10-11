@@ -1,4 +1,5 @@
 import java.io.FileWriter;
+import java.lang.reflect.Method;
 import java.lang.reflect.Proxy;
 import java.util.ArrayList;
 import java.util.HashMap;
@@ -6,9 +7,25 @@ import java.util.List;
 import java.util.Locale;
 import java.util.Map;
 
+import com.google.gson.JsonArray;
+import com.google.gson.JsonElement;
+import com.google.gson.JsonObject;
+import com.mojang.serialization.Codec;
+import com.mojang.serialization.JsonOps;
+
 import net.fabricmc.api.DedicatedServerModInitializer;
 import net.minecraft.core.BlockPos;
+import net.minecraft.core.HolderLookup;
+import net.minecraft.core.component.DataComponentType;
+import net.minecraft.core.component.TypedDataComponent;
 import net.minecraft.core.registries.BuiltInRegistries;
+import net.minecraft.resources.RegistryOps;
+import net.minecraft.resources.ResourceLocation;
+import net.minecraft.server.MinecraftServer;
+import net.minecraft.world.entity.EntityDimensions;
+import net.minecraft.world.entity.EntityType;
+import net.minecraft.world.item.BlockItem;
+import net.minecraft.world.item.Item;
 import net.minecraft.world.level.EmptyBlockGetter;
 import net.minecraft.world.level.block.Block;
 import net.minecraft.world.level.block.state.BlockState;
@@ -28,6 +45,9 @@ import net.minecraft.world.phys.AABB;
  *   blocks: [ [name, firstState, stateCount, [[property, [values...]], ...] (sorted by name, as StateDefinition)], ... ]
  *   states: [ [block, hardness, flags, shape, friction, speedFactor, jumpFactor, fluidAmount], ... ] by state id
  *   shapes: [ [[x1,y1,z1,x2,y2,z2], ...], ... ]
+ *   items: [ {name, block?, components: {...}}, ... ] the mods' items only: default components as the game's codecs
+ *          write them (the format of the vanilla item report, so one parser reads both)
+ *   entities: [ [name, width, height, eyeHeight], ... ] the mods' entity types only
  * flags: 1 air, 2 requires correct tool, 4 replaceable, 8 water, 16 lava, 32 fluid source, 64 blocks motion
  */
 public class VertexModDump implements DedicatedServerModInitializer {
@@ -39,7 +59,7 @@ public class VertexModDump implements DedicatedServerModInitializer {
             Class<?> listener = Class.forName("net.fabricmc.fabric.api.event.lifecycle.v1.ServerLifecycleEvents$ServerStarted");
             Object proxy = Proxy.newProxyInstance(listener.getClassLoader(), new Class<?>[] { listener }, (p, m, a) -> {
                 if (m.getDeclaringClass() == Object.class) return m.invoke(this, a);
-                dumpAndExit();
+                dumpAndExit((MinecraftServer) a[0]);
                 return null;
             });
             // Through the public API type: the implementation class (ArrayBackedEvent) is not accessible.
@@ -49,10 +69,10 @@ public class VertexModDump implements DedicatedServerModInitializer {
         }
     }
 
-    private static void dumpAndExit() {
+    private static void dumpAndExit(MinecraftServer server) {
         int code = 0;
         try {
-            dump(System.getProperty("vertex.moddump"));
+            dump(System.getProperty("vertex.moddump"), server);
         } catch (Throwable t) {
             t.printStackTrace();
             code = 1;
@@ -61,7 +81,7 @@ public class VertexModDump implements DedicatedServerModInitializer {
         Runtime.getRuntime().halt(code); // nothing to save: the server folder is thrown away
     }
 
-    private static void dump(String path) throws Exception {
+    private static void dump(String path, MinecraftServer server) throws Exception {
         Map<String, Integer> shapeIds = new HashMap<>();
         List<String> shapes = new ArrayList<>();
         StringBuilder states = new StringBuilder();
@@ -123,10 +143,60 @@ public class VertexModDump implements DedicatedServerModInitializer {
             }
             blocks.append("],").append(Block.getId(b.defaultBlockState())).append(',').append(n(b.getExplosionResistance())).append(']');
         }
-        try (FileWriter w = new FileWriter(path)) {
-            w.write("{\"blocks\":[\n" + blocks + "],\n\"states\":[\n" + states + "],\n\"shapes\":[\n" + String.join(",\n", shapes) + "]}\n");
+        RegistryOps<JsonElement> ops = RegistryOps.create(JsonOps.INSTANCE, registries(server));
+        JsonArray items = new JsonArray();
+        for (Item it : BuiltInRegistries.ITEM) {
+            ResourceLocation key = BuiltInRegistries.ITEM.getKey(it);
+            if ("minecraft".equals(key.getNamespace())) continue;
+            JsonObject components = new JsonObject();
+            for (TypedDataComponent<?> c : it.components()) encode(c, ops, components);
+            JsonObject o = new JsonObject();
+            o.addProperty("name", key.toString());
+            if (it instanceof BlockItem bi) o.addProperty("block", BuiltInRegistries.BLOCK.getKey(bi.getBlock()).toString());
+            o.add("components", components);
+            items.add(o);
         }
-        System.out.println("dumped " + expected + " states, " + shapes.size() + " shapes");
+        JsonArray entities = new JsonArray();
+        for (EntityType<?> t : BuiltInRegistries.ENTITY_TYPE) {
+            ResourceLocation key = BuiltInRegistries.ENTITY_TYPE.getKey(t);
+            if ("minecraft".equals(key.getNamespace())) continue;
+            EntityDimensions d = t.getDimensions();
+            JsonArray e = new JsonArray();
+            e.add(key.toString());
+            e.add(d.width());
+            e.add(d.height());
+            e.add(d.eyeHeight());
+            entities.add(e);
+        }
+        try (FileWriter w = new FileWriter(path)) {
+            w.write("{\"blocks\":[\n" + blocks + "],\n\"states\":[\n" + states + "],\n\"shapes\":[\n" + String.join(",\n", shapes)
+                + "],\n\"items\":" + items + ",\n\"entities\":" + entities + "}\n");
+        }
+        System.out.println("dumped " + expected + " states, " + shapes.size() + " shapes, " + items.size() + " modded items, "
+            + entities.size() + " modded entity types");
+    }
+
+    /**
+     * The server's registries, for codecs that refer to tags and registry entries (a tool's block tags). Found by
+     * type: a direct server.registryAccess() call kept its Mojang name through the remap (NoSuchMethodError at run
+     * time), while class names map correctly.
+     */
+    private static HolderLookup.Provider registries(MinecraftServer server) throws Exception {
+        for (Method m : server.getClass().getMethods())
+            if (m.getParameterCount() == 0 && HolderLookup.Provider.class.isAssignableFrom(m.getReturnType()))
+                return (HolderLookup.Provider) m.invoke(server);
+        throw new IllegalStateException("no registry access on " + server.getClass());
+    }
+
+    /** One component under its name (a vanilla one without "minecraft:", as the item report has them); ones with no codec are skipped. */
+    private static <T> void encode(TypedDataComponent<T> c, RegistryOps<JsonElement> ops, JsonObject out) {
+        DataComponentType<T> type = c.type();
+        Codec<T> codec = type.codec();
+        if (codec == null) return; // transient: never saved or sent
+        ResourceLocation key = BuiltInRegistries.DATA_COMPONENT_TYPE.getKey(type);
+        if (key == null) return;
+        String name = "minecraft".equals(key.getNamespace()) ? key.getPath() : key.toString();
+        codec.encodeStart(ops, c.value()).result().ifPresent(j -> out.add(name, j));
     }
 
     @SuppressWarnings({ "unchecked", "rawtypes" })

@@ -24,8 +24,8 @@ public sealed class ModpackBlocks(string cacheRoot, Action<string>? log = null)
 
     private void Log(string m) => log?.Invoke(m);
 
-    /// <summary>The modded blocks of a pack's mods (the vanilla check passed).</summary>
-    public async Task<IReadOnlyDictionary<string, ModdedBlock>> DumpAsync(string pack, CancellationToken ct = default)
+    /// <summary>The modded blocks, items and mobs of a pack's mods (the vanilla check passed).</summary>
+    public async Task<ModdedContent> DumpAsync(string pack, CancellationToken ct = default)
     {
         await OneAtATime.WaitAsync(ct);
         try
@@ -50,9 +50,10 @@ public sealed class ModpackBlocks(string cacheRoot, Action<string>? log = null)
             var java = await JavaAsync(http, ct);
             var server = await FabricServerAsync(http, minecraft, loader, ct);
             var dump = await RunDumpAsync(java, server, jars, ct);
-            var blocks = ModDump.Read(dump, GameData.Vanilla);
-            Log($"dumped {blocks.Count} modded blocks ({blocks.Sum(b => b.StateCount)} states) from {source}");
-            return blocks.ToDictionary(b => b.Name);
+            var content = ModDump.ReadContent(dump, GameData.Vanilla);
+            Log($"dumped {content.Blocks.Count} modded blocks ({content.Blocks.Values.Sum(b => b.StateCount)} states), {content.Items.Count} items, "
+                + $"{content.Entities.Count} mobs from {source}");
+            return content;
         }
         finally
         {
@@ -192,19 +193,19 @@ public sealed class ModpackBlocks(string cacheRoot, Action<string>? log = null)
 
     // ---------------------------------------------------------------- what a world has learned
 
-    /// <summary>The blocks learned for one world (server), saved next to its world memory, or null.</summary>
-    public static IReadOnlyDictionary<string, ModdedBlock>? LoadWorld(string file)
+    /// <summary>The modded content learned for one world (server), saved next to its world memory, or null.</summary>
+    public static ModdedContent? LoadWorld(string file)
     {
         if (!File.Exists(file)) return null;
-        try { return GameData.ReadModdedCatalog(JsonNode.Parse(File.ReadAllText(file))!); }
-        catch (Exception e) when (e is System.Text.Json.JsonException or InvalidDataException or NullReferenceException) { return null; }
+        try { return ModdedContent.Read(JsonNode.Parse(File.ReadAllText(file))!); }
+        catch (Exception e) when (e is System.Text.Json.JsonException or InvalidDataException or NullReferenceException or InvalidOperationException) { return null; }
     }
 
-    public static void SaveWorld(string file, IEnumerable<ModdedBlock> blocks, string source)
+    public static void SaveWorld(string file, ModdedContent content, string source)
     {
         Directory.CreateDirectory(Path.GetDirectoryName(file)!);
         var temp = file + ".tmp";
-        File.WriteAllText(temp, ModDump.ToCatalog(blocks, [$"{DateTime.UtcNow:yyyy-MM-dd} {source}"]).ToJsonString());
+        File.WriteAllText(temp, content.ToCatalog([$"{DateTime.UtcNow:yyyy-MM-dd} {source}"]).ToJsonString());
         File.Move(temp, file, overwrite: true);
     }
 }

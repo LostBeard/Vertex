@@ -84,18 +84,19 @@ try
         throw new InvalidOperationException("the dump did not finish:\n" + string.Join('\n', log.Split('\n').TakeLast(40)));
 
     // 5. Check (inside ModDump.Read), then merge into the catalog.
-    var dumped = ModDump.Read(JsonNode.Parse(File.ReadAllText(dumpFile))!, vanilla);
+    var dumped = ModDump.ReadContent(JsonNode.Parse(File.ReadAllText(dumpFile))!, vanilla);
     var existing = File.Exists(output) ? ReadBrotliJson(output) : null;
-    var blocks = (existing == null ? new Dictionary<string, ModdedBlock>() : GameData.ReadModdedCatalog(existing).ToDictionary());
-    foreach (var m in dumped) blocks[m.Name] = m;
+    var catalog = (existing == null ? ModdedContent.Empty : ModdedContent.Read(existing)).With(dumped);
     var sources = existing?["sources"]!.AsArray().Select(x => x!.GetValue<string>()).ToList() ?? [];
     sources.Add($"{DateTime.UtcNow:yyyy-MM-dd} {Path.GetFileName(fabric)}: {string.Join(", ", modList)}");
     using (var dst = File.Create(output))
     using (var brotli = new BrotliStream(dst, CompressionLevel.SmallestSize))
-        brotli.Write(Encoding.UTF8.GetBytes(ModDump.ToCatalog(blocks.Values, sources).ToJsonString()));
+        brotli.Write(Encoding.UTF8.GetBytes(catalog.ToCatalog(sources).ToJsonString()));
     // Vertex ships the remapped dump mod, to dump a server's modpack at runtime (no mappings or Paper jar needed there).
     File.Copy(remapped, Path.Combine(repo, "Vertex", "Mods", "vertex-moddump.jar"), overwrite: true);
-    Console.WriteLine($"vanilla half matches ({vanilla.VanillaStateCount} states); {dumped.Count} modded blocks from {Path.GetFileName(fabric)}; catalog now {blocks.Count} blocks: {output} ({new FileInfo(output).Length:N0} bytes)");
+    Console.WriteLine($"vanilla half matches ({vanilla.VanillaStateCount} states); {dumped.Blocks.Count} modded blocks, {dumped.Items.Count} items, "
+        + $"{dumped.Entities.Count} mobs from {Path.GetFileName(fabric)}; catalog now {catalog.Blocks.Count} blocks, {catalog.Items.Count} items, "
+        + $"{catalog.Entities.Count} mobs: {output} ({new FileInfo(output).Length:N0} bytes)");
     return 0;
 }
 finally

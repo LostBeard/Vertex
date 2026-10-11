@@ -427,7 +427,8 @@ public sealed partial class MinecraftClient
     ];
 
     /// <summary>Blocks that do something when right-clicked (open, toggle, edit): clicking one does not place against it.</summary>
-    private bool Interactive(int state) => World.Data.BlockOf(state).Name is var n && InteractiveParts.Any(n.Contains);
+    private bool Interactive(int state) => World.Data.BlockOf(state).Name is var n && InteractiveParts.Any(n.Contains)
+        || World.Data.IsUnknownBlock(state) && World.Data.Learned(state)?.UseDoesNothing != true; // a modded block could be a door or a chest
 
     public async Task<bool> PlaceBlockAsync(int x, int y, int z, CancellationToken cancellationToken = default)
     {
@@ -459,10 +460,12 @@ public sealed partial class MinecraftClient
         var before = World.GetState(tx, ty, tz);
         var slot = PlayerInventory.HotbarStart + Inventory.SelectedHotbar;
         var held = Inventory[slot];
+        var aboveBefore = World.GetRawState(tx, ty + 1, tz);
         await UseOnBlockAsync(x, y, z, face, Hand.Main, null, cancellationToken);
         if (!await WaitUntilAsync(() => { var s = World.GetState(tx, ty, tz); return s > 0 && !World.Data.IsAir(s) && s != before; }, 20, cancellationToken))
             return false;
         if (!InstaBuild) Inventory.PredictOneUsed(slot, held);
+        LearnPlaced(held, tx, ty, tz, aboveBefore);
         return true;
     }
 

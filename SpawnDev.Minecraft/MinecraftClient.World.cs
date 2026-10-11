@@ -173,19 +173,22 @@ public sealed partial class MinecraftClient
     }
 
     /// <summary>
-    /// Uses more modded block facts from now on (a modpack dumped while playing): blocks already loaded change at
-    /// once, since chunks keep raw state ids.
+    /// Uses more modded facts from now on (a modpack dumped while playing): blocks already loaded change at once,
+    /// since chunks keep raw state ids; items read from then on, and mobs that spawn, get theirs.
     /// </summary>
-    public void AddModdedBlocks(IReadOnlyDictionary<string, ModdedBlock> blocks)
+    public void AddModded(ModdedContent content)
     {
         lock (_dataLock)
         {
-            var merged = (_options.ModdedBlocks ?? new Dictionary<string, ModdedBlock>()).ToDictionary();
-            foreach (var (k, v) in blocks) merged[k] = v;
-            _options.ModdedBlocks = merged;
+            _options.Modded = (_options.Modded ?? ModdedContent.Empty).With(content);
+            _moddedInUse = null;
             RebuildWorldDataLocked();
         }
     }
+
+    /// <summary>The modded content in use: the embedded catalog (unless switched off) plus ClientOptions.Modded.</summary>
+    private ModdedContent ModdedInUse => _moddedInUse ??= (_options.UseEmbeddedModdedBlocks ? GameData.EmbeddedModded : ModdedContent.Empty).With(_options.Modded ?? ModdedContent.Empty);
+    private ModdedContent? _moddedInUse;
 
     private void RebuildWorldDataLocked()
     {
@@ -193,27 +196,22 @@ public sealed partial class MinecraftClient
         var unknown = new List<string>();
         if (_fabricRegistries.TryGetValue("minecraft:block", out var blocks))
         {
-            var embedded = _options.UseEmbeddedModdedBlocks ? GameData.ModdedCatalog : new Dictionary<string, ModdedBlock>();
-            var catalog = _options.ModdedBlocks is { Count: > 0 } extra
-                ? embedded.Concat(extra).GroupBy(kv => kv.Key).ToDictionary(g => g.Key, g => g.Last().Value)
-                : embedded;
-            data = data.WithModdedBlocks(blocks, catalog);
+            data = data.WithModdedBlocks(blocks, ModdedInUse.Blocks);
             // Everything synced past the blocks we could number: no data (or after a block with none).
             unknown.AddRange(blocks.Where(kv => kv.Value >= data.Blocks.Length - 1).OrderBy(kv => kv.Value).Select(kv => kv.Key));
             if (_tags.TryGetValue("minecraft:block", out var blockTags)) data = data.WithBlockTags(blockTags);
         }
-        UnknownModdedBlocks = unknown;
         BlockRegistryFingerprint = blocks == null ? null : Fingerprint(blocks);
-        if (_learned.Count == 0 && _options.LearnedShapes is { Count: > 0 } saved && _options.LearnedFingerprint == BlockRegistryFingerprint)
-        {
-            foreach (var (id, boxes) in saved) _learned[id] = boxes;
-            foreach (var id in _options.LearnedSticky ?? []) _sticky.Add(id);
-        }
+        if (_learned.Count == 0 && _options.Learned is { Count: > 0 } saved && _options.LearnedFingerprint == BlockRegistryFingerprint)
+            _learned = saved.ToDictionary();
         // A modded server: room in the table for every state id it can send (see ForModdedServer).
-        if (blocks != null) data = data.ForModdedServer().WithLearnedStates(_learned, _sticky);
-        if (ReferenceEquals(data, World.Data)) return;
+        if (blocks != null) data = data.ForModdedServer().WithLearnedStates(_learned);
+        if (_fabricRegistries.TryGetValue("minecraft:item", out var items)) data = data.WithServerItems(items, blocks?.Keys, ModdedInUse.Items);
+        // The tables first, then the list: whoever sees "nothing unknown" must already read the tables that know it.
+        if (ReferenceEquals(data, World.Data)) { UnknownModdedBlocks = unknown; return; }
         var before = World.Data.ModdedBlockCount;
         World.Data = data;
+        UnknownModdedBlocks = unknown;
         _physics = null;    // both hold on to one table:
         _pathfinder = null; // the next tick and the next plan pick the new one up
         if (data.ModdedBlockCount > 0 && data.ModdedBlockCount != before) // not again when only the tags changed
@@ -227,14 +225,14 @@ public sealed partial class MinecraftClient
     /// </summary>
     public IReadOnlyList<string> UnknownModdedBlocks { get; private set; } = [];
 
-    private readonly Dictionary<int, Box[]> _learned = [];
-    private readonly HashSet<int> _sticky = [];
+    // Replaced, never changed, under _dataLock: whoever reads LearnedStates keeps a snapshot that stays put.
+    private Dictionary<int, LearnedState> _learned = [];
 
-    /// <summary>Learned states that hold you once you are in them (avoided by pathing).</summary>
-    public IReadOnlySet<int> StickyStates => _sticky;
-
-    /// <summary>Shapes learned by touch on this server (raw state id -> boxes): save them with BlockRegistryFingerprint.</summary>
-    public IReadOnlyDictionary<int, Box[]> LearnedShapes => _learned;
+    /// <summary>
+    /// What Vertex learned by experience on this server (raw state id -> facts): save it with BlockRegistryFingerprint.
+    /// A snapshot: later learning replaces it rather than changing it.
+    /// </summary>
+    public IReadOnlyDictionary<int, LearnedState> LearnedStates => _learned;
 
     /// <summary>Identifies this server's block list (names in raw-id order): raw state ids mean the same thing only under it.</summary>
     public string? BlockRegistryFingerprint { get; private set; }
@@ -242,10 +240,33 @@ public sealed partial class MinecraftClient
     /// <summary>Uses a shape learned by touch from now on (blocks already loaded included: chunks keep raw ids).</summary>
     public void Learn(BlockProbe probe)
     {
-        if (probe.RawState < World.Data.KnownStateCount) return; // we already know it
-        _learned[probe.RawState] = probe.Shape;
-        if (probe.Sticky) _sticky.Add(probe.RawState); else _sticky.Remove(probe.RawState);
-        RebuildWorldData();
+        var fact = new LearnedState { Shape = probe.Shape, Sticky = probe.Sticky };
+        Learn(probe.UpperRawState is int upper ? [(probe.RawState, fact), (upper, fact)] : [(probe.RawState, fact)]);
+    }
+
+    /// <summary>
+    /// Adds facts learned by experience (raw state id -> what was learned; merged with what we knew, see
+    /// LearnedState.With) and uses them from now on. States we have real data for are left alone.
+    /// </summary>
+    public void Learn(params (int RawState, LearnedState Fact)[] facts)
+    {
+        lock (_dataLock)
+        {
+            var known = World.Data.KnownStateCount;
+            var next = new Dictionary<int, LearnedState>(_learned);
+            var changed = false;
+            foreach (var (raw, fact) in facts)
+            {
+                if (raw < known || raw >= GameData.ModdedTableSize - 1) continue;
+                var merged = next.TryGetValue(raw, out var had) ? had.With(fact) : fact;
+                if (merged == had) continue;
+                next[raw] = merged;
+                changed = true;
+            }
+            if (!changed) return;
+            _learned = next;
+            RebuildWorldDataLocked();
+        }
     }
 
     private static string Fingerprint(IReadOnlyDictionary<string, int> blocks) =>
@@ -258,6 +279,8 @@ public sealed partial class MinecraftClient
     private EntityTypeInfo ModdedEntityType(int id)
     {
         var name = FabricRegistries.TryGetValue("minecraft:entity_type", out var map) ? map.FirstOrDefault(kv => kv.Value == id).Key : null;
+        // Its real size from the mods' own code (tools/ModDump), else a player-sized guess.
+        if (name != null && ModdedInUse.Entities.TryGetValue(name, out var known)) return known with { Id = id };
         return new EntityTypeInfo(id, name ?? $"unknown:{id}", 0.6f, 1.8f, 1.6f);
     }
 
@@ -447,7 +470,7 @@ public sealed partial class MinecraftClient
                     var value = m.GetValueOrDefault("value");
                     e.Metadata[key] = value;
                     var type = m.GetValueOrDefault("type") as string;
-                    if (e.IsItem && key == 8 && type == "item_stack") e.Item = ItemStack.FromProtoDef(value);
+                    if (e.IsItem && key == 8 && type == "item_stack") e.Item = ItemStack.FromProtoDef(value, World.Data.Item);
                     else if (key == 9 && type == "float" && value is float health) e.Health = health;
                 }
                 return;
@@ -459,7 +482,7 @@ public sealed partial class MinecraftClient
                 while (true)
                 {
                     var slot = r.ReadByte();
-                    var item = ItemStack.Read(ref r);
+                    var item = ItemStack.Read(ref r, World.Data.Item);
                     if (e != null) e.Equipment[slot & 0x7F] = item;
                     if ((slot & 0x80) == 0) return;
                 }
@@ -495,8 +518,8 @@ public sealed partial class MinecraftClient
                 var stateId = r.ReadVarInt();
                 var count = r.ReadVarInt();
                 var slots = new ItemStack[count];
-                for (var i = 0; i < count; i++) slots[i] = ItemStack.Read(ref r);
-                var carried = ItemStack.Read(ref r);
+                for (var i = 0; i < count; i++) slots[i] = ItemStack.Read(ref r, World.Data.Item);
+                var carried = ItemStack.Read(ref r, World.Data.Item);
                 Inventory.Cursor = carried;
                 if (window == 0)
                 {
@@ -516,7 +539,7 @@ public sealed partial class MinecraftClient
                 var window = r.ReadVarInt();
                 var stateId = r.ReadVarInt();
                 var slot = r.ReadShort();
-                var stack = ItemStack.Read(ref r);
+                var stack = ItemStack.Read(ref r, World.Data.Item);
                 if (window == -1 && slot == -1) Inventory.Cursor = stack;
                 else if (window == 0)
                 {
@@ -535,12 +558,12 @@ public sealed partial class MinecraftClient
             case CB.Play.Clientbound.SetPlayerInventory:
             {
                 var index = r.ReadVarInt();
-                var stack = ItemStack.Read(ref r);
+                var stack = ItemStack.Read(ref r, World.Data.Item);
                 SetInventorySlot(PlayerInventory.FromInventoryIndex(index), stack);
                 return;
             }
             case CB.Play.Clientbound.SetCursorItem:
-                Inventory.Cursor = ItemStack.Read(ref r);
+                Inventory.Cursor = ItemStack.Read(ref r, World.Data.Item);
                 return;
             case CB.Play.Clientbound.SetHeldSlot:
                 Inventory.SelectedHotbar = r.ReadVarInt();

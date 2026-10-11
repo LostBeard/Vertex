@@ -5,10 +5,12 @@ using CB = SpawnDev.Minecraft.Protocol.PacketIds;
 
 namespace SpawnDev.Minecraft;
 
-/// <summary>What touching a block taught us: its collision box (none = nothing to bump into), and which faces we measured.</summary>
-/// <summary>What touching a block taught us: its collision box (none = nothing to bump into), whether it holds you once
-/// you are in it (a cobweb), and how many faces we measured.</summary>
-public sealed record BlockProbe(int RawState, Box[] Shape, int FacesMeasured, bool Sticky = false);
+/// <summary>
+/// What touching a block taught us: its collision box (none = nothing to bump into), whether it holds you once you
+/// are in it (a cobweb), and how many faces we measured. UpperRawState: an unknown block right above it that was
+/// felt together with it (a door's two halves), which gets the same shape.
+/// </summary>
+public sealed record BlockProbe(int RawState, Box[] Shape, int FacesMeasured, bool Sticky = false, int? UpperRawState = null);
 
 // Learning a block's shape by touch, with the server as the referee. Vanilla's server re-runs every move with real
 // collisions (ServerGamePacketListenerImpl.handleMovePlayer: player.move, then isPlayerCollidingWithAnythingNew) and
@@ -47,12 +49,21 @@ public sealed partial class MinecraftClient
     /// room for our body, the block above the target clear), moves toward it in a binary search along the line
     /// through its middle; then over its middle from above for its height. Single-box approximation (a fence or
     /// stair comes out as its bounding box). Faces we could not reach stay at the edge of the block (careful, not
-    /// optimistic). Null when there is nowhere to stand next to it.
+    /// optimistic). With another unknown block right above (a door's upper half) the body touches both at once:
+    /// the two are felt as one column and both get its shape, and the height is not measured. Null when there is
+    /// nowhere to stand next to it.
     /// </summary>
     public async Task<BlockProbe?> MeasureBlockAsync(int bx, int by, int bz, CancellationToken ct = default)
     {
         var raw = World.GetRawState(bx, by, bz);
-        if (raw < 0 || !Clear(bx, by + 1, bz)) return null;
+        if (raw < 0) return null;
+        int? upper = null;
+        if (!Clear(bx, by + 1, bz))
+        {
+            var above = World.GetRawState(bx, by + 1, bz);
+            if (above < World.Data.KnownStateCount || !World.Data.IsUnknownBlock(World.GetState(bx, by + 1, bz))) return null;
+            upper = above;
+        }
         var sides = new[] { BlockFace.West, BlockFace.East, BlockFace.North, BlockFace.South }
             .Where(f => { var (sx, _, sz) = Offset((bx, by, bz), f); return Standable(sx, by, sz); }).ToList();
         if (sides.Count == 0) return null;
@@ -80,7 +91,7 @@ public sealed partial class MinecraftClient
                     if (!await ProbeMoveAsync(cx + dx * (hi - 0.4), by, cz + dz * (hi - 0.4), true, ct))
                     {
                         await BackOutAsync(cx, by, cz, ct);
-                        return new BlockProbe(raw, [], measured + 1, Sticky: true);
+                        return new BlockProbe(raw, [], measured + 1, Sticky: true, UpperRawState: upper);
                     }
                     if (dx != 0) clearX = true; else clearZ = true;
                     measured++;
@@ -107,10 +118,10 @@ public sealed partial class MinecraftClient
                 await ProbeMoveAsync(cx, by, cz, true, ct); // back to the middle of the side cell
             }
             if (!hitX && !hitZ && (clearX || clearZ))
-                return new BlockProbe(raw, [], measured); // walked through it from every side we tried
+                return new BlockProbe(raw, [], measured, UpperRawState: upper); // walked through it from every side we tried
 
             // Height: lift up over the side cell, then over the target's middle; the lowest height that is accepted.
-            if (Clear(bx, by + 2, bz) && sides.Count > 0)
+            if (upper == null && Clear(bx, by + 2, bz) && sides.Count > 0)
             {
                 var (sx, _, sz) = Offset((bx, by, bz), sides[0]);
                 if (Clear(sx, by + 2, sz))
@@ -133,7 +144,7 @@ public sealed partial class MinecraftClient
             }
             if (!hitX) (minX, maxX) = (0, 1);
             if (!hitZ) (minZ, maxZ) = (0, 1);
-            return new BlockProbe(raw, [new Box(minX, 0, minZ, maxX, top, maxZ)], measured);
+            return new BlockProbe(raw, [new Box(minX, 0, minZ, maxX, top, maxZ)], measured, UpperRawState: upper);
         }
         finally
         {

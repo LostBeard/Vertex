@@ -48,6 +48,27 @@ public static class ModDump
     }
 
     /// <summary>
+    /// Everything a dump says about the mods: their blocks (Read), their items with the components Vertex keeps
+    /// (GameData.KeptItemComponents) and their entity types' sizes. Dumps from before items and entities were
+    /// added have none of either.
+    /// </summary>
+    public static ModdedContent ReadContent(JsonNode dump, GameData vanilla) => new()
+    {
+        Blocks = Read(dump, vanilla).ToDictionary(b => b.Name),
+        Items = (dump["items"] as JsonArray ?? []).Select(i =>
+        {
+            var components = new JsonObject();
+            foreach (var (k, v) in i!["components"]!.AsObject())
+                if (GameData.KeptItemComponents.Contains(k)) components[k] = v!.DeepClone();
+            var item = new JsonObject { ["name"] = i["name"]!.GetValue<string>(), ["components"] = components };
+            if (i["block"] is { } b) item["block"] = b.GetValue<string>();
+            return GameData.ParseItem(-1, item);
+        }).ToDictionary(i => i.Name),
+        Entities = (dump["entities"] as JsonArray ?? []).Select(e => new EntityTypeInfo(-1, e![0]!.GetValue<string>(),
+            e[1]!.GetValue<float>(), e[2]!.GetValue<float>(), e[3]!.GetValue<float>())).ToDictionary(e => e.Name),
+    };
+
+    /// <summary>
     /// Every vanilla block and state of the dump must be exactly what we know: name, properties, ids, hardness,
     /// flags, collision boxes, friction, speed, jump, fluid. A wrong remap, or a state numbering other than the one we
     /// assume, shows up here before any modded fact is trusted.

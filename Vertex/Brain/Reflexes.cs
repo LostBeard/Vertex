@@ -79,7 +79,7 @@ public sealed class Reflexes : IDisposable
             var attacker = c.Entities.Values.Where(e => Skills.Hostile.Contains(e.Name) && e.DistanceTo(x, y, z) < 6).OrderBy(e => e.DistanceTo(x, y, z)).FirstOrDefault();
             if (attacker == null) return;
             if (_style().Bravery >= 0.5 && c.Health > 8)
-                _tasks.Start($"fighting a {attacker.Name.Replace("minecraft:", "")} that attacked me", ct => _skills.AttackAsync(attacker.Name.Replace("minecraft:", ""), ct));
+                _tasks.Start($"fighting a {attacker.Name.Bare()} that attacked me", ct => _skills.AttackAsync(attacker.Name.Bare(), ct));
             else
                 _tasks.Start("running away from a monster", async ct =>
                 {

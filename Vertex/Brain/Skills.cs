@@ -58,6 +58,19 @@ public sealed class Skills(MinecraftClient client)
     }
 
     /// <summary>Block types matching what a player called them ("wood", "oak logs", "diamonds", "stone").</summary>
+    /// <summary>
+    /// Raw states of modded blocks Vertex has no data for but learned the name of, matching what was asked for
+    /// ("candy cane block" finds mcwholidays:blue_candy_cane_block): every word of the request in the name.
+    /// </summary>
+    public HashSet<int> LearnedStatesNamed(string what)
+    {
+        var words = what.Trim().ToLowerInvariant().Replace('_', ' ').Split(' ', StringSplitOptions.RemoveEmptyEntries)
+            .Select(w => w.TrimEnd('s')).ToArray();
+        if (words.Length == 0) return [];
+        return client.LearnedStates.Where(kv => kv.Value.Name is { } n && words.All(w => n[(n.IndexOf(':') + 1)..].Contains(w)))
+            .Select(kv => kv.Key).ToHashSet();
+    }
+
     public HashSet<int> ResolveBlocks(string what)
     {
         var w = what.Trim().ToLowerInvariant().Replace(' ', '_');
@@ -95,15 +108,15 @@ public sealed class Skills(MinecraftClient client)
     {
         var w = Simplify(what.TrimEnd('s'));
         var stacks = slots.Where(s => !s.IsEmpty).ToList();
-        return stacks.FirstOrDefault(s => Simplify(s.Name.Replace("minecraft:", "")) == w)
-            ?? stacks.FirstOrDefault(s => Simplify(s.Name.Replace("minecraft:", "")).Contains(w))
+        return stacks.FirstOrDefault(s => Simplify(s.Name.Bare()) == w)
+            ?? stacks.FirstOrDefault(s => Simplify(s.Name.Bare()).Contains(w))
             ?? stacks.FirstOrDefault(s => s.CustomName != null && Simplify(s.CustomName).Contains(w));
     }
 
     public string InventorySummary()
     {
         var counts = client.Inventory.Slots.Skip(PlayerInventory.MainStart).Where(s => !s.IsEmpty)
-            .GroupBy(s => s.Name.Replace("minecraft:", "").Replace('_', ' '))
+            .GroupBy(s => s.Name.Bare().Replace('_', ' '))
             .Select(g => $"{g.Sum(s => s.Count)} {g.Key}");
         var list = string.Join(", ", counts);
         return list.Length == 0 ? "nothing" : list;
@@ -184,24 +197,35 @@ public sealed class Skills(MinecraftClient client)
     public async Task<(bool, string)> CollectAsync(string what, int count, CancellationToken ct)
     {
         var types = ResolveBlocks(what);
-        if (types.Count == 0) return (false, $"I don't know what block '{what}' is.");
+        // A modded block we have no data for, but learned the name of (placed one, or broke one and saw it drop).
+        var learned = LearnedStatesNamed(what);
+        if (types.Count == 0 && learned.Count == 0) return (false, $"I don't know what block '{what}' is.");
+        bool Wanted(int s) => s > 0 && (types.Contains(D.StateBlock[s]) || learned.Contains(s));
         var broken = 0;
         var failures = 0;
         var tried = new HashSet<(int, int, int)>();
         while (broken < count && failures < 6 && !ct.IsCancellationRequested)
         {
-            var targets = client.World.FindBlocks(s => s > 0 && types.Contains(D.StateBlock[s]), client.Position, 48, 32)
+            var targets = client.World.FindBlocks(Wanted, client.Position, 48, 32)
                 .Where(p => !tried.Contains(p)).ToList();
             if (targets.Count == 0) break;
             var (bx, by, bz) = targets[0];
             tried.Add((bx, by, bz));
             if (!await client.GoToAsync(new GoalReachBlock(bx, by, bz, 4.0), new PathOptions { CanDig = true, MaxNodes = 30_000 }, ct)) { failures++; continue; }
             var state = client.World.GetState(bx, by, bz);
-            if (state <= 0 || !types.Contains(D.StateBlock[state])) continue;
-            await client.EquipBestToolAsync(state, ct);
-            if (!client.CanHarvest(state))
-                return (false, $"I need a better tool to get {what} (it would just break with nothing dropping).");
-            if (await client.DigAsync(bx, by, bz, ct))
+            if (!Wanted(state)) continue;
+            bool ok;
+            if (D.IsUnknownBlock(state))
+                // No hardness to time the dig by: the server times it (and we learn how long it takes).
+                ok = await client.LearnByBreakingAsync(bx, by, bz, ct) != null;
+            else
+            {
+                await client.EquipBestToolAsync(state, ct);
+                if (!client.CanHarvest(state))
+                    return (false, $"I need a better tool to get {what} (it would just break with nothing dropping).");
+                ok = await client.DigAsync(bx, by, bz, ct);
+            }
+            if (ok)
             {
                 broken++;
                 await PickUpNearbyAsync(bx, by, bz, ct);
@@ -250,7 +274,7 @@ public sealed class Skills(MinecraftClient client)
             else { await client.DropHeldAsync(false, ct); dropped++; }
             await client.WaitTicksAsync(2, ct);
         }
-        return (true, $"I gave {target.PlayerName} {dropped} {name.Replace("minecraft:", "").Replace('_', ' ')}.");
+        return (true, $"I gave {target.PlayerName} {dropped} {name.Bare().Replace('_', ' ')}.");
     }
 
     /// <summary>Fights the nearest matching mob(s) until they are gone or we must back off.</summary>
@@ -259,7 +283,7 @@ public sealed class Skills(MinecraftClient client)
         var w = what.Trim().ToLowerInvariant();
         bool Matches(Entity e) => w is "monster" or "monsters" or "mobs" or "hostile" or "enemies" or "bad guys"
             ? Hostile.Contains(e.Name)
-            : e.Name.Replace("minecraft:", "") == w.TrimEnd('s') || e.Name.Replace("minecraft:", "") == w;
+            : e.Name.Bare() == w.TrimEnd('s') || e.Name.Bare() == w;
         var kills = 0;
         await EquipWeaponAsync(ct);
         while (!ct.IsCancellationRequested)
@@ -403,7 +427,7 @@ public sealed class Skills(MinecraftClient client)
             await client.CloseWindowAsync(ct);
             if (taken >= count) break;
         }
-        var pretty = (name ?? what).Replace("minecraft:", "").Replace('_', ' ');
+        var pretty = (name ?? what).Bare().Replace('_', ' ');
         return taken > 0 ? (true, $"I took {taken} {pretty} from the chests. I have: {InventorySummary()}.")
             : (false, $"I couldn't find any {pretty} in the chests nearby.");
     }
@@ -488,11 +512,11 @@ public sealed class Skills(MinecraftClient client)
         {
             var m = material.Trim().ToLowerInvariant().Replace(' ', '_').TrimEnd('s');
             if (m is "wood" or "wooden" or "plank") m = "planks";
-            chosen = Blueprints.HouseMaterials.FirstOrDefault(x => x.Contains(m) || m.Contains(x.Replace("minecraft:", "")));
+            chosen = Blueprints.HouseMaterials.FirstOrDefault(x => x.Contains(m) || m.Contains(x.Bare()));
             if (chosen == null) return null;
         }
         chosen ??= Blueprints.HouseMaterials.OrderByDescending(x => Have(Blueprints.MaterialMatch(x))).First();
-        var pretty = chosen == "planks" ? "wooden" : chosen.Replace("minecraft:", "").Replace('_', ' ');
+        var pretty = chosen == "planks" ? "wooden" : chosen.Bare().Replace('_', ' ');
         return (chosen, Blueprints.MaterialMatch(chosen), pretty, chosen == "planks" ? "planks" : pretty);
     }
 
@@ -732,7 +756,7 @@ public sealed class Skills(MinecraftClient client)
         var w = client.World;
         bool Walkable(int x, int z) => Open(w.GetState(x, y, z)) && Open(w.GetState(x, y + 1, z));
         string Blocking(int x, int z) =>
-            D.BlockOf(Math.Max(0, Open(w.GetState(x, y, z)) ? w.GetState(x, y + 1, z) : w.GetState(x, y, z))).Name.Replace("minecraft:", "").Replace('_', ' ');
+            D.BlockOf(Math.Max(0, Open(w.GetState(x, y, z)) ? w.GetState(x, y + 1, z) : w.GetState(x, y, z))).Name.Bare().Replace('_', ' ');
 
         // The edge within 8 blocks, then the gap, then ground at our level on the far side.
         var edge = -1;
@@ -791,22 +815,45 @@ public sealed class Skills(MinecraftClient client)
         foreach (var (x, y, z) in w.FindBlocks(s => D.IsUnknownBlock(s), client.Position, radius, 4096))
         {
             var raw = w.GetRawState(x, y, z);
-            if (raw < known || client.LearnedShapes.ContainsKey(raw) || !seen.Add(raw)) continue;
+            if (raw < known || client.LearnedStates.GetValueOrDefault(raw)?.Shape != null || !seen.Add(raw)) continue;
             result.Add((x, y, z, raw));
         }
         return result;
     }
 
     /// <summary>
-    /// Studies the unknown blocks around: for each kind not yet learned, walks up to one (never breaking anything)
-    /// and feels its shape from every open side and from above, the server deciding where its body fits. From then
-    /// on physics and pathing use the real shape (a doormat is a floor, a cobweb a trap to avoid).
+    /// Door-shaped unknown blocks around that were never right-clicked (one of each kind, nearest first), when the
+    /// server's block names say it has doors or gates we have no data for. Without such names, a thin plate is a
+    /// decoration and is left alone.
+    /// </summary>
+    public List<(int X, int Y, int Z, int Raw)> UntriedDoors(double radius)
+    {
+        if (client.UnknownDoorNames().Count == 0) return [];
+        var w = client.World;
+        var seen = new HashSet<int>();
+        var result = new List<(int, int, int, int)>();
+        foreach (var (x, y, z) in w.FindBlocks(s => D.IsUnknownBlock(s), client.Position, radius, 4096))
+        {
+            var raw = w.GetRawState(x, y, z);
+            if (D.Learned(raw) is not { } l || l.UseTurnsInto != null || l.UseDoesNothing || !MinecraftClient.LooksLikeDoor(l.Shape)) continue;
+            // The lower half: a door's upper half is felt and switched with it.
+            if (D.Learned(w.GetRawState(x, y - 1, z)) is { } below && MinecraftClient.LooksLikeDoor(below.Shape)) continue;
+            if (seen.Add(raw)) result.Add((x, y, z, raw));
+        }
+        return result;
+    }
+
+    /// <summary>
+    /// Studies the unknown blocks around: for each kind not yet learned, walks up to one and feels its shape from
+    /// every open side and from above, the server deciding where its body fits (never breaking anything). From
+    /// then on physics and pathing use the real shape (a doormat is a floor, a cobweb a trap to avoid). Then, if
+    /// the server's block names say it has doors or gates we have no data for, right-clicks each door-shaped kind
+    /// once to see whether it opens (and puts it back as it was): a learned door is one Vertex walks through.
     /// </summary>
     public async Task<(bool, string)> StudyBlocksAsync(double radius, CancellationToken ct)
     {
         var learned = 0;
         var sticky = 0;
-        var unreachable = 0;
         var tried = new HashSet<int>();
         while (!ct.IsCancellationRequested)
         {
@@ -815,15 +862,28 @@ public sealed class Skills(MinecraftClient client)
             tried.Add(next.Raw);
             // The nearest instance of this kind that has room around it.
             var probe = await client.MeasureBlockAsync(next.X, next.Y, next.Z, ct);
-            if (probe == null) { unreachable++; continue; }
+            if (probe == null) continue;
             client.Learn(probe);
             learned++;
             if (probe.Sticky) sticky++;
         }
-        if (learned == 0 && unreachable == 0) return (true, "There are no blocks around here I don't know.");
-        var msg = learned == 0 ? "I couldn't get next to the strange blocks to feel them out."
-            : $"I studied {learned} kinds of block I didn't know{(sticky > 0 ? $", and {sticky} of them would trap me, so I'll stay out of those" : "")}.";
-        return (learned > 0, unreachable > 0 && learned > 0 ? msg + $" {unreachable} I couldn't get next to." : msg);
+        var doors = 0;
+        var triedDoors = new HashSet<int>();
+        while (!ct.IsCancellationRequested)
+        {
+            var next = UntriedDoors(radius).FirstOrDefault(b => !triedDoors.Contains(b.Raw));
+            if (next == default) break;
+            triedDoors.Add(next.Raw);
+            if (await client.LearnUseAsync(next.X, next.Y, next.Z, ct) is { Changed: true } use && D.IsLearnedDoorway(use.RawState)) doors++;
+        }
+        // Kinds still unknown in the end (an upper half is learned with the block under it, so count at the end).
+        var unreachable = tried.Count(r => client.LearnedStates.GetValueOrDefault(r)?.Shape == null);
+        if (learned == 0 && unreachable == 0 && doors == 0) return (true, "There are no blocks around here I don't know.");
+        var parts = new List<string>();
+        if (learned > 0) parts.Add($"I studied {(learned == 1 ? "a kind" : $"{learned} kinds")} of block I didn't know{(sticky > 0 ? $", and {(sticky == 1 && learned == 1 ? "it" : $"{sticky} of them")} would trap me, so I'll stay out of {(sticky == 1 && learned == 1 ? "it" : "those")}" : "")}.");
+        if (doors > 0) parts.Add(doors == 1 ? (learned == 1 ? "It's a door: I can open it now." : "One of them is a door: I can open it now.") : $"{doors} of them are doors: I can open them now.");
+        if (unreachable > 0) parts.Add(learned == 0 ? "I couldn't get next to the strange blocks to feel them out." : $"{unreachable} I couldn't get next to.");
+        return (learned > 0 || doors > 0, string.Join(" ", parts));
     }
 
     // ---------------------------------------------------------------- farming
@@ -960,7 +1020,7 @@ public sealed class Skills(MinecraftClient client)
         foreach (var (mob, ids) in seenMobs)
         {
             var count = ids.Count - (beforeMobs.TryGetValue(mob, out var b) ? b.Count : 0);
-            if (count > 0) found.Add($"{count} {mob.Replace("minecraft:", "").Replace('_', ' ')}{(count > 1 && !mob.EndsWith("sheep") ? "s" : "")}");
+            if (count > 0) found.Add($"{count} {mob.Bare().Replace('_', ' ')}{(count > 1 && !mob.EndsWith("sheep") ? "s" : "")}");
         }
         var summary = $"I explored {far:0} blocks {way}" + (found.Count > 0 ? $" and found {string.Join(", ", found)}." : ", but didn't find anything special.");
         // Back to where we started (where our friends are).
@@ -1026,6 +1086,6 @@ public sealed class Skills(MinecraftClient client)
         var name = food.Name;
         if (!await client.EquipAsync(s => s.Name == name, ct)) return (false, "I couldn't get my food out.");
         var ok = await client.EatAsync(ct);
-        return (ok, ok ? $"Yum, I ate {name.Replace("minecraft:", "").Replace('_', ' ')}." : "I couldn't eat right now.");
+        return (ok, ok ? $"Yum, I ate {name.Bare().Replace('_', ' ')}." : "I couldn't eat right now.");
     }
 }

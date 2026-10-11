@@ -159,7 +159,7 @@ public class HostTests
             await server.CommandAsync($"setblock {x + 3} {y} {z} mcwholidays:bat_doormat");
             await server.CommandAsync($"setblock {x} {y} {z + 3} mcwholidays:blue_candy_cane_block");
             // Nobody asks it anything: it gets curious by itself.
-            await Wait.UntilAsync(() => client.LearnedShapes.Count >= 2 && host.Brain!.Tasks.Current == null, TimeSpan.FromMinutes(5),
+            await Wait.UntilAsync(() => client.LearnedStates.Count >= 2 && host.Brain!.Tasks.Current == null, TimeSpan.FromMinutes(5),
                 () => string.Join(Environment.NewLine, host.Lines.TakeLast(12).Select(l => $"{l.Kind}: {l.Text}")));
             foreach (var l in host.Lines) TestContext.Out.WriteLine($"{l.Kind}: {l.Text}");
             Assert.That(host.Lines.Any(l => l.Text.Contains("studying blocks I don't know") || l.Text.Contains("studied")), "it said what it was doing");
@@ -169,7 +169,7 @@ public class HostTests
             // Next session: it knows them from the start.
             await host.StartAsync().WaitAsync(Timeout);
             Assert.That(host.State, Is.EqualTo(HostState.Playing), host.Status);
-            Assert.That(host.Client!.LearnedShapes.Count, Is.GreaterThanOrEqualTo(2));
+            Assert.That(host.Client!.LearnedStates.Count, Is.GreaterThanOrEqualTo(2));
             await host.StopAsync();
         }
         finally

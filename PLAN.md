@@ -119,8 +119,21 @@ Every milestone is tested against REAL servers started locally (Paper 1.21.5 bui
   box), and cobwebs, which accept you and then hold you (sticky: pathing avoids them). Learned shapes apply at
   once to loaded blocks, are kept per world with the server's block-list fingerprint, and an idle Vertex studies
   unknown blocks nearby on its own (`learn_blocks` too). Modpack learning now applies without a rejoin as well
-- [ ] More of a block by experience: time digs where breaking is allowed (hardness), learn a block's name from
-  what breaking it drops, learn doors and gates by right-clicking (the state changes), guess from the name
-  (spooky_oak_door is a door) before touching
-- [ ] Modded items and entity sizes from the same dump (found 2026-10-11: ItemStack resolves ids through the
-  vanilla item table, so a modded item in the inventory reads as air; modded mobs get a default 0.6x1.8 size)
+- [x] More of a block by experience (2026-10-11, catalog off, verified against the mods' real data):
+  - doors and gates by right-clicking: a door-shaped unknown block (thin plate) is clicked with an inert hand, the
+    server switches both halves, the new state is felt, and a "blocks one way / lets through" pair is a learned
+    doorway; then it is put back as it was. Pathing opens it, walks through and shuts it behind (spooky_oak_door:
+    the state it calls open is the mod's open=true). The probe now feels a block and an unknown one above it as
+    one column (a door's lower half was unmeasurable before)
+  - the name guides it before touching: only when the server's block names or tags say it has unknown doors or
+    gates does a thin plate get clicked (otherwise it is a decoration)
+  - hardness with the server as the clock: START then STOP at once; vanilla's "delayed destroy" finishes the dig
+    on the tick the block's hardness says (dirt 15-16 ticks, vanilla math 14; candy cane block 21-23 vs 20)
+  - names from experience: what breaking drops, or what placing a modded block item made; a learned name can be
+    asked for ("collect candy cane block" mines mcwholidays:blue_candy_cane_block, server-timed)
+  - all of it kept per world with the block-list fingerprint (one LearnedState per raw state id)
+- [x] Modded items and mob sizes (2026-10-11): items resolve through the server's synced item registry (a modded
+  item read as air before), and the dump now writes the mods' items with their default components through the
+  game's own codecs (stack size, durability, tool rules, food: one parser for vanilla and modded) and their mobs'
+  sizes (a mutant zombie is 1.8 x 3.2, not 0.6 x 1.8). Spooky: 366 items, 14 mobs; the modpack path dumps the same.
+  The dump finds the server's registries by type (a direct registryAccess() call kept its Mojang name in the remap)

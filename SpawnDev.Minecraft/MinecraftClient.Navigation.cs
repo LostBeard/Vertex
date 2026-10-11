@@ -240,7 +240,7 @@ public sealed partial class MinecraftClient
         return await WaitUntilAsync(() => IsDoorwayOpen(x, y, z) == open, 20, ct);
     }
 
-    private bool IsDoorwayOpen(int x, int y, int z) => World.GetState(x, y, z) is var s && s > 0 && World.Data.GetProperty(s, "open") == "true";
+    private bool IsDoorwayOpen(int x, int y, int z) => World.GetState(x, y, z) is var s && s > 0 && World.Data.IsOpen(s);
 
     /// <summary>Steers onto one step's block. False when it stops making progress.</summary>
     private async Task<bool> MoveToStepAsync(PathStep step, bool last, bool sprint, CancellationToken ct)

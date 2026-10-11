@@ -335,14 +335,14 @@ public sealed class VertexBrain : IAsyncDisposable
         sb.AppendLine();
         sb.AppendLine("Right now:");
         var (x, y, z) = Client.Position;
-        sb.AppendLine($"- You are at x {x:0} y {y:0} z {z:0} in {Client.World.Dimension.Replace("minecraft:", "")}, " +
+        sb.AppendLine($"- You are at x {x:0} y {y:0} z {z:0} in {Client.World.Dimension.Bare()}, " +
                       $"health {Client.Health / 2:0.#} of 10 hearts, food {Client.Food / 2:0.#} of 10, game mode {Client.GameMode.ToString().ToLowerInvariant()}.");
         var time = Client.World.DayTime % 24000;
         sb.AppendLine($"- It is {(time is >= 0 and < 12000 ? "daytime" : time < 13000 ? "sunset" : time < 23000 ? "night" : "sunrise")}.");
         sb.AppendLine($"- You are carrying: {Skills.InventorySummary()}. Holding: {(Client.Inventory.MainHand.IsEmpty ? "nothing" : Client.Inventory.MainHand.ToString())}.");
         sb.AppendLine($"- You are {(Tasks.Current is string task ? task : "not doing anything special")}.");
         var near = Client.Entities.Values.Where(e => e.DistanceTo(x, y, z) < 24 && e.Uuid != Client.Profile.Id).OrderBy(e => e.DistanceTo(x, y, z)).Take(12)
-            .Select(e => e.IsPlayer ? $"{e.PlayerName} (player, {e.DistanceTo(x, y, z):0} blocks)" : $"{e.Name.Replace("minecraft:", "").Replace('_', ' ')} ({e.DistanceTo(x, y, z):0} blocks)").ToList();
+            .Select(e => e.IsPlayer ? $"{e.PlayerName} (player, {e.DistanceTo(x, y, z):0} blocks)" : $"{e.Name.Bare().Replace('_', ' ')} ({e.DistanceTo(x, y, z):0} blocks)").ToList();
         sb.AppendLine($"- Nearby: {(near.Count == 0 ? "nobody" : string.Join(", ", near))}.");
         var playersHere = Client.Entities.Values.Where(e => e.IsPlayer && e.PlayerName != null && e.DistanceTo(x, y, z) < 64).Select(e => e.PlayerName!)
             .Append(CurrentSpeaker ?? "").ToList();
@@ -359,7 +359,7 @@ public sealed class VertexBrain : IAsyncDisposable
         if (Memory.Places.Count > 0)
             sb.AppendLine("- Places you know: " + string.Join(", ", Memory.Places.Select(p => p.Dimension == Client.World.Dimension
                 ? $"{p.Name} ({Math.Sqrt((p.X + 0.5 - x) * (p.X + 0.5 - x) + (p.Z + 0.5 - z) * (p.Z + 0.5 - z)):0} blocks away)"
-                : $"{p.Name} (in the {p.Dimension.Replace("minecraft:", "").Replace("the_", "")})")) + ".");
+                : $"{p.Name} (in the {p.Dimension.Bare().Replace("the_", "")})")) + ".");
         var others = _characters.All().Where(c => c.Name != Character.Name).Select(c => c.Name);
         sb.AppendLine($"- Other characters you can switch to: {string.Join(", ", others)}.");
         return sb.ToString();
