@@ -356,6 +356,43 @@ public class LiveActionTests
     }
 
     [Test]
+    public async Task Farm_HarvestsRipeCrops_LeavesUnripe_AndReplants()
+    {
+        const string name = "VertexFarmer";
+        await _server.CommandAsync("gamerule randomTickSpeed 0"); // nothing grows or dries out mid-test
+        // A row of farmland 3 blocks out: ripe wheat, unripe wheat, ripe carrots, ripe wheat; water beside it.
+        var (client, x, z) = await JoinOnArenaAsync(name, (ax, az) =>
+        [
+            $"fill {ax + 3} 199 {az - 1} {ax + 3} 199 {az + 2} minecraft:farmland[moisture=7]",
+            $"setblock {ax + 4} 199 {az} minecraft:water",
+            $"setblock {ax + 3} 200 {az - 1} minecraft:wheat[age=7]",
+            $"setblock {ax + 3} 200 {az} minecraft:wheat[age=3]",
+            $"setblock {ax + 3} 200 {az + 1} minecraft:carrots[age=7]",
+            $"setblock {ax + 3} 200 {az + 2} minecraft:wheat[age=7]",
+        ]);
+        await using var _ = client;
+        try
+        {
+            var skills = new Vertex.Brain.Skills(client);
+            var (ok, message) = await skills.FarmAsync(CancellationToken.None).WaitAsync(TimeSpan.FromMinutes(1));
+            TestContext.Out.WriteLine(message);
+            Assert.That(ok, message);
+            Assert.That(message, Does.Contain("harvested 3 crops and replanted 3"));
+            var data = client.World.Data;
+            string At(int dz) => $"{data.BlockOf(client.World.GetState(x + 3, 200, z + dz)).Name}[age={data.GetProperty(client.World.GetState(x + 3, 200, z + dz), "age")}]";
+            Assert.That(new[] { At(-1), At(0), At(1), At(2) },
+                Is.EqualTo(new[] { "minecraft:wheat[age=0]", "minecraft:wheat[age=3]", "minecraft:carrots[age=0]", "minecraft:wheat[age=0]" }),
+                "ripe ones replanted, the unripe one left growing");
+            Assert.That(client.Inventory.Count("wheat"), Is.EqualTo(2));
+            Assert.That(client.Inventory.Count("carrot"), Is.GreaterThanOrEqualTo(1), "a carrot drop, less the one replanted");
+        }
+        finally
+        {
+            await _server.CommandAsync("gamerule randomTickSpeed 3");
+        }
+    }
+
+    [Test]
     public async Task Guard_FightsMonstersNearThePlayer_AndOnlyThose()
     {
         const string name = "VertexGuard", ward = "VertexWard";

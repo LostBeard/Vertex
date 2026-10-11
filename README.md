@@ -51,6 +51,7 @@ What you can ask it (any wording; the language model picks the tool):
 | "go to bed" | sleeps in the nearest bed (the night passes when everyone sleeps) |
 | "give me your diamonds", "eat something" | walks over and drops items; eats when hungry (also by reflex) |
 | "remember this is home", "go home" | remembers named places per server and walks back to them |
+| "harvest the farm" | picks the ripe crops (leaves the rest growing) and replants them |
 | "go explore to the north" | walks out, comes back and tells you what it found (villages are remembered as places) |
 | "be Pixel" | switches character (personality and voice) |
 

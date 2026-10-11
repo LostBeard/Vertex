@@ -527,6 +527,51 @@ public sealed class Skills(MinecraftClient client)
         return null;
     }
 
+    // ---------------------------------------------------------------- farming
+
+    /// <summary>Crops: the block, its ripe age, and the item that replants it.</summary>
+    private static readonly (string Block, string RipeAge, string Seed)[] Crops =
+    [
+        ("minecraft:wheat", "7", "minecraft:wheat_seeds"), ("minecraft:carrots", "7", "minecraft:carrot"),
+        ("minecraft:potatoes", "7", "minecraft:potato"), ("minecraft:beetroots", "3", "minecraft:beetroot_seeds"),
+    ];
+
+    /// <summary>
+    /// Harvests the ripe crops within 24 blocks (leaving unripe ones), picks up what drops, and replants each spot
+    /// with the matching seed, like a careful farmer.
+    /// </summary>
+    public async Task<(bool, string)> FarmAsync(CancellationToken ct)
+    {
+        var crops = Crops.Select(c => (Id: D.Block(c.Block)!.Id, c.RipeAge, c.Seed)).ToList();
+        var harvested = 0;
+        var replanted = 0;
+        var tried = new HashSet<(int, int, int)>();
+        while (!ct.IsCancellationRequested)
+        {
+            var ripe = client.World.FindBlocks(s => s > 0 && crops.Any(c => c.Id == D.StateBlock[s] && D.GetProperty(s, "age") == c.RipeAge), client.Position, 24, 64)
+                .Where(p => !tried.Contains(p)).ToList();
+            if (ripe.Count == 0) break;
+            var (x, y, z) = ripe[0];
+            tried.Add((x, y, z));
+            var crop = crops.First(c => c.Id == D.StateBlock[client.World.GetState(x, y, z)]);
+            if (!await client.GoToAsync(new GoalReachBlock(x, y, z, 3.5), new PathOptions { MaxNodes = 10_000 }, ct)) continue;
+            if (!await client.DigAsync(x, y, z, ct)) continue;
+            harvested++;
+            await PickUpNearbyAsync(x, y, z, ct);
+            // Replant on the farmland the crop stood on.
+            if (client.World.GetBlock(x, y - 1, z)?.Name == "minecraft:farmland" && client.Inventory.Count(crop.Seed) > 0
+                && await client.EquipAsync(crop.Seed, ct))
+            {
+                if (client.DistanceToBlock(x, y - 1, z) > client.BlockReach - 0.5)
+                    await client.GoToAsync(new GoalReachBlock(x, y - 1, z, 3.5), new PathOptions { MaxNodes = 5_000 }, ct);
+                await client.UseOnBlockAsync(x, y - 1, z, SpawnDev.Minecraft.BlockFace.Up, Hand.Main, null, ct);
+                if (await client.WaitUntilAsync(() => client.World.GetBlock(x, y, z) is { } b && b.Id == crop.Id, 20, ct)) replanted++;
+            }
+        }
+        if (harvested == 0) return (false, "I don't see any ripe crops nearby.");
+        return (true, $"I harvested {harvested} crops and replanted {replanted}. I have: {InventorySummary()}.");
+    }
+
     // ---------------------------------------------------------------- exploring
 
     /// <summary>Blocks worth telling friends about, by what to call them.</summary>

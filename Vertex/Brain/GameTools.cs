@@ -188,6 +188,15 @@ public static class GameTools
                 return Task.FromResult($"OK: I set off exploring {(string.IsNullOrEmpty(dir) ? "" : dir + " ")}about {distance} blocks. I will come back and tell you what I find.");
             });
 
+        yield return new GameTool("farm",
+            "Harvest the ripe crops nearby (wheat, carrots, potatoes, beetroot) and replant them.",
+            NoArgs,
+            _ =>
+            {
+                tasks.Start("farming", ct => skills.FarmAsync(ct));
+                return Task.FromResult("OK: I started harvesting the ripe crops. I will replant as I go.");
+            });
+
         yield return new GameTool("smelt",
             "Smelt or cook in a furnace: iron_ingot from raw iron, glass from sand, cooked_beef from beef, charcoal from logs. Builds a furnace from cobblestone if none is near. Takes 10 seconds per item.",
             """{"type":"object","properties":{"result":{"type":"string","description":"what to make, e.g. iron_ingot, glass, cooked_porkchop"},"count":{"type":"integer"}},"required":["result"]}""",

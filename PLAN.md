@@ -64,6 +64,7 @@ Every milestone is tested against REAL servers started locally (Paper 1.21.5 bui
 - [x] Build a house (5x5 or 7x7 by materials): flat-site search, walls, glass windows, roof, torch, door facing the asker, built from inside
 - [x] Explore a direction and report villages, animals, rare ores (remembers villages)
 - [x] System One for speech: all-MiniLM-L6-v2 (SpawnDev.ILGPU.ML) matches urgent commands in milliseconds and acts before the LLM speaks
+- [x] Farm: harvest ripe wheat/carrots/potatoes/beetroot, leave unripe, replant
 - [ ] More skills: other structures (walls, towers, bridges)
 - [x] Characters: name, personality (system prompt), voice, play style knobs; switch in game by voice or chat
 - [x] Memory: remembered facts (persisted)
