@@ -595,6 +595,8 @@ public sealed partial class MinecraftClient : IAsyncDisposable
                 Registries.Clear();
                 _players.Clear(); // the next server sends its own list
                 Commands = null; // and its own commands
+                _fabricRegistries.Clear(); // and, if it is a Fabric server, its own registry sync
+                RebuildWorldData();
                 await SendClientInformationAsync(CB.Configuration.Serverbound.ClientInformation, ct);
                 await RegisterFabricChannelsAsync(ct); // the next server may be a Fabric one (proxy server switch)
                 return null;

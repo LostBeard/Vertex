@@ -13,5 +13,7 @@
 		<EmbeddedResource Include="Data\en_us.json.br" LogicalName="SpawnDev.Minecraft.Data.en_us.json.br" />
 		<EmbeddedResource Include="Data\game-data.json.br" LogicalName="SpawnDev.Minecraft.Data.game-data.json.br" />
 		<EmbeddedResource Include="Data\protocol-types.json.br" LogicalName="SpawnDev.Minecraft.Data.protocol-types.json.br" />
+		<!-- Modded blocks dumped by tools/ModDump (optional: without it the catalog is empty). -->
+		<EmbeddedResource Include="Data\modded-blocks.json.br" LogicalName="SpawnDev.Minecraft.Data.modded-blocks.json.br" Condition="Exists('Data\modded-blocks.json.br')" />
 	</ItemGroup>
 </Project>

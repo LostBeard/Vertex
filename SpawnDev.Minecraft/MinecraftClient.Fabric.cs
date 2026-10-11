@@ -49,6 +49,7 @@ public sealed partial class MinecraftClient
         _fabricSync = null;
         _fabricRegistries.Clear();
         foreach (var (k, v) in map) _fabricRegistries[k] = v;
+        RebuildWorldData();
         Log($"Fabric registry sync: {map.Count} registries ({string.Join(", ", map.Select(m => $"{m.Key.Replace("minecraft:", "")} {m.Value.Count}"))})");
         using var done = new PacketWriter(CB.Configuration.Serverbound.CustomPayload);
         done.WriteString(FabricSyncCompleteChannel);

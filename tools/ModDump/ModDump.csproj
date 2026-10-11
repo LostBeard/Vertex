@@ -1,0 +1,9 @@
+<Project Sdk="Microsoft.NET.Sdk">
+	<PropertyGroup>
+		<OutputType>Exe</OutputType>
+	</PropertyGroup>
+	<ItemGroup>
+		<!-- To check the dump's vanilla half against the table every other part of Vertex uses. -->
+		<ProjectReference Include="..\..\SpawnDev.Minecraft\SpawnDev.Minecraft.csproj" />
+	</ItemGroup>
+</Project>

@@ -53,7 +53,7 @@ public sealed record EntityTypeInfo(int Id, string Name, float Width, float Heig
 /// recipes and the vanilla tags. Per-state facts are flat arrays indexed by state id (hot path for physics and
 /// pathfinding).
 /// </summary>
-public sealed class GameData
+public sealed partial class GameData
 {
     private static readonly Lazy<GameData> _vanilla = new(() => Load("SpawnDev.Minecraft.Data.game-data.json.br"));
 
@@ -95,14 +95,21 @@ public sealed class GameData
     private Dictionary<string, HashSet<string>> _itemTags = [];
     private Dictionary<string, HashSet<string>> _blockTags = [];
 
-    /// <summary>Block states the game data knows (the vanilla ones; UnknownState comes right after them).</summary>
+    /// <summary>The vanilla block states (the same in every GameData of this version).</summary>
     public int VanillaStateCount { get; private init; }
+    /// <summary>
+    /// Block states this table knows: the vanilla ones, plus a modded server's blocks we have data for
+    /// (WithModdedBlocks). UnknownState comes right after them.
+    /// </summary>
+    public int KnownStateCount { get; private init; }
     /// <summary>The stand-in for block states a modded server uses that we have no data for: a solid cube.</summary>
-    public int UnknownState => VanillaStateCount;
+    public int UnknownState => KnownStateCount;
     public int StateCount => StateBlock.Length;
+    /// <summary>Modded blocks added by WithModdedBlocks (0 for vanilla).</summary>
+    public int ModdedBlockCount { get; private init; }
 
-    /// <summary>A state id from the network, with modded ones (beyond the vanilla table) mapped to UnknownState.</summary>
-    public int Known(int state) => (uint)state < (uint)VanillaStateCount ? state : UnknownState;
+    /// <summary>A state id from the network, with ones beyond this table (modded, no data) mapped to UnknownState.</summary>
+    public int Known(int state) => (uint)state < (uint)KnownStateCount ? state : UnknownState;
 
     public BlockType? Block(string name) => _blocksByName.GetValueOrDefault(Normalize(name));
     public ItemType? Item(string name) => _itemsByName.GetValueOrDefault(Normalize(name));
@@ -253,6 +260,7 @@ public sealed class GameData
             FluidAmount = fluid,
             Shapes = shapes.ToArray(),
             VanillaStateCount = n,
+            KnownStateCount = n,
         };
         data._blocksByName = blocks.ToDictionary(b => b.Name);
         data._itemsByName = items.ToDictionary(i => i.Name);

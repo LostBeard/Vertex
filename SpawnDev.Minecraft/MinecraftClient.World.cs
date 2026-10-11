@@ -157,6 +157,28 @@ public sealed partial class MinecraftClient
             }
             _tags[registry] = tags;
         }
+        RebuildWorldData();
+    }
+
+    /// <summary>
+    /// The block tables for this server: vanilla, or (on a Fabric server) vanilla plus the modded blocks it synced
+    /// that tools/ModDump has data for, with the server's block tags (which put modded doors, ladders... in the
+    /// vanilla tags pathing and physics read). Rebuilt when either arrives; physics picks the new table up.
+    /// </summary>
+    private void RebuildWorldData()
+    {
+        var data = GameData.Vanilla;
+        if (_fabricRegistries.TryGetValue("minecraft:block", out var blocks))
+        {
+            data = data.WithModdedBlocks(blocks);
+            if (_tags.TryGetValue("minecraft:block", out var blockTags)) data = data.WithBlockTags(blockTags);
+        }
+        if (ReferenceEquals(data, World.Data)) return;
+        World.Data = data;
+        _physics = null;
+        if (data.ModdedBlockCount > 0)
+            Log($"modded blocks: {data.ModdedBlockCount} with data ({data.KnownStateCount - data.VanillaStateCount} states)"
+                + (blocks!.Count > data.Blocks.Length - 1 ? $", {blocks.Count - (data.Blocks.Length - 1)} without (solid unknown blocks)" : ""));
     }
 
     private static double Angle(sbyte b) => b * 360.0 / 256.0;
@@ -175,7 +197,7 @@ public sealed partial class MinecraftClient
         {
             case CB.Play.Clientbound.LevelChunkWithLight:
             {
-                var column = ChunkColumn.Read(ref r, World.MinY, World.Height);
+                var column = ChunkColumn.Read(ref r, World.MinY, World.Height, World.Data);
                 World.SetColumn(column);
                 ChunkLoaded?.Invoke(column.X, column.Z);
                 return;

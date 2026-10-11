@@ -14,7 +14,8 @@ public sealed class GameWorld
 
     private readonly ConcurrentDictionary<long, ChunkColumn> _columns = new();
 
-    public GameData Data { get; } = GameData.Vanilla;
+    /// <summary>The block tables for this server: vanilla, or vanilla plus a modded server's blocks (set on joining).</summary>
+    public GameData Data { get; internal set; } = GameData.Vanilla;
     public string Dimension { get; internal set; } = "minecraft:overworld";
     public int MinY { get; internal set; } = -64;
     public int Height { get; internal set; } = 384;

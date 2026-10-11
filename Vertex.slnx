@@ -1,6 +1,7 @@
 <Solution>
   <Folder Name="/tools/">
     <Project Path="tools/DataGen/DataGen.csproj" />
+    <Project Path="tools/ModDump/ModDump.csproj" />
   </Folder>
   <Project Path="SpawnDev.Minecraft/SpawnDev.Minecraft.csproj" />
   <Project Path="SpawnDev.Minecraft.VoiceChat/SpawnDev.Minecraft.VoiceChat.csproj" />

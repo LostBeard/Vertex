@@ -1,4 +1,5 @@
 using SpawnDev.Minecraft;
+using SpawnDev.Minecraft.Data;
 using Vertex.Tests.Live;
 
 namespace Vertex.Tests;
@@ -6,7 +7,7 @@ namespace Vertex.Tests;
 /// <summary>
 /// M8: AubsCraft's modded Fabric server ("spooky": Fabric API + Halloween content mods), run locally. A plain client
 /// is refused there ("This server requires Fabric Loader and Fabric API installed on your client!"); Vertex must
-/// answer Fabric's registry sync and then cope with modded blocks, items and mobs it has no data for.
+/// answer Fabric's registry sync, know the modded blocks (tools/ModDump), and cope with modded items and mobs.
 /// </summary>
 [NonParallelizable]
 public class LiveFabricTests
@@ -61,19 +62,40 @@ public class LiveFabricTests
         // Fabric appends modded entries: every vanilla entity type keeps its vanilla id (what our tables assume).
         Assert.That(mismatched, Is.Empty, "vanilla entity ids moved on this server");
 
-        // Modded blocks we have no data for: a wall of one right in front of us must read as the solid unknown
-        // state, and walking into it must stop us (not crash physics).
+        // Modded blocks come with their real facts (tools/ModDump): every one this server synced is known, by name,
+        // with its own properties and shape, numbered exactly as the server numbers them.
         var data = client.World.Data;
-        var modded = client.FabricRegistries["minecraft:block"].Keys.First(n => data.Block(n) == null && !n.Contains("door") && !n.Contains("sign"));
+        var moddedNames = client.FabricRegistries["minecraft:block"].Keys.Where(n => GameData.Vanilla.Block(n) == null).ToList();
+        Assert.That(data.ModdedBlockCount, Is.EqualTo(moddedNames.Count), "a block the catalog does not have");
+        Assert.That(data.KnownStateCount - data.VanillaStateCount, Is.EqualTo(moddedNames.Sum(n => GameData.ModdedCatalog[n].StateCount)));
         var feet = client.FeetBlock;
-        await _server!.CommandAsync($"fill {feet.X + 2} {feet.Y} {feet.Z - 1} {feet.X + 2} {feet.Y + 1} {feet.Z + 1} {modded}");
-        await Wait.UntilAsync(() => client.World.GetState(feet.X + 2, feet.Y, feet.Z) == data.UnknownState, TimeSpan.FromSeconds(10),
-            () => $"{modded} shows as {client.World.GetBlock(feet.X + 2, feet.Y, feet.Z)}");
-        client.Look(-90, 0); // east, +X
-        client.Controls.Forward = true;
-        await client.WaitTicksAsync(30);
-        client.Controls.Clear();
-        Assert.That(client.Position.X, Is.LessThan(feet.X + 2 - 0.29), $"stopped by the {modded} wall");
+        await _server!.CommandAsync($"fill {feet.X - 6} {feet.Y} {feet.Z - 6} {feet.X + 6} {feet.Y + 3} {feet.Z + 6} minecraft:air");
+        await _server.CommandAsync($"fill {feet.X - 6} {feet.Y - 1} {feet.Z - 6} {feet.X + 6} {feet.Y - 1} {feet.Z + 6} minecraft:stone");
+        await _server.CommandAsync($"setblock {feet.X + 2} {feet.Y} {feet.Z + 3} mcwholidays:small_pumpkin[facing=west]");
+        await Wait.UntilAsync(() => client.World.GetBlock(feet.X + 2, feet.Y, feet.Z + 3).Name == "mcwholidays:small_pumpkin", TimeSpan.FromSeconds(10),
+            () => $"shows as {client.World.GetBlock(feet.X + 2, feet.Y, feet.Z + 3)}");
+        var pumpkin = client.World.GetState(feet.X + 2, feet.Y, feet.Z + 3);
+        Assert.That(data.GetProperty(pumpkin, "facing"), Is.EqualTo("west"));
+        Assert.That(data.CollisionBoxes(pumpkin), Is.Not.EqualTo(new[] { new Box(0, 0, 0, 1, 1, 1) }), "a small pumpkin, not a full cube");
+
+        // A stone wall across the arena with a closed spooky door in it: Vertex walks through (opens it, shuts it
+        // behind), which needs the door's real shape and the server's tags (the mod puts its doors in wooden_doors).
+        Assert.That(data.BlockTag("minecraft:wooden_doors"), Does.Contain("spookydoors:spooky_oak_door"));
+        await _server.CommandAsync($"fill {feet.X + 3} {feet.Y} {feet.Z - 6} {feet.X + 3} {feet.Y + 2} {feet.Z + 6} minecraft:stone");
+        await _server.CommandAsync($"setblock {feet.X + 3} {feet.Y} {feet.Z} spookydoors:spooky_oak_door[facing=east,half=lower,open=false]");
+        await _server.CommandAsync($"setblock {feet.X + 3} {feet.Y + 1} {feet.Z} spookydoors:spooky_oak_door[facing=east,half=upper,open=false]");
+        await Wait.UntilAsync(() => client.World.GetBlock(feet.X + 3, feet.Y + 1, feet.Z).Name == "spookydoors:spooky_oak_door", TimeSpan.FromSeconds(10),
+            () => $"shows as {client.World.GetBlock(feet.X + 3, feet.Y, feet.Z)}");
+        var door = client.World.GetState(feet.X + 3, feet.Y, feet.Z);
+        Assert.That((data.GetProperty(door, "facing"), data.GetProperty(door, "half"), data.GetProperty(door, "open")), Is.EqualTo(("east", "lower", "false")));
+        Assert.That(data.CollisionBoxes(door).Single().MaxX - data.CollisionBoxes(door).Single().MinX, Is.EqualTo(3.0 / 16).Within(1e-9), "a door is a thin plate");
+        var teleports = client.TeleportCount;
+        Assert.That(await client.GoToAsync(SpawnDev.Minecraft.Pathing.Goal.Block(feet.X + 5, feet.Y, feet.Z), new SpawnDev.Minecraft.Pathing.PathOptions { CanDig = true }),
+            $"through the door; at {client.Position}");
+        await client.WaitTicksAsync(5);
+        Assert.That(data.GetProperty(client.World.GetState(feet.X + 3, feet.Y, feet.Z), "open"), Is.EqualTo("false"), "shut it behind");
+        Assert.That(client.World.GetBlock(feet.X + 3, feet.Y, feet.Z).Name, Is.EqualTo("spookydoors:spooky_oak_door"), "went through it, did not dig it");
+        Assert.That(client.TeleportCount, Is.EqualTo(teleports), "the server corrected our movement");
 
         // A modded mob next to us: its spawn and entity data must not break the connection.
         var mob = client.FabricRegistries["minecraft:entity_type"].Keys.FirstOrDefault(n => n == "mutantmonsters:mutant_zombie")
@@ -86,6 +108,6 @@ public class LiveFabricTests
             () => string.Join(", ", client.Entities.Values.Select(e => e.Name).Distinct()));
         await client.WaitTicksAsync(40);
         Assert.That(disconnect, Is.Null, disconnect);
-        TestContext.Out.WriteLine($"modded block {modded}, modded mob {mob}; skipped packets: {client.PacketErrors}");
+        TestContext.Out.WriteLine($"modded mob {mob}; skipped packets: {client.PacketErrors}");
     }
 }

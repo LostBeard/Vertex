@@ -71,4 +71,55 @@ public class GameDataTests
         Assert.That(D.RegistryName("minecraft:attribute", 21), Is.EqualTo("minecraft:movement_speed"));
         Assert.That(D.RegistryName("minecraft:menu", 2), Is.EqualTo("minecraft:generic_9x3"));
     }
+
+    /// <summary>The block registry a Fabric server would sync: vanilla in order, then these modded blocks.</summary>
+    private static Dictionary<string, int> Registry(params string[] modded)
+    {
+        var map = D.Blocks.Take(D.Blocks.Length - 1).ToDictionary(b => b.Name, b => b.Id);
+        foreach (var m in modded) map[m] = map.Count;
+        return map;
+    }
+
+    [Test]
+    public void ModdedBlocks_FollowVanilla_NumberedLikeTheServer_UnknownAfterAGap()
+    {
+        Assert.That(GameData.ModdedCatalog, Has.Count.GreaterThanOrEqualTo(345), "tools/ModDump output is embedded");
+        var door = GameData.ModdedCatalog["spookydoors:spooky_oak_door"];
+        var pumpkin = GameData.ModdedCatalog["mcwholidays:small_pumpkin"];
+        var vanillaBlocks = D.Blocks.Length - 1;
+
+        var m = D.WithModdedBlocks(Registry("spookydoors:spooky_oak_door", "mcwholidays:small_pumpkin"));
+        Assert.That((m.ModdedBlockCount, m.KnownStateCount), Is.EqualTo((2, D.VanillaStateCount + door.StateCount + pumpkin.StateCount)));
+        var d = m.Block("spookydoors:spooky_oak_door")!;
+        var p = m.Block("mcwholidays:small_pumpkin")!;
+        Assert.That((d.Id, d.MinState, p.Id, p.MinState), Is.EqualTo((vanillaBlocks, D.VanillaStateCount, vanillaBlocks + 1, D.VanillaStateCount + door.StateCount)),
+            "ids are the server's raw ids; states follow on in registry order");
+        // Properties sorted by name, last fastest, exactly like vanilla doors (same StateDefinition code).
+        var oak = D.Block("oak_door")!;
+        Assert.That(d.Properties.Select(x => x.Name), Is.EqualTo(oak.Properties.Select(x => x.Name)));
+        var closedEastLower = m.WithProperty(m.WithProperty(m.WithProperty(d.MinState, "facing", "east"), "half", "lower"), "open", "false");
+        Assert.That(closedEastLower - d.MinState, Is.EqualTo(D.WithProperty(D.WithProperty(D.WithProperty(oak.MinState, "facing", "east"), "half", "lower"), "open", "false") - oak.MinState));
+        Assert.That(m.CollisionBoxes(closedEastLower), Is.EqualTo(D.CollisionBoxes(D.WithProperty(D.WithProperty(D.WithProperty(oak.MinState, "facing", "east"), "half", "lower"), "open", "false"))));
+        Assert.That(m.BlockOf(m.UnknownState).Name, Is.EqualTo("vertex:unknown_modded_block"));
+        Assert.That(m.Known(m.UnknownState + 5), Is.EqualTo(m.UnknownState));
+        Assert.That(m.Known(d.MaxState), Is.EqualTo(d.MaxState));
+        Assert.That(m.CollisionBoxes(m.UnknownState), Is.EqualTo(new[] { new Box(0, 0, 0, 1, 1, 1) }));
+
+        // A block we have no data for: it and everything after it are unknown (its state count decides where the
+        // next block starts), but what comes before stays known.
+        var gap = D.WithModdedBlocks(Registry("spookydoors:spooky_oak_door", "somemod:mystery", "mcwholidays:small_pumpkin"));
+        Assert.That((gap.ModdedBlockCount, gap.Block("mcwholidays:small_pumpkin")), Is.EqualTo((1, (BlockType?)null)));
+        Assert.That(gap.Known(gap.Block("spookydoors:spooky_oak_door")!.MaxState + 1), Is.EqualTo(gap.UnknownState));
+
+        // Vanilla ids moved: nothing can be trusted, keep the vanilla table (modded states become unknown).
+        var moved = Registry("spookydoors:spooky_oak_door");
+        (moved["minecraft:stone"], moved["minecraft:granite"]) = (moved["minecraft:granite"], moved["minecraft:stone"]);
+        Assert.That(D.WithModdedBlocks(moved), Is.SameAs(D));
+        Assert.That(D.WithModdedBlocks(Registry()), Is.SameAs(D), "a Fabric server with no modded blocks");
+
+        // The server's tags, by raw id, put modded blocks in vanilla tags.
+        var tagged = m.WithBlockTags(new Dictionary<string, int[]> { ["minecraft:wooden_doors"] = [oak.Id, d.Id, 999_999] });
+        Assert.That(tagged.BlockTag("wooden_doors"), Is.EquivalentTo(new[] { "minecraft:oak_door", "spookydoors:spooky_oak_door" }));
+        Assert.That(m.BlockTag("wooden_doors"), Does.Not.Contain("spookydoors:spooky_oak_door"), "the table it came from is unchanged");
+    }
 }

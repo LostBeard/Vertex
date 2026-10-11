@@ -39,7 +39,7 @@ public sealed class ChunkColumn
     }
 
     /// <summary>Parses level_chunk_with_light up to (not including) the light data, which Vertex does not use.</summary>
-    internal static ChunkColumn Read(ref PacketReader r, int minY, int height)
+    internal static ChunkColumn Read(ref PacketReader r, int minY, int height, Data.GameData gameData)
     {
         var x = r.ReadInt();
         var z = r.ReadInt();
@@ -54,7 +54,7 @@ public sealed class ChunkColumn
         var sections = new ChunkSection[height >> 4];
         var sr = new PacketReader(data);
         var padding = 0;
-        for (var i = 0; i < sections.Length; i++) sections[i] = ChunkSection.Read(ref sr, ref padding);
+        for (var i = 0; i < sections.Length; i++) sections[i] = ChunkSection.Read(ref sr, ref padding, gameData);
         // Exactly the reserved-but-unwritten bytes must remain, all zero: anything else is a misparse.
         if (sr.Remaining != padding || sr.Rest.IndexOfAnyExcept((byte)0) >= 0)
             throw new InvalidDataException($"chunk {x},{z}: {sr.Remaining} bytes left after {sections.Length} sections (expected {padding} zero bytes)");

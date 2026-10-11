@@ -92,4 +92,14 @@ Every milestone is tested against REAL servers started locally (Paper 1.21.5 bui
 - [x] Modded blocks with no data become a solid "unknown" block (physics/pathing treat them as walls); modded entity
   types named from the synced registry; Puzzles Lib mod spawns (Mutant Monsters) decoded; undecodable packets are
   skipped and counted instead of dropping the connection (zero on vanilla, asserted)
-- [ ] Real shapes/hardness for modded blocks (Fabric does not sync them)
+- [x] Real shapes/hardness for modded blocks (Fabric does not sync them), 2026-10-11: `tools/ModDump` runs the
+  mods' own code. A dump written with Mojang names (like DataGen's) is compiled against Paper's jar, remapped to
+  Fabric intermediary with the loader's own tiny-remapper (Mojang's server mappings + intermediary meet on the
+  official names; the mappings are downloaded, never committed), and run once in a throwaway copy of the server.
+  Its vanilla half must equal our table state for state (it does: 27,914) before the modded half is trusted.
+  At runtime the synced block registry + that catalog give the server's exact state numbering, and the server's
+  block tags put modded doors in wooden_doors: on spooky, all 345 modded blocks (3,430 states) are known and
+  Vertex walks through a Spooky Doors door. A block without data, and everything after it, stays a solid unknown.
+  Re-run the tool when the mod set changes.
+- [ ] Modded items and entity sizes from the same dump (found 2026-10-11: ItemStack resolves ids through the
+  vanilla item table, so a modded item in the inventory reads as air; modded mobs get a default 0.6x1.8 size)
