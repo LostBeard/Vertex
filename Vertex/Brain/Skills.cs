@@ -443,23 +443,12 @@ public sealed class Skills(MinecraftClient client)
     /// </summary>
     public async Task<(bool, string)> BuildHouseAsync(string? nearPlayer, string? material, CancellationToken ct)
     {
-        var inv = client.Inventory.Slots.Skip(PlayerInventory.MainStart).Where(s => !s.IsEmpty).ToList();
-        int Have(Func<ItemStack, bool> m) => inv.Where(m).Sum(s => s.Count);
-        string? chosen = null;
-        if (!string.IsNullOrWhiteSpace(material))
-        {
-            var m = material.Trim().ToLowerInvariant().Replace(' ', '_').TrimEnd('s');
-            chosen = Blueprints.HouseMaterials.FirstOrDefault(x => x.Contains(m) || m.Contains(x.Replace("minecraft:", "")));
-            if (chosen == null) return (false, $"I can't build a house out of {material}.");
-        }
-        chosen ??= Blueprints.HouseMaterials.OrderByDescending(x => Have(Blueprints.MaterialMatch(x))).First();
-        var wall = Blueprints.MaterialMatch(chosen);
+        if (ChooseMaterial(material) is not var (_, wall, pretty, noun)) return (false, $"I can't build a house out of {material}.");
         var glass = Have(Blueprints.IsGlass) >= 3;
         var size = Have(wall) >= Blueprints.HouseBlocks(7, glass) ? 7 : 5;
         var need = Blueprints.HouseBlocks(size, glass);
-        var pretty = chosen == "planks" ? "wooden" : chosen.Replace("minecraft:", "").Replace('_', ' ');
         if (Have(wall) < need)
-            return (false, $"I need {need} {(chosen == "planks" ? "planks" : pretty)} to build a house and I only have {Have(wall)}. (Wood works: one log makes 4 planks.)");
+            return (false, $"I need {need} {noun} to build a house and I only have {Have(wall)}. (Wood works: one log makes 4 planks.)");
 
         var player = FindPlayer(nearPlayer);
         var (ox, oy, oz) = player != null ? (player.X, player.Y, player.Z) : client.Position;
@@ -484,17 +473,51 @@ public sealed class Skills(MinecraftClient client)
             : (true, $"I built the house, but {failed} {(failed == 1 ? "block" : "blocks")} didn't go where I wanted. The door is on the {side} side.");
     }
 
+    /// <summary>How many of the matching items we carry (main inventory and hotbar).</summary>
+    private int Have(Func<ItemStack, bool> match) =>
+        client.Inventory.Slots.Skip(PlayerInventory.MainStart).Where(s => !s.IsEmpty && match(s)).Sum(s => s.Count);
+
+    /// <summary>
+    /// The building material: what was asked for ("cobblestone", "wood"), else the kind we carry most of. Null when
+    /// the asked-for material is not one we build with. Noun is how to count it ("planks", "cobblestone").
+    /// </summary>
+    private (string Name, Func<ItemStack, bool> Match, string Pretty, string Noun)? ChooseMaterial(string? material)
+    {
+        string? chosen = null;
+        if (!string.IsNullOrWhiteSpace(material))
+        {
+            var m = material.Trim().ToLowerInvariant().Replace(' ', '_').TrimEnd('s');
+            if (m is "wood" or "wooden" or "plank") m = "planks";
+            chosen = Blueprints.HouseMaterials.FirstOrDefault(x => x.Contains(m) || m.Contains(x.Replace("minecraft:", "")));
+            if (chosen == null) return null;
+        }
+        chosen ??= Blueprints.HouseMaterials.OrderByDescending(x => Have(Blueprints.MaterialMatch(x))).First();
+        var pretty = chosen == "planks" ? "wooden" : chosen.Replace("minecraft:", "").Replace('_', ' ');
+        return (chosen, Blueprints.MaterialMatch(chosen), pretty, chosen == "planks" ? "planks" : pretty);
+    }
+
     /// <summary>
     /// The nearest spot (within 14 blocks) for a size x size house: solid full ground under every cell at one level,
     /// four blocks of air (or grass and flowers) above it, and nobody standing there.
     /// </summary>
-    public (int X, int Y, int Z)? FindHouseSite(double nearX, double nearY, double nearZ, int size, Entity? keepClear)
+    public (int X, int Y, int Z)? FindHouseSite(double nearX, double nearY, double nearZ, int size, Entity? keepClear) =>
+        FindFlatSite(nearX, nearY, nearZ, size, 4, keepClear);
+
+    /// <summary>Air, or something a placed block replaces (grass, flowers, snow), and no water or lava.</summary>
+    private bool Open(int s) => s >= 0 && (D.IsAir(s) || (D.StateFlags[s] & GameData.FlagReplaceable) != 0) && (D.StateFlags[s] & (GameData.FlagWater | GameData.FlagLava)) == 0;
+
+    /// <summary>Natural, solid, full-height ground to build on (not sand or gravel, and not someone's build).</summary>
+    private bool Ground(int s) => s > 0 && D.HasCollision(s) && !D.IsAir(s) && (D.StateFlags[s] & GameData.FlagReplaceable) == 0
+        && D.CollisionBoxes(s).Any(b => b.MaxY >= 1.0) && !client.IsBuiltBlock(D.BlockOf(s)) && D.BlockOf(s).Name is not ("minecraft:sand" or "minecraft:gravel");
+
+    /// <summary>
+    /// The nearest spot (within 14 blocks) for a size x size footprint: solid full ground under every cell at one
+    /// level, `clear` blocks of open space above it, and nobody standing there.
+    /// </summary>
+    public (int X, int Y, int Z)? FindFlatSite(double nearX, double nearY, double nearZ, int size, int clear, Entity? keepClear)
     {
         var r = size / 2;
         var w = client.World;
-        bool Open(int s) => s >= 0 && (D.IsAir(s) || (D.StateFlags[s] & GameData.FlagReplaceable) != 0) && (D.StateFlags[s] & (GameData.FlagWater | GameData.FlagLava)) == 0;
-        bool Ground(int s) => s > 0 && D.HasCollision(s) && !D.IsAir(s) && (D.StateFlags[s] & GameData.FlagReplaceable) == 0
-            && D.CollisionBoxes(s).Any(b => b.MaxY >= 1.0) && !client.IsBuiltBlock(D.BlockOf(s)) && D.BlockOf(s).Name is not ("minecraft:sand" or "minecraft:gravel");
         var bx = (int)Math.Floor(nearX);
         var bz = (int)Math.Floor(nearZ);
         var by = (int)Math.Floor(nearY + 1e-6);
@@ -519,7 +542,7 @@ public sealed class Skills(MinecraftClient client)
             for (var dz = -r; dz <= r && ok; dz++)
             {
                 if (!Ground(w.GetState(x + dx, ly - 1, z + dz))) ok = false;
-                for (var dy = 0; dy < 4 && ok; dy++)
+                for (var dy = 0; dy < clear && ok; dy++)
                     if (!Open(w.GetState(x + dx, ly + dy, z + dz))) ok = false;
             }
             if (!ok) continue;
@@ -529,6 +552,228 @@ public sealed class Skills(MinecraftClient client)
             return (x, ly, z);
         }
         return null;
+    }
+
+    // ---------------------------------------------------------------- walls, towers, bridges
+
+    /// <summary>A block whose top we can stand on (any full-height solid block, built or natural).</summary>
+    private bool Standable(int s) => s > 0 && D.HasCollision(s) && (D.StateFlags[s] & GameData.FlagReplaceable) == 0
+        && D.CollisionBoxes(s).Any(b => b.MaxY >= 1.0);
+
+    /// <summary>The feet level of the ground in column x,z near height y (3 above to 6 below), or null (water, a deep drop, unloaded).</summary>
+    private int? GroundLevel(int x, int z, int nearY)
+    {
+        var w = client.World;
+        for (var y = nearY + 3; y >= nearY - 6; y--)
+            if (Standable(w.GetState(x, y - 1, z)) && Open(w.GetState(x, y, z))) return y;
+        return null;
+    }
+
+    /// <summary>A direction a player said ("north", "east"...), else the way the asker (or we) face.</summary>
+    private BlockFace FaceFrom(string? direction, Entity? asker)
+    {
+        switch (direction?.Trim().ToLowerInvariant())
+        {
+            case "north" or "n": return BlockFace.North;
+            case "south" or "s": return BlockFace.South;
+            case "east" or "e": return BlockFace.East;
+            case "west" or "w": return BlockFace.West;
+        }
+        // Yaw 0 looks south (+z), 90 west, 180 north, 270 east.
+        var yaw = asker?.Yaw ?? client.Rotation.Yaw;
+        return ((((int)Math.Round(yaw / 90.0) % 4) + 4) % 4) switch { 0 => BlockFace.South, 1 => BlockFace.West, 2 => BlockFace.North, _ => BlockFace.East };
+    }
+
+    /// <summary>Which side of (fromX, fromZ) the point (toX, toZ) is on.</summary>
+    private static BlockFace Facing(double fromX, double fromZ, double toX, double toZ)
+    {
+        double fx = toX - fromX, fz = toZ - fromZ;
+        return Math.Abs(fx) > Math.Abs(fz) ? (fx > 0 ? BlockFace.East : BlockFace.West) : (fz > 0 ? BlockFace.South : BlockFace.North);
+    }
+
+    private static string Name(BlockFace f) => f.ToString().ToLowerInvariant();
+
+    /// <summary>
+    /// Builds a wall `height` blocks high. Straight: `length` blocks going `direction` from the asker (or the way they
+    /// face). Around: a square of radius `length` around the asker with a gateway on the side facing Vertex (a door
+    /// in it if we carry one), e.g. a pen for animals. The wall rises with the ground; a dip is filled up to the
+    /// wall's top so there is no low spot to climb over. Rocks and trees in the line are left as part of the wall;
+    /// columns over water or a deep drop are skipped.
+    /// </summary>
+    public async Task<(bool, string)> BuildWallAsync(string? nearPlayer, string? direction, int length, int height, bool around, string? material, CancellationToken ct)
+    {
+        if (ChooseMaterial(material) is not var (_, match, pretty, noun)) return (false, $"I can't build a wall out of {material}.");
+        height = Math.Clamp(height, 1, 5);
+        var player = FindPlayer(nearPlayer);
+        var (ox, oy, oz) = player != null ? (player.X, player.Y, player.Z) : client.Position;
+        int bx = (int)Math.Floor(ox), by = (int)Math.Floor(oy + 1e-6), bz = (int)Math.Floor(oz);
+
+        var columns = new List<(int X, int Z)>();
+        (int X, int Z)? gate = null;
+        BlockFace side;
+        var radius = 0;
+        if (around)
+        {
+            radius = Math.Clamp(length, 2, 10);
+            columns.AddRange(Blueprints.Ring(bx, bz, radius));
+            var (vx, _, vz) = client.Position;
+            side = Facing(bx + 0.5, bz + 0.5, vx, vz);
+            var (gx, gz) = Blueprints.Dir(side);
+            gate = (bx + gx * radius, bz + gz * radius);
+        }
+        else
+        {
+            length = Math.Clamp(length, 2, 32);
+            side = FaceFrom(direction, player);
+            var (dx, dz) = Blueprints.Dir(side);
+            for (var i = 1; i <= length; i++) columns.Add((bx + dx * i, bz + dz * i));
+        }
+
+        var plan = new List<Placement>();
+        Placement? door = null;
+        var skipped = 0;
+        foreach (var (x, z) in columns)
+        {
+            if (GroundLevel(x, z, by) is not int g) { skipped++; continue; }
+            if ((x, z) == gate)
+            {
+                if (height >= 2 && Have(Blueprints.IsDoor) > 0) door = new Placement(x, g, z, Blueprints.IsDoor, "a door", side);
+                for (var dy = 2; dy < height; dy++) plan.Add(new Placement(x, g + dy, z, match, noun)); // above the gateway
+                continue;
+            }
+            for (var wy = g; wy < Math.Max(g, by) + height; wy++)
+                if (Open(client.World.GetState(x, wy, z))) plan.Add(new Placement(x, wy, z, match, noun));
+        }
+        if (plan.Count == 0) return (false, "There's nowhere to put a wall there (water or a drop all the way).");
+        if (Have(match) < plan.Count) return (false, $"That wall takes {plan.Count} {noun} and I only have {Have(match)}.");
+        if (door != null) plan.Add(door);
+
+        var (placed, failed, missing) = await client.BuildAsync(plan, ct);
+        if (missing != null) return (false, $"I ran out of {missing} while building the wall ({placed} blocks placed).");
+        var what = around
+            ? $"a {pretty} wall around {player?.PlayerName ?? "here"}, {2 * radius + 1} by {2 * radius + 1}, with {(door != null ? "a door" : "a gap")} on the {Name(side)} side"
+            : $"a {pretty} wall {columns.Count} blocks long and {height} high going {Name(side)}";
+        var notes = (failed > 0 ? $" {failed} {(failed == 1 ? "block" : "blocks")} didn't go where I wanted." : "")
+            + (skipped > 0 ? $" I left out {skipped} {(skipped == 1 ? "spot" : "spots")} over water or a drop." : "");
+        return (true, $"I built {what}.{notes}");
+    }
+
+    /// <summary>
+    /// Builds a 3x3 lookout tower `height` blocks high near the asker: Vertex stands in the middle, rings itself in
+    /// layer by layer and pillars up the core, hangs a ladder up the outside (facing the asker) so anyone can climb
+    /// it, finishes on top behind a one-block parapet, then climbs back down the ladder.
+    /// </summary>
+    public async Task<(bool, string)> BuildTowerAsync(string? nearPlayer, int height, string? material, CancellationToken ct)
+    {
+        if (ChooseMaterial(material) is not var (_, match, pretty, noun)) return (false, $"I can't build a tower out of {material}.");
+        height = Math.Clamp(height, 4, 16);
+        var need = 8 * height + (height - 1);
+        static bool IsLadder(ItemStack s) => s.Name == "minecraft:ladder";
+        if (Have(IsLadder) < height)
+        {
+            var (_, why) = await client.CraftItemAsync("minecraft:ladder", height - Have(IsLadder), ct);
+            if (Have(IsLadder) < height)
+                return (false, $"I need {height} ladders so people can climb the tower, and I couldn't make them ({why}).");
+        }
+        if (Have(match) < need) return (false, $"A tower {height} high takes {need} {noun} and I only have {Have(match)}.");
+
+        var player = FindPlayer(nearPlayer);
+        var (ox, oy, oz) = player != null ? (player.X, player.Y, player.Z) : client.Position;
+        // The ladder sticks out one block past the 3x3, so the site is 5x5, clear all the way up.
+        if (FindFlatSite(ox, oy, oz, 5, height + 3, player) is not var (cx, y, cz)) return (false, "I can't find a flat, clear spot for a tower around here.");
+        var ladderSide = Facing(cx + 0.5, cz + 0.5, ox, oz);
+        var (lx, lz) = Blueprints.Dir(ladderSide);
+        if (!await client.GoToAsync(Goal.Block(cx, y, cz), new PathOptions { MaxNodes = 20_000 }, ct) || client.FeetBlock != (cx, y, cz))
+            return (false, "I couldn't get to the spot I picked for the tower.");
+
+        var w = client.World;
+        bool LadderAt(int level) => D.BlockOf(w.GetState(cx + 2 * lx, level, cz + 2 * lz)).Name == "minecraft:ladder";
+        var top = y + height - 1; // the floor we finish on; the ring's top layer is the parapet around it
+        for (var f = y; ; f++)
+        {
+            // The ring around us at our feet and head level (each block leans on the one below it)...
+            var layer = new List<Placement>();
+            for (var ly = f; ly <= Math.Min(f + 1, top); ly++)
+                foreach (var (x, z) in Blueprints.Ring(cx, cz, 1)) layer.Add(new Placement(x, ly, z, match, noun));
+            var (_, failed, missing) = await client.BuildAsync(layer, ct);
+            if (missing != null) return (false, $"I ran out of {missing} building the tower.");
+            if (failed > 0 || client.FeetBlock != (cx, f, cz)) return (false, $"Something went wrong building the tower at height {f - y + 1}.");
+            // ...then the ladder on its outside face (the clicked face sets which way a ladder hangs).
+            if (!LadderAt(f))
+            {
+                if (!await client.EquipAsync(IsLadder, ct)) return (false, "I ran out of ladders.");
+                if (!await client.PlaceAgainstAsync(cx + lx, f, cz + lz, ladderSide, ct) || !LadderAt(f))
+                    return (false, $"I couldn't hang a ladder at height {f - y + 1}.");
+            }
+            if (f == top) break;
+            if (!await client.PillarUpAsync(match, ct)) return (false, $"I couldn't climb up my tower at height {f - y + 1}.");
+        }
+
+        var built = $"I built a {pretty} tower {height} blocks high with a ladder on the {Name(ladderSide)} side.";
+        // Down the ladder to its foot.
+        return await client.GoToAsync(Goal.Block(cx + 3 * lx, y, cz + 3 * lz), new PathOptions { MaxNodes = 10_000 }, ct)
+            ? (true, built)
+            : (true, built + " I'm still up on top: I couldn't find my way down.");
+    }
+
+    /// <summary>
+    /// Bridges a gap (a river, lava, a ravine) going `direction` from the asker (or the way they face): walks to the
+    /// edge, then places each block against the one it stands on and steps onto it, until ground at the same level
+    /// on the far side (up to 48 blocks).
+    /// </summary>
+    public async Task<(bool, string)> BuildBridgeAsync(string? nearPlayer, string? direction, string? material, CancellationToken ct)
+    {
+        if (ChooseMaterial(material) is not var (_, match, pretty, noun)) return (false, $"I can't build a bridge out of {material}.");
+        var player = FindPlayer(nearPlayer);
+        var face = FaceFrom(direction, player);
+        var (dx, dz) = Blueprints.Dir(face);
+        var (ox, oy, oz) = player != null ? (player.X, player.Y, player.Z) : client.Position;
+        int bx = (int)Math.Floor(ox), y = (int)Math.Floor(oy + 1e-6), bz = (int)Math.Floor(oz);
+        var w = client.World;
+        bool Walkable(int x, int z) => Open(w.GetState(x, y, z)) && Open(w.GetState(x, y + 1, z));
+        string Blocking(int x, int z) =>
+            D.BlockOf(Math.Max(0, Open(w.GetState(x, y, z)) ? w.GetState(x, y + 1, z) : w.GetState(x, y, z))).Name.Replace("minecraft:", "").Replace('_', ' ');
+
+        // The edge within 8 blocks, then the gap, then ground at our level on the far side.
+        var edge = -1;
+        for (var i = 0; i <= 8 && edge < 0; i++)
+        {
+            var (x, z) = (bx + dx * i, bz + dz * i);
+            if (!w.IsLoaded(x, z)) break;
+            if (!Walkable(x, z)) return (false, $"There's {Blocking(x, z)} in the way {Name(face)} of here.");
+            if (!Standable(w.GetState(x, y - 1, z))) edge = i;
+        }
+        if (edge < 1) return (false, $"I don't see anything to bridge {Name(face)} of here.");
+        var gap = new List<(int X, int Z)>();
+        var far = -1;
+        for (var i = edge; i <= edge + 48 && far < 0; i++)
+        {
+            var (x, z) = (bx + dx * i, bz + dz * i);
+            if (!w.IsLoaded(x, z)) break;
+            if (!Walkable(x, z)) return (false, $"There's {Blocking(x, z)} in the way {i} blocks {Name(face)}, so I can't bridge straight across there.");
+            if (Standable(w.GetState(x, y - 1, z))) far = i;
+            else gap.Add((x, z));
+        }
+        if (far < 0) return (false, $"The other side is too far {Name(face)} (more than 48 blocks), or I can't see it.");
+        if (Have(match) < gap.Count) return (false, $"The bridge needs {gap.Count} {noun} and I only have {Have(match)}.");
+
+        if (!await client.GoToAsync(Goal.Block(bx + dx * (edge - 1), y, bz + dz * (edge - 1)), new PathOptions { MaxNodes = 20_000 }, ct))
+            return (false, "I couldn't get to the edge to start the bridge.");
+        var placed = 0;
+        foreach (var (x, z) in gap)
+        {
+            ct.ThrowIfCancellationRequested();
+            if (!Standable(w.GetState(x, y - 1, z)))
+            {
+                if (!await client.EquipAsync(match, ct)) return (false, $"I ran out of {noun} after {placed} blocks of bridge.");
+                if (!await client.PlaceBlockAsync(x, y - 1, z, ct)) return (false, $"I couldn't place the next bridge block ({placed} placed).");
+                placed++;
+            }
+            // Step onto it: always standing on the bridge, never swimming or falling for the next one.
+            if (!await client.GoToAsync(Goal.Block(x, y, z), new PathOptions { MaxNodes = 2_000 }, ct)) return (false, $"I couldn't step out onto my bridge ({placed} placed).");
+        }
+        await client.GoToAsync(Goal.Block(bx + dx * far, y, bz + dz * far), new PathOptions { MaxNodes = 2_000 }, ct);
+        return (true, $"I built a {pretty} bridge {gap.Count} blocks long going {Name(face)}, and I'm on the other side.");
     }
 
     // ---------------------------------------------------------------- farming

@@ -61,7 +61,7 @@ public static class Blueprints
     };
 
     /// <summary>The square ring of cells at Chebyshev distance r, walking round it.</summary>
-    private static IEnumerable<(int X, int Z)> Ring(int cx, int cz, int r)
+    public static IEnumerable<(int X, int Z)> Ring(int cx, int cz, int r)
     {
         for (var x = -r; x < r; x++) yield return (cx + x, cz - r);
         for (var z = -r; z < r; z++) yield return (cx + r, cz + z);

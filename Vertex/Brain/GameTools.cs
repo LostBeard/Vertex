@@ -177,6 +177,45 @@ public static class GameTools
                 return Task.FromResult("OK: I started building a house. It takes a minute; I am NOT done yet.");
             });
 
+        yield return new GameTool("build_wall",
+            "Build a wall: a straight line going a direction from the person talking, or all the way around them (a pen for animals, a fence for a base) with a gateway.",
+            """{"type":"object","properties":{"shape":{"type":"string","enum":["line","around"],"description":"line = straight; around = a square around the player"},"direction":{"type":"string","description":"for a line: north, south, east, west, or empty = the way the player faces"},"length":{"type":"integer","description":"line length in blocks (default 10), or for around the distance from the player to the wall (default 4)"},"height":{"type":"integer","description":"blocks high (default 2)"},"material":{"type":"string","description":"what to build with; empty = what you have most of"},"player":{"type":"string","description":"'me' = the person talking"}}}""",
+            a =>
+            {
+                var p = Who(a);
+                var around = Str(a, "shape")?.Trim().ToLowerInvariant() is "around" or "ring" or "square" or "pen";
+                var length = Int(a, "length", around ? 4 : 10);
+                var height = Int(a, "height", 2);
+                var direction = Str(a, "direction");
+                var material = Str(a, "material");
+                tasks.Start(around ? "building a wall around " + p : "building a wall", ct => skills.BuildWallAsync(p, direction, length, height, around, material, ct));
+                return Task.FromResult("OK: I started building the wall. I am NOT done yet.");
+            });
+
+        yield return new GameTool("build_tower",
+            "Build a 3x3 lookout tower with a ladder up the outside, near the person talking. Needs about 9 blocks per block of height, plus ladders (made from sticks if needed).",
+            """{"type":"object","properties":{"height":{"type":"integer","description":"blocks high, 4 to 16 (default 8)"},"material":{"type":"string","description":"what to build with; empty = what you have most of"},"player":{"type":"string","description":"'me' = the person talking"}}}""",
+            a =>
+            {
+                var p = Who(a);
+                var height = Int(a, "height", 8);
+                var material = Str(a, "material");
+                tasks.Start("building a tower", ct => skills.BuildTowerAsync(p, height, material, ct));
+                return Task.FromResult("OK: I started building a tower. It takes a minute; I am NOT done yet.");
+            });
+
+        yield return new GameTool("build_bridge",
+            "Build a bridge across water, lava or a ravine, going a direction from the person talking, to the ground on the other side.",
+            """{"type":"object","properties":{"direction":{"type":"string","description":"north, south, east, west, or empty = the way the player faces"},"material":{"type":"string","description":"what to build with; empty = what you have most of"},"player":{"type":"string","description":"'me' = the person talking"}}}""",
+            a =>
+            {
+                var p = Who(a);
+                var direction = Str(a, "direction");
+                var material = Str(a, "material");
+                tasks.Start("building a bridge", ct => skills.BuildBridgeAsync(p, direction, material, ct));
+                return Task.FromResult("OK: I started building a bridge. I am NOT done yet.");
+            });
+
         yield return new GameTool("explore",
             "Go exploring in a direction and come back to tell what you found (villages, animals, ores, chests).",
             """{"type":"object","properties":{"direction":{"type":"string","description":"north, south, east, west, or empty for any"},"distance":{"type":"integer","description":"how far, in blocks (default 100)"}}}""",

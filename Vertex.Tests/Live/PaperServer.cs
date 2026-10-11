@@ -92,9 +92,11 @@ public sealed class PaperServer : IAsyncDisposable
         var finished = await Task.WhenAny(server._started.Task, process.WaitForExitAsync(), Task.Delay(timeout));
         if (finished != server._started.Task)
         {
+            // Read everything before disposing: HasExited on a disposed Process throws and hides the real cause.
+            var exited = process.HasExited ? $"exited with {process.ExitCode}" : $"still running after {timeout}";
             var tail = string.Join('\n', server.OutputTail(40));
             await server.DisposeAsync();
-            throw new InvalidOperationException($"Paper '{name}' did not finish starting (exited={process.HasExited}). Last output:\n{tail}");
+            throw new InvalidOperationException($"Paper '{name}' did not finish starting ({exited}). Last output:\n{tail}");
         }
         return server;
     }

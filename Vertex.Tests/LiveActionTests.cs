@@ -34,7 +34,7 @@ public class LiveActionTests
     /// <summary>Joins and stands the player at (ax+0.5, 200, az+0.5) on a stone floor, facing +X.</summary>
     private async Task<(MinecraftClient Client, int X, int Z)> JoinOnArenaAsync(string name, Func<int, int, string[]> build)
     {
-        var client = new MinecraftClient(GameProfile.Offline(name));
+        var client = new MinecraftClient(GameProfile.Offline(name), new ClientOptions { Log = m => TestContext.Out.WriteLine($"[{name}] {m}") });
         using var cts = new CancellationTokenSource(Timeout);
         await client.ConnectAsync("127.0.0.1", Port, cts.Token);
         var (px, _, pz) = client.Position;
@@ -413,7 +413,10 @@ public class LiveActionTests
         await GiveAsync(client, name, "minecraft:stone_sword", 1, () => client.Inventory.Count("stone_sword") == 1);
         await Wait.UntilAsync(() => client.Entities.Values.Count(e => e.Name == "minecraft:zombie") == 3 && client.Entities.Values.Any(e => e.PlayerName == ward),
             Timeout, () => string.Join(", ", client.Entities.Values));
-        var far = client.Entities.Values.Single(e => e.Name == "minecraft:zombie" && e.X < x - 10).Id;
+        var farZombie = client.Entities.Values.Single(e => e.Name == "minecraft:zombie" && e.X < x - 10);
+        var far = farZombie.Id;
+        var ward0 = client.Entities.Values.Single(e => e.PlayerName == ward);
+        var (wx0, wz0) = (ward0.X, ward0.Z);
 
         var skills = new Vertex.Brain.Skills(client);
         using var stop = new CancellationTokenSource();
@@ -422,7 +425,10 @@ public class LiveActionTests
             () => string.Join(", ", client.Entities.Values.Where(e => e.Name == "minecraft:zombie").Select(e => $"zombie {e.Health} at {e.X:0.0},{e.Z:0.0}")));
         Assert.That(guarding.IsCompleted, Is.False, guarding.IsCompleted ? guarding.Result.Item2 : "");
         await client.WaitTicksAsync(40);
-        Assert.That(client.Entities.ContainsKey(far), "left the zombie that is not near the ward alone");
+        // (10-11: failed once in a full suite run, never alone or class-only; this says what happened if it recurs.)
+        Assert.That(client.Entities.ContainsKey(far), "left the zombie that is not near the ward alone. Far zombie last seen at "
+            + $"{farZombie.X:0.00},{farZombie.Y:0.00},{farZombie.Z:0.00} health {farZombie.Health}; ward moved from {wx0:0.00},{wz0:0.00} to "
+            + string.Join(",", client.Entities.Values.Where(e => e.PlayerName == ward).Select(e => $"{e.X:0.00},{e.Z:0.00}")) + $"; Vertex at {client.Position}");
         var (px, py, pz) = client.Position;
         Assert.That(client.Entities.Values.Single(e => e.PlayerName == ward).DistanceTo(px, py, pz), Is.LessThan(5), "back with the ward");
         // Guarding runs until stopped; stopping cancels it like every other task (TaskRunner expects the throw).

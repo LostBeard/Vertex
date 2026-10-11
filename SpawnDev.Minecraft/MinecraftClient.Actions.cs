@@ -444,8 +444,26 @@ public sealed partial class MinecraftClient
         if (candidates.Count == 0) return false;
         var (face, n) = candidates[0];
         if (DistanceToBlock(n.X, n.Y, n.Z) > BlockReach) return false;
-        await UseOnBlockAsync(n.X, n.Y, n.Z, Opposite(face), Hand.Main, null, cancellationToken);
-        return await WaitUntilAsync(() => { var s = World.GetState(x, y, z); return s > 0 && !World.Data.IsAir(s) && s != here; }, 20, cancellationToken);
+        return await PlaceAgainstAsync(n.X, n.Y, n.Z, Opposite(face), cancellationToken);
+    }
+
+    /// <summary>
+    /// Clicks the given face of block x,y,z with the held block and waits until a block appears in the cell in front
+    /// of that face. The held stack then shrinks by one at once, as vanilla's client predicts it (the server's own
+    /// slot update follows a tick later; without the prediction the next click goes out with a stack the server no
+    /// longer has, and nothing is placed).
+    /// </summary>
+    public async Task<bool> PlaceAgainstAsync(int x, int y, int z, BlockFace face, CancellationToken cancellationToken = default)
+    {
+        var (tx, ty, tz) = Offset((x, y, z), face);
+        var before = World.GetState(tx, ty, tz);
+        var slot = PlayerInventory.HotbarStart + Inventory.SelectedHotbar;
+        var held = Inventory[slot];
+        await UseOnBlockAsync(x, y, z, face, Hand.Main, null, cancellationToken);
+        if (!await WaitUntilAsync(() => { var s = World.GetState(tx, ty, tz); return s > 0 && !World.Data.IsAir(s) && s != before; }, 20, cancellationToken))
+            return false;
+        if (!InstaBuild) Inventory.PredictOneUsed(slot, held);
+        return true;
     }
 
     /// <summary>Uses the held item in the air (eat, drink, throw, draw a bow...). Releasing is UseRelease.</summary>

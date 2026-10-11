@@ -26,19 +26,26 @@ Every milestone is tested against REAL servers started locally (Paper 1.21.5 bui
 ## M3 - Body (done 2026-10-10)
 - [x] Vanilla-accurate player physics (gravity, drag, collision, step-up, jump, sprint, swim, ladders)
   so Paper's movement checks never rubber-band or kick it
-- [x] Pathfinding (A*, walk/jump/fall/swim/pillar/dig-through)
+- [x] Pathfinding (A*, walk/jump/fall/swim/pillar/dig-through, ladders up and down: 2026-10-11 a ladder's
+  full-height plate had made every ladder block a wall, so nothing could climb)
 - [x] Dig (correct break time per tool/enchant/effect), place, use, attack, eat, chests, creative flight
+- [x] Placing shrinks the held stack at once, as vanilla's client predicts (the server's slot update comes at the
+  end of its tick; without it a build clicked with an emptied stack and the block never appeared)
 - [x] Craft: recipe book from the data pack, real container clicks, recursive planning, crafting table
 - [x] Smelt (furnace): crafts and places one if needed, picks the least-wasted fuel
 
-## M4 - Accounts (pulled ahead: done 2026-10-10 except signed commands)
+## M4 - Accounts (pulled ahead: done 2026-10-10, signed commands 2026-10-11)
 - [x] Microsoft account sign-in: live.com device code under a public Minecraft title client id (no app
   registration), ECDSA-signed Xbox device/title/user tokens, XSTS, Minecraft token; cached with DPAPI,
   silent refresh. `vertex login`.
 - [x] Online-mode login (session server join) - live test against a local online-mode Paper with a real account
 - [x] Signed chat (Mojang profile key, chat session, last-seen signatures) for `enforce-secure-profile=true`
   (Paper's default and AubsCraft's). Waits for the server's INITIALIZE_CHAT before the first signed message.
-- [ ] Signed commands (`chat_command_signed`) for /msg, /me, /say with enforce-secure-profile
+- [x] Signed commands (`chat_command_signed`) for /msg, /me, /say with enforce-secure-profile: the server's
+  command tree (commands packet, argument types from the game's own registry report), a Brigadier walk that finds
+  the `minecraft:message` arguments exactly as SignableCommand.of does (through /tell -> /msg, but not past
+  `execute ... run`), each signed over its own text. Without it Paper refused them ("invalid command signature").
+  Same day: a /msg to ourselves arrives twice with one signature and counts once (vanilla), else a kick
 
 ## M5 - Voice
 - [x] Simple Voice Chat client (SpawnDev.Minecraft.VoiceChat, compatibility 20 = 2.6.x): channel registration,
@@ -66,7 +73,9 @@ Every milestone is tested against REAL servers started locally (Paper 1.21.5 bui
 - [x] System One for speech: all-MiniLM-L6-v2 (SpawnDev.ILGPU.ML) matches urgent commands in milliseconds and acts before the LLM speaks
 - [x] Farm: harvest ripe wheat/carrots/potatoes/beetroot, leave unripe, replant
 - [x] Critical hits: jump as the charge completes, hit on the way down (x1.5, measured on Paper)
-- [ ] More skills: other structures (walls, towers, bridges)
+- [x] More structures: walls (straight, up steps, dips filled to the top; or a pen around a player with a gate
+  and door), a 3x3 lookout tower (pillars up its core, ladder up the outside, crafts missing ladders, climbs down),
+  bridges across water, lava or ravines to ground on the far side
 - [x] Characters: name, personality (system prompt), voice, play style knobs; switch in game by voice or chat
 - [x] Memory: remembered facts (persisted)
 - [ ] Per-player memory, long-running goals

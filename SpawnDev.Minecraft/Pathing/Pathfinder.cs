@@ -123,6 +123,20 @@ public sealed class Pathfinder
     }
 
     private bool Solid(int state) => state > 0 && _data.HasCollision(state);
+    private bool IsClimbable(int state) => state > 0 && _climbable.Contains(_data.StateBlock[state]);
+
+    /// <summary>
+    /// A ladder: climbable, and its collision is a thin plate against one side (3/16 of a block), which a player in
+    /// the middle of the block never touches. Scaffolding is climbable too but fills the block.
+    /// </summary>
+    private bool IsThinClimbable(int state) => IsClimbable(state)
+        && _data.CollisionBoxes(state).All(b => b.MaxX - b.MinX <= 0.2 || b.MaxZ - b.MinZ <= 0.2);
+
+    /// <summary>Room for the body: nothing solid (or only a ladder's plate) and nothing dangerous.</summary>
+    private bool Passable(int x, int y, int z) => Clear(x, y, z) || (State(x, y, z) is var s && IsThinClimbable(s) && !Dangerous(s));
+
+    /// <summary>Open air right above a climbable: the body sinks into the ladder below, it does not stand here.</summary>
+    private bool OverClimbable(int x, int y, int z) => Clear(x, y, z) && IsClimbable(State(x, y - 1, z));
     private bool IsFluid(int state) => state > 0 && (_data.StateFlags[state] & (GameData.FlagWater | GameData.FlagLava)) != 0;
     private bool IsWater(int state) => state > 0 && (_data.StateFlags[state] & GameData.FlagWater) != 0;
     /// <summary>A wooden door or fence gate: walked through (opened first when closed), straight along its axis.</summary>
@@ -145,26 +159,27 @@ public sealed class Pathfinder
         if (Dangerous(here) || Dangerous(below)) return null;
         double floor;
         var doorway = IsDoorway(here);
-        if (Solid(here) && !doorway)
+        // In a ladder (before the solid test: its plate is full height, but only at the block's edge) or a vine.
+        if (IsThinClimbable(here) || (IsClimbable(here) && !Solid(here))) floor = y;
+        else if (Solid(here) && !doorway)
         {
             var t = Top(here);
             if (t >= 1.0) return null; // a full-height block (or a fence/wall) is a wall, not a floor
             floor = y + t;               // slabs 0.5, soul sand 0.875, farmland 0.9375, carpets 0.0625...
         }
         else if (IsWater(here)) floor = y; // swimming counts as standing
-        else if (_climbable.Contains(Math.Max(0, here) == 0 ? -1 : _data.StateBlock[here])) floor = y;
         else
         {
+            // Over a ladder or vine nobody stands: the body sinks into it (the ladder's plate is at the block's edge),
+            // so that is a climb into the block below, not a node.
+            if (IsClimbable(below)) return null;
             // Supported by the block below: its top must reach this block's floor (full blocks, top slabs...).
-            if (!Solid(below) || Top(below) < 1.0 - 1e-9)
-            {
-                if (!IsWater(below) && !(below > 0 && _climbable.Contains(_data.StateBlock[below]))) return null;
-            }
+            if ((!Solid(below) || Top(below) < 1.0 - 1e-9) && !IsWater(below)) return null;
             if (Top(below) > 1.0 + 1e-9) return null; // fences/walls: cannot stand on (1.5 tall)
             floor = y;
         }
         // Body: 1.8 tall from the floor must be free of collision (in a doorway, the door's own upper half).
-        if (!(Clear(x, y + 1, z) || doorway && IsDoorway(State(x, y + 1, z))) || (floor - y + 1.8 > 2.0 && !Clear(x, y + 2, z))) return null;
+        if (!(Passable(x, y + 1, z) || doorway && IsDoorway(State(x, y + 1, z))) || (floor - y + 1.8 > 2.0 && !Passable(x, y + 2, z))) return null;
         return floor;
     }
 
@@ -236,7 +251,7 @@ public sealed class Pathfinder
     {
         var hereFeet = FeetHeight(n.X, n.Y, n.Z);
         var inWater = IsWater(State(n.X, n.Y, n.Z));
-        var onClimbable = State(n.X, n.Y, n.Z) is var hs && hs > 0 && _climbable.Contains(_data.StateBlock[hs]);
+        var onClimbable = IsClimbable(State(n.X, n.Y, n.Z));
         var fromFloor = hereFeet ?? n.Y;
         var hereDoor = State(n.X, n.Y, n.Z) is var hd && IsDoorway(hd) ? hd : 0;
 
@@ -255,6 +270,12 @@ public sealed class Pathfinder
                 if ((hereDoor == 0 || DoorAlongX(hereDoor) == (dx != 0)) && (thereDoor == 0 || DoorAlongX(thereDoor) == (dx != 0))
                     && FeetHeight(x, n.Y, z) is double df && Math.Abs(df - fromFloor) <= 0.6)
                     yield return (new Node(x, n.Y, z), 1.5, new PathStep(x, n.Y, z, MoveKind.Walk, [], null));
+                continue;
+            }
+            // Off a ledge onto the top of a ladder: into the ladder block below (the body sinks into it, slowly).
+            if (OverClimbable(x, n.Y, z) && Clear(x, n.Y + 1, z) && FeetHeight(x, n.Y - 1, z) is double)
+            {
+                yield return (new Node(x, n.Y - 1, z), 2.0, new PathStep(x, n.Y - 1, z, MoveKind.Climb, [], null));
                 continue;
             }
             foreach (var ny in new[] { n.Y, n.Y + 1 })
@@ -330,10 +351,12 @@ public sealed class Pathfinder
         // Up and down in water or on a ladder/vine.
         if (inWater || onClimbable)
         {
-            if (Clear(n.X, n.Y + 2, n.Z) && (IsWater(State(n.X, n.Y + 1, n.Z)) || (State(n.X, n.Y + 1, n.Z) is var a && a > 0 && _climbable.Contains(_data.StateBlock[a])) || FeetHeight(n.X, n.Y + 1, n.Z) is double))
-                if (FeetHeight(n.X, n.Y + 1, n.Z) is double)
-                    yield return (new Node(n.X, n.Y + 1, n.Z), 1.5, new PathStep(n.X, n.Y + 1, n.Z, inWater ? MoveKind.Swim : MoveKind.Climb, [], null));
+            if (Passable(n.X, n.Y + 2, n.Z) && FeetHeight(n.X, n.Y + 1, n.Z) is double)
+                yield return (new Node(n.X, n.Y + 1, n.Z), 1.5, new PathStep(n.X, n.Y + 1, n.Z, inWater ? MoveKind.Swim : MoveKind.Climb, [], null));
         }
+        // Down a ladder: let go and sink (climbing speed caps the fall at 0.15 a tick, no fall damage).
+        if ((onClimbable || OverClimbable(n.X, n.Y, n.Z)) && IsClimbable(State(n.X, n.Y - 1, n.Z)) && FeetHeight(n.X, n.Y - 1, n.Z) is double)
+            yield return (new Node(n.X, n.Y - 1, n.Z), 1.5, new PathStep(n.X, n.Y - 1, n.Z, MoveKind.Climb, [], null));
 
         // Dig straight down one block (the way out of a tree top, a pit, or onto a lower level): needs a solid floor
         // under the dug block and no fluid around it to flood in.

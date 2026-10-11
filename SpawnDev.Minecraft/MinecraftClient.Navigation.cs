@@ -285,10 +285,17 @@ public sealed partial class MinecraftClient
     }
 
     /// <summary>Jump and place a block under our feet (towering up one block).</summary>
-    private async Task<bool> PillarAsync(PathStep step, CancellationToken ct)
+    private async Task<bool> PillarAsync(PathStep step, CancellationToken ct) =>
+        await PillarUpAsync(s => ThrowawayBlocks.Contains(s.Name), ct) && FeetBlock.Y == step.Y;
+
+    /// <summary>
+    /// Towers up one block: jump, and as the feet clear the block we stood in, place one of <paramref name="block"/>
+    /// there against the block below. True once we stand on it.
+    /// </summary>
+    public async Task<bool> PillarUpAsync(Func<ItemStack, bool> block, CancellationToken ct = default)
     {
-        if (!await EquipAsync(s => ThrowawayBlocks.Contains(s.Name), ct)) return false;
-        var (bx, by, bz) = step.Place!.Value;
+        if (!await EquipAsync(block, ct)) return false;
+        var (bx, by, bz) = FeetBlock;
         Controls.Clear();
         Look(Rotation.Yaw, 90);
         Controls.Jump = true;
@@ -300,11 +307,10 @@ public sealed partial class MinecraftClient
             if (Position.Y >= by + 1.0)
             {
                 Controls.Jump = false;
-                await UseOnBlockAsync(bx, by - 1, bz, BlockFace.Up, Hand.Main, null, ct);
-                placed = await WaitUntilAsync(() => World.Data.HasCollision(Math.Max(0, World.GetState(bx, by, bz))), 10, ct);
+                placed = await PlaceAgainstAsync(bx, by - 1, bz, BlockFace.Up, ct);
             }
         }
         Controls.Clear();
-        return placed && await WaitUntilAsync(() => OnGround && FeetBlock.Y == step.Y, 20, ct);
+        return placed && await WaitUntilAsync(() => OnGround && FeetBlock.Y == by + 1, 20, ct);
     }
 }

@@ -33,6 +33,19 @@ public sealed class PlayerInventory
         if ((uint)slot < Size) _slots[slot] = stack;
     }
 
+    /// <summary>
+    /// Vanilla's client shrinks the held stack itself when it places a block (BlockItem.useOn runs on both sides);
+    /// the server's own slot update comes a tick later. Without this, a build that empties a stack clicks again
+    /// with the old count, holding nothing on the server, and that block is never placed. Only if the slot still
+    /// holds exactly what it held before the click: an update from the server that already arrived wins.
+    /// </summary>
+    internal void PredictOneUsed(int slot, ItemStack before)
+    {
+        if ((uint)slot >= Size || before.IsEmpty) return;
+        var after = before.Count > 1 ? new ItemStack(before.ItemId, before.Count - 1, before.Components, before.RemovedComponents) : ItemStack.Empty;
+        Interlocked.CompareExchange(ref _slots[slot], after, before);
+    }
+
     /// <summary>Total count of an item (by name) in main inventory, hotbar and off hand.</summary>
     public int Count(string itemName)
     {
