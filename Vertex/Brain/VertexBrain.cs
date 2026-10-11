@@ -191,7 +191,9 @@ public sealed class VertexBrain : IAsyncDisposable
         var near = Client.Entities.Values.Where(e => e.DistanceTo(x, y, z) < 24 && e.Uuid != Client.Profile.Id).OrderBy(e => e.DistanceTo(x, y, z)).Take(12)
             .Select(e => e.IsPlayer ? $"{e.PlayerName} (player, {e.DistanceTo(x, y, z):0} blocks)" : $"{e.Name.Replace("minecraft:", "").Replace('_', ' ')} ({e.DistanceTo(x, y, z):0} blocks)").ToList();
         sb.AppendLine($"- Nearby: {(near.Count == 0 ? "nobody" : string.Join(", ", near))}.");
-        if (Memory.Facts.Count > 0) sb.AppendLine("- Things you remember: " + string.Join("; ", Memory.Facts.TakeLast(12)));
+        var playersHere = Client.Entities.Values.Where(e => e.IsPlayer && e.PlayerName != null && e.DistanceTo(x, y, z) < 64).Select(e => e.PlayerName!)
+            .Append(CurrentSpeaker ?? "").ToList();
+        if (Memory.Facts.Count > 0) sb.AppendLine("- Things you remember: " + string.Join("; ", Memory.FactsFor(playersHere)));
         if (Memory.Places.Count > 0)
             sb.AppendLine("- Places you know: " + string.Join(", ", Memory.Places.Select(p => p.Dimension == Client.World.Dimension
                 ? $"{p.Name} ({Math.Sqrt((p.X + 0.5 - x) * (p.X + 0.5 - x) + (p.Z + 0.5 - z) * (p.Z + 0.5 - z)):0} blocks away)"

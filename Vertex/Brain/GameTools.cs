@@ -273,7 +273,7 @@ public static class GameTools
             a => Task.FromResult(brain.Memory.ForgetPlace(Owned(Str(a, "name") ?? "")) ? "OK: forgotten." : "I don't know that place."));
 
         yield return new GameTool("remember",
-            "Remember an important fact for later (a player's favourite things, where something is).",
+            "Remember an important fact for later. Name who it is about, e.g. \"Aubs loves axolotls\" or \"TJ is building a castle\".",
             """{"type":"object","properties":{"fact":{"type":"string"}},"required":["fact"]}""",
             a => Task.FromResult(brain.Remember(Str(a, "fact") ?? "")));
     }

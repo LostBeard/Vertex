@@ -42,6 +42,21 @@ public sealed class WorldMemory
         Save();
     }
 
+    /// <summary>
+    /// The facts worth putting in front of the language model now: every fact that names one of these players
+    /// (who is around), then the most recent others, up to `max`. Oldest first.
+    /// </summary>
+    public List<string> FactsFor(IEnumerable<string> players, int max = 16)
+    {
+        List<string> facts;
+        lock (this) facts = Facts.ToList();
+        var names = players.Where(n => n.Length >= 2).Select(n => n.ToLowerInvariant()).ToList();
+        bool AboutSomeoneHere(string f) => names.Any(n => f.Contains(n, StringComparison.OrdinalIgnoreCase));
+        var about = facts.Where(AboutSomeoneHere).TakeLast(max).ToList();
+        var recent = facts.Where(f => !AboutSomeoneHere(f)).TakeLast(Math.Max(0, max - about.Count)).ToList();
+        return facts.Where(f => about.Contains(f) || recent.Contains(f)).ToList();
+    }
+
     /// <summary>Remembers (or moves) a named place.</summary>
     public Place SetPlace(string name, string dimension, int x, int y, int z, string? by)
     {

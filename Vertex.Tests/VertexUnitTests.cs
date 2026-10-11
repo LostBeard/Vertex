@@ -202,4 +202,18 @@ public class VertexUnitTests
         Assert.That(FastIntents.Clean("PIXEL! Come here!!", "Pixel"), Is.EqualTo("come here"));
         Assert.That(FastIntents.Clean("okay vertex don't follow me", "Vertex"), Is.EqualTo("don't follow me"));
     }
+
+    [Test]
+    public void WorldMemory_RemembersWhoIsAround_EvenAfterManyOtherFacts()
+    {
+        var m = new WorldMemory();
+        m.Facts.Add("Aubs loves axolotls");
+        for (var i = 0; i < 30; i++) m.Facts.Add($"the farm needs fence number {i}");
+        m.Facts.Add("TJ's favourite block is deepslate");
+        var facts = m.FactsFor(["Aubs"], max: 5);
+        Assert.That(facts, Has.Count.EqualTo(5));
+        Assert.That(facts[0], Is.EqualTo("Aubs loves axolotls"), "about someone here, however old");
+        Assert.That(facts[^1], Is.EqualTo("TJ's favourite block is deepslate"), "then the most recent");
+        Assert.That(m.FactsFor(["Nobody"], max: 5), Does.Not.Contain("Aubs loves axolotls"));
+    }
 }

@@ -19,18 +19,25 @@ public sealed class VertexSettings
     public string Model { get; set; } = "";
     public bool Voice { get; set; } = true;
 
-    private static string PathFor() => System.IO.Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData), "Vertex", "settings.json");
+    private string _path = "";
 
-    public static VertexSettings Load()
+    /// <summary>The settings in a data folder (default %APPDATA%\Vertex).</summary>
+    public static VertexSettings Load(string? folder = null)
     {
-        try { return JsonSerializer.Deserialize<VertexSettings>(File.ReadAllText(PathFor())) ?? new(); }
-        catch (Exception e) when (e is IOException or JsonException) { return new(); }
+        var path = System.IO.Path.Combine(folder ?? DefaultFolder, "settings.json");
+        VertexSettings settings;
+        try { settings = JsonSerializer.Deserialize<VertexSettings>(File.ReadAllText(path)) ?? new(); }
+        catch (Exception e) when (e is IOException or JsonException) { settings = new(); }
+        settings._path = path;
+        return settings;
     }
+
+    public static string DefaultFolder => System.IO.Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData), "Vertex");
 
     public void Save()
     {
-        Directory.CreateDirectory(System.IO.Path.GetDirectoryName(PathFor())!);
-        File.WriteAllText(PathFor(), JsonSerializer.Serialize(this, new JsonSerializerOptions { WriteIndented = true }));
+        Directory.CreateDirectory(System.IO.Path.GetDirectoryName(_path)!);
+        File.WriteAllText(_path, JsonSerializer.Serialize(this, new JsonSerializerOptions { WriteIndented = true }));
     }
 }
 
@@ -53,8 +60,17 @@ public sealed class VertexHost : IAsyncDisposable
     private SimpleVoiceChat? _voice;
     private VertexBrain? _brain;
 
-    public VertexSettings Settings { get; } = VertexSettings.Load();
-    public CharacterStore Characters { get; } = new();
+    public VertexSettings Settings { get; }
+    public CharacterStore Characters { get; }
+
+    public VertexHost() : this(null) { }
+
+    /// <summary>A host keeping its settings, characters and world memory in `dataFolder` (default %APPDATA%\Vertex).</summary>
+    public VertexHost(string? dataFolder)
+    {
+        Settings = VertexSettings.Load(dataFolder);
+        Characters = new CharacterStore(System.IO.Path.Combine(dataFolder ?? VertexSettings.DefaultFolder, "characters"));
+    }
     public HostState State { get; private set; } = HostState.Idle;
     public string Status { get; private set; } = "Not playing";
     /// <summary>Shown while a Microsoft sign-in waits for the device code to be approved.</summary>
