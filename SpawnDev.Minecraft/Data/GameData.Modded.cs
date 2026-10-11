@@ -38,7 +38,12 @@ public sealed partial class GameData
         using var stream = typeof(GameData).Assembly.GetManifestResourceStream(resource);
         if (stream == null) return new Dictionary<string, ModdedBlock>();
         using var brotli = new BrotliStream(stream, CompressionMode.Decompress);
-        var root = JsonNode.Parse(brotli)!;
+        return ReadModdedCatalog(JsonNode.Parse(brotli)!);
+    }
+
+    /// <summary>Reads a modded block catalog (the embedded one, or one ModDump.ToCatalog wrote for a server).</summary>
+    public static IReadOnlyDictionary<string, ModdedBlock> ReadModdedCatalog(JsonNode root)
+    {
         var shapes = root["shapes"]!.AsArray().Select(sh => sh!.AsArray().Select(b =>
         {
             var a = b!.AsArray();

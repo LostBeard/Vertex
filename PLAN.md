@@ -107,5 +107,13 @@ Every milestone is tested against REAL servers started locally (Paper 1.21.5 bui
   block tags put modded doors in wooden_doors: on spooky, all 345 modded blocks (3,430 states) are known and
   Vertex walks through a Spooky Doors door. A block without data, and everything after it, stays a solid unknown.
   Re-run the tool when the mod set changes.
+- [x] Learns a server's modded blocks the way a player gets them, from its modpack (2026-10-11, TJ's idea): at
+  join Vertex names the blocks it has no data for. With a modpack (setting; AubsCraft's PC pack by default on
+  mc.spawndev.com) it downloads the pack's mods (hash-checked, cached), runs the dump mod it ships in a throwaway
+  Fabric server (Fabric's launcher and a Temurin JDK, downloaded once), saves the result for that world, and
+  rejoins knowing them. Verified: the AubsCraft pack teaches the same 345 blocks the server's own jars do
+- [ ] Learn blocks no modpack covers in game, like a person would: guess from the name (spooky_oak_door is a
+  door), confirm the shape by touching and standing (the server is the referee), time digs where breaking is
+  allowed, and map unknown state ids to blocks from what breaking them drops; remembered per world
 - [ ] Modded items and entity sizes from the same dump (found 2026-10-11: ItemStack resolves ids through the
   vanilla item table, so a modded item in the inventory reads as air; modded mobs get a default 0.6x1.8 size)

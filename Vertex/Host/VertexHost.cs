@@ -18,6 +18,17 @@ public sealed class VertexSettings
     public string Character { get; set; } = "Vertex";
     public string Model { get; set; } = "";
     public bool Voice { get; set; } = true;
+    /// <summary>
+    /// The server's modpack (a Modrinth .mrpack URL or file), for learning its modded blocks the way a player gets
+    /// them. Empty: AubsCraft's pack on mc.spawndev.com, none elsewhere.
+    /// </summary>
+    public string Modpack { get; set; } = "";
+
+    /// <summary>The modpack to learn this server's blocks from, or null.</summary>
+    public string? ModpackForServer() =>
+        !string.IsNullOrWhiteSpace(Modpack) ? Modpack.Trim()
+        : Server.Equals("mc.spawndev.com", StringComparison.OrdinalIgnoreCase) ? "https://map.spawndev.com:44365/api/pc/modpack/1.21.5"
+        : null;
 
     private string _path = "";
 
@@ -55,6 +66,17 @@ public sealed class VertexHost : IAsyncDisposable
 {
     private readonly List<LogLine> _lines = [];
     private readonly SemaphoreSlim _gate = new(1, 1);
+    private readonly string _dataFolder;
+    private bool _learnedThisSession;
+
+    /// <summary>Tests: start from the modded blocks this world has learned only (no built-in catalog).</summary>
+    internal bool UseEmbeddedModdedBlocks { get; set; } = true;
+    /// <summary>Where downloaded mods, the Fabric server and Java are kept.</summary>
+    internal string ModsCache { get; set; } = Mods.ModpackBlocks.DefaultCache;
+
+    /// <summary>What Vertex has learned about this server's modded blocks (next to its world memory).</summary>
+    private string WorldBlocksFile => System.IO.Path.Combine(_dataFolder, "worlds",
+        string.Concat($"{Settings.Server}_{Settings.Port}".ToLowerInvariant().Split(System.IO.Path.GetInvalidFileNameChars())) + ".blocks.json");
     private VertexAi? _ai;
     private MinecraftClient? _client;
     private SimpleVoiceChat? _voice;
@@ -68,6 +90,7 @@ public sealed class VertexHost : IAsyncDisposable
     /// <summary>A host keeping its settings, characters and world memory in `dataFolder` (default %APPDATA%\Vertex).</summary>
     public VertexHost(string? dataFolder)
     {
+        _dataFolder = dataFolder ?? VertexSettings.DefaultFolder;
         Settings = VertexSettings.Load(dataFolder);
         Characters = new CharacterStore(System.IO.Path.Combine(dataFolder ?? VertexSettings.DefaultFolder, "characters"));
     }
@@ -145,7 +168,13 @@ public sealed class VertexHost : IAsyncDisposable
             SetStatus(HostState.Starting, $"Joining {Settings.Server}...");
             // Brand "vertex": honest, and not "vanilla" (AubsCraft's proxy keeps vanilla clients off modded servers
             // because they cannot answer Fabric's registry sync; Vertex can).
-            _client = new MinecraftClient(profile, new ClientOptions { Brand = "vertex", Log = m => { if (m.StartsWith("disconnected") || m.StartsWith("joined") || m.StartsWith("spawned")) Add(LineKind.System, m); } });
+            _client = new MinecraftClient(profile, new ClientOptions
+            {
+                Brand = "vertex",
+                Log = m => { if (m.StartsWith("disconnected") || m.StartsWith("joined") || m.StartsWith("spawned") || m.StartsWith("modded blocks")) Add(LineKind.System, m); },
+                ModdedBlocks = Mods.ModpackBlocks.LoadWorld(WorldBlocksFile),
+                UseEmbeddedModdedBlocks = UseEmbeddedModdedBlocks,
+            });
             _client.ChatReceived += m => Add(LineKind.Chat, m.Text);
             _client.Disconnected += r => { Add(LineKind.System, "disconnected: " + r); _ = StopAsync(); };
             if (Settings.Voice)
@@ -165,6 +194,7 @@ public sealed class VertexHost : IAsyncDisposable
             await _client.ConnectAsync(Settings.Server, Settings.Port);
             _brain.Start();
             SetStatus(HostState.Playing, $"Playing as {character.Name} ({profile.Name}) on {Settings.Server}");
+            CheckModdedBlocks();
         }
         catch (Exception e)
         {
@@ -177,6 +207,47 @@ public sealed class VertexHost : IAsyncDisposable
         {
             _gate.Release();
         }
+    }
+
+    /// <summary>
+    /// After joining: blocks from mods Vertex has no data for are solid unknown cubes. Says which, and (once per
+    /// session) learns them from the server's modpack, saves that for this world, and rejoins to use it.
+    /// </summary>
+    private void CheckModdedBlocks()
+    {
+        var unknown = _client?.UnknownModdedBlocks ?? [];
+        if (unknown.Count == 0) return;
+        var mods = string.Join(", ", unknown.Select(n => n.Split(':')[0]).Distinct());
+        Add(LineKind.System, $"{unknown.Count} modded blocks I have no data for (mods: {mods}): treating them as solid blocks");
+        var pack = Settings.ModpackForServer();
+        if (pack == null || _learnedThisSession)
+        {
+            if (pack == null) Add(LineKind.System, "set this server's modpack (a Modrinth .mrpack link) in settings and I can learn them");
+            return;
+        }
+        _learnedThisSession = true;
+        _brain?.Mouth.Say("Give me a minute, I'm learning this server's modded blocks.");
+        _ = Task.Run(async () =>
+        {
+            try
+            {
+                var learner = new Mods.ModpackBlocks(ModsCache, m => Add(LineKind.System, m));
+                var learned = await learner.DumpAsync(pack);
+                var known = Mods.ModpackBlocks.LoadWorld(WorldBlocksFile)?.Values ?? [];
+                Mods.ModpackBlocks.SaveWorld(WorldBlocksFile, known.Where(k => !learned.ContainsKey(k.Name)).Concat(learned.Values), pack);
+                var missing = unknown.Where(n => !learned.ContainsKey(n)).ToList();
+                if (missing.Count > 0) Add(LineKind.System, $"the modpack does not have {missing.Count} of them: {string.Join(", ", missing.Take(10))}");
+                if (State != HostState.Playing) return;
+                _brain?.Mouth.Say("I learned this server's blocks! Be right back.");
+                await Task.Delay(TimeSpan.FromSeconds(3));
+                await StopAsync();
+                await StartAsync();
+            }
+            catch (Exception e)
+            {
+                Add(LineKind.Error, "could not learn the modded blocks: " + e.Message);
+            }
+        });
     }
 
     /// <summary>The fast command matcher. Optional: without it every request goes through the language model.</summary>

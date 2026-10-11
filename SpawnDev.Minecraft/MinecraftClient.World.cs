@@ -168,18 +168,33 @@ public sealed partial class MinecraftClient
     private void RebuildWorldData()
     {
         var data = GameData.Vanilla;
+        var unknown = new List<string>();
         if (_fabricRegistries.TryGetValue("minecraft:block", out var blocks))
         {
-            data = data.WithModdedBlocks(blocks);
+            var embedded = _options.UseEmbeddedModdedBlocks ? GameData.ModdedCatalog : new Dictionary<string, ModdedBlock>();
+            var catalog = _options.ModdedBlocks is { Count: > 0 } extra
+                ? embedded.Concat(extra).GroupBy(kv => kv.Key).ToDictionary(g => g.Key, g => g.Last().Value)
+                : embedded;
+            data = data.WithModdedBlocks(blocks, catalog);
+            // Everything synced past the blocks we could number: no data (or after a block with none).
+            unknown.AddRange(blocks.Where(kv => kv.Value >= data.Blocks.Length - 1).OrderBy(kv => kv.Value).Select(kv => kv.Key));
             if (_tags.TryGetValue("minecraft:block", out var blockTags)) data = data.WithBlockTags(blockTags);
         }
+        UnknownModdedBlocks = unknown;
         if (ReferenceEquals(data, World.Data)) return;
+        var before = World.Data.ModdedBlockCount;
         World.Data = data;
         _physics = null;
-        if (data.ModdedBlockCount > 0)
+        if (data.ModdedBlockCount > 0 && data.ModdedBlockCount != before) // not again when only the tags changed
             Log($"modded blocks: {data.ModdedBlockCount} with data ({data.KnownStateCount - data.VanillaStateCount} states)"
                 + (blocks!.Count > data.Blocks.Length - 1 ? $", {blocks.Count - (data.Blocks.Length - 1)} without (solid unknown blocks)" : ""));
     }
+
+    /// <summary>
+    /// The server's modded blocks Vertex has no data for, in the server's order (they are solid unknown cubes):
+    /// what a dump of this server's mods would have to add. Empty on vanilla servers and when everything is known.
+    /// </summary>
+    public IReadOnlyList<string> UnknownModdedBlocks { get; private set; } = [];
 
     private static double Angle(sbyte b) => b * 360.0 / 256.0;
 

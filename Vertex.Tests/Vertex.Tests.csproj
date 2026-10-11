@@ -17,4 +17,7 @@
 	<ItemGroup>
 		<Using Include="NUnit.Framework" />
 	</ItemGroup>
+	<ItemGroup>
+		<None Include="Live\Fixtures\**" CopyToOutputDirectory="PreserveNewest" />
+	</ItemGroup>
 </Project>

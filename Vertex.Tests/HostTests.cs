@@ -65,4 +65,51 @@ public class HostTests
             if (Directory.Exists(folder)) Directory.Delete(folder, true);
         }
     }
+
+    /// <summary>
+    /// The dashboard path on a modded server it knows nothing about (built-in catalog off): Vertex notices at join,
+    /// learns the blocks from the server's modpack in the background, saves them for that world, rejoins, and
+    /// then knows every block. The pack is a copy of the real AubsCraft index (jars from Modrinth's CDN).
+    /// </summary>
+    [Test]
+    public async Task LearnsAModdedServersBlocks_FromItsModpack_AndRejoins()
+    {
+        if (!SpookyServer.Available) Assert.Ignore("no spooky server installed here: " + SpookyServer.Template);
+        await using var server = await SpookyServer.StartAsync("host-spooky", Port + 1);
+        var folder = Path.Combine(Path.GetTempPath(), "vertex-host-" + Guid.NewGuid().ToString("N"));
+        var pack = Path.Combine(folder, "aubscraft.mrpack");
+        Directory.CreateDirectory(folder);
+        using (var zip = System.IO.Compression.ZipFile.Open(pack, System.IO.Compression.ZipArchiveMode.Create))
+            System.IO.Compression.ZipFileExtensions.CreateEntryFromFile(zip, Path.Combine(AppContext.BaseDirectory, "Live", "Fixtures", "aubscraft-1.21.5.modrinth.index.json"), "modrinth.index.json");
+        var host = new VertexHost(folder) { UseEmbeddedModdedBlocks = false, ModsCache = PaperServer.CacheRoot };
+        try
+        {
+            host.Settings.Server = "127.0.0.1";
+            host.Settings.Port = Port + 1;
+            host.Settings.Account = "";
+            host.Settings.OfflineName = "VertexLearner";
+            host.Settings.Voice = false;
+            host.Settings.Modpack = pack;
+            await host.StartAsync().WaitAsync(Timeout);
+            Assert.That(host.State, Is.EqualTo(HostState.Playing), host.Status);
+            var first = host.Client!;
+            Assert.That(first.UnknownModdedBlocks, Is.Not.Empty, "nothing known yet");
+            Assert.That(host.Lines.Any(l => l.Text.Contains("modded blocks I have no data for")), "said so at join");
+
+            // It learns, then rejoins as a new client that knows them all.
+            await Wait.UntilAsync(() => host.Client != null && !ReferenceEquals(host.Client, first) && host.State == HostState.Playing, TimeSpan.FromMinutes(10),
+                () => string.Join(Environment.NewLine, host.Lines.TakeLast(12).Select(l => $"{l.Kind}: {l.Text}")));
+            foreach (var l in host.Lines) TestContext.Out.WriteLine($"{l.Kind}: {l.Text}");
+            Assert.That(host.Client!.UnknownModdedBlocks, Is.Empty);
+            Assert.That(host.Client.World.Data.ModdedBlockCount, Is.EqualTo(host.Client.FabricRegistries["minecraft:block"].Count - (SpawnDev.Minecraft.Data.GameData.Vanilla.Blocks.Length - 1)));
+            Assert.That(Directory.GetFiles(Path.Combine(folder, "worlds"), "*.blocks.json"), Has.Length.EqualTo(1), "saved for this world");
+            Assert.That(host.Lines.Any(l => l.Kind == LineKind.Error), Is.False, string.Join(Environment.NewLine, host.Lines.Where(l => l.Kind == LineKind.Error).Select(l => l.Text)));
+            await host.StopAsync();
+        }
+        finally
+        {
+            await host.DisposeAsync();
+            if (Directory.Exists(folder)) Directory.Delete(folder, true);
+        }
+    }
 }

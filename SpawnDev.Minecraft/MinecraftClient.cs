@@ -23,6 +23,13 @@ public sealed class ClientOptions
     public bool AutoRespawn { get; set; } = true;
     /// <summary>Optional diagnostics sink.</summary>
     public Action<string>? Log { get; set; }
+    /// <summary>
+    /// Modded block facts beyond the embedded catalog (tools/ModDump), e.g. dumped at runtime for one server's mods.
+    /// Entries here win over the embedded ones of the same name.
+    /// </summary>
+    public IReadOnlyDictionary<string, Data.ModdedBlock>? ModdedBlocks { get; set; }
+    /// <summary>Use the modded blocks built into SpawnDev.Minecraft (tools/ModDump). Off: only ModdedBlocks.</summary>
+    public bool UseEmbeddedModdedBlocks { get; set; } = true;
 }
 
 /// <summary>

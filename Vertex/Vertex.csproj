@@ -15,4 +15,8 @@
 	<ItemGroup>
 		<InternalsVisibleTo Include="Vertex.Tests" />
 	</ItemGroup>
+	<ItemGroup>
+		<!-- The block dump mod (tools/ModDump builds it): run with a server's modpack to learn its modded blocks. -->
+		<EmbeddedResource Include="Mods\vertex-moddump.jar" LogicalName="Vertex.Mods.vertex-moddump.jar" />
+	</ItemGroup>
 </Project>

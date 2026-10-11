@@ -1,0 +1,238 @@
+{
+  "formatVersion": 1,
+  "game": "minecraft",
+  "versionId": "2026.10.11.1759",
+  "name": "AubsCraft 1.21.5",
+  "summary": "Mods for Spooky on mc.spawndev.com",
+  "files": [
+    {
+      "path": "mods/AmbientSounds_FABRIC_v6.1.9_mc1.21.5.jar",
+      "hashes": {
+        "sha1": "3d283fc47f58414d1df2e41cb213fa98ac570333",
+        "sha512": "d4d26ada3404ce98f05a323700534e319ab47bd315fef9c32a61cf05c9ec32834c843fb1be3f868a98907fa74f161dc195cb31d03fdad713a11fd87dfb94b4d1"
+      },
+      "env": {
+        "client": "required",
+        "server": "unsupported"
+      },
+      "downloads": [
+        "https://cdn.modrinth.com/data/fM515JnW/versions/nnNIkaxO/AmbientSounds_FABRIC_v6.1.9_mc1.21.5.jar"
+      ],
+      "fileSize": 84869062
+    },
+    {
+      "path": "mods/balm-fabric-1.21.5-21.5.25.jar",
+      "hashes": {
+        "sha1": "25c3099c805b1fd163d449b5016798abbe38872c",
+        "sha512": "8f5732e4364164941d0ca1500c8bdd14058a3dc099fabdeae0a76e8abf2466259636125635f37f5b85af92a52fe12136b75ed8e8e94b70ee1f699a6429b61349"
+      },
+      "env": {
+        "client": "required",
+        "server": "unsupported"
+      },
+      "downloads": [
+        "https://cdn.modrinth.com/data/MBAkmtvl/versions/YixoEDEO/balm-fabric-1.21.5-21.5.25.jar"
+      ],
+      "fileSize": 526601
+    },
+    {
+      "path": "mods/CreativeCore_FABRIC_v2.13.4_mc1.21.5.jar",
+      "hashes": {
+        "sha1": "ca4d77855de90ca2342ff78bf5235a0217f7f008",
+        "sha512": "e18ac4ac0b1d2d5af53073eaa0fd9bc7090c27d22972ef272975c32b338078f5b09660ef9c089dce94f0f567ebebd53883dfcb1c8df226f946d50adbb0b9f2a7"
+      },
+      "env": {
+        "client": "required",
+        "server": "unsupported"
+      },
+      "downloads": [
+        "https://cdn.modrinth.com/data/OsZiaDHq/versions/UqagoK0C/CreativeCore_FABRIC_v2.13.4_mc1.21.5.jar"
+      ],
+      "fileSize": 1245089
+    },
+    {
+      "path": "mods/dontopenthat-1.21.5-1.0.0.jar",
+      "hashes": {
+        "sha1": "720934ddd39aa50ac660c55dcfd4baf1a3c4dc3f",
+        "sha512": "591bef157e5fbcedff0da894a18d2badb67c6690fc3a025a078bdacc1012fd4d7f03cb70c6edcf6419def74d08b27a11c9fb6b9268a019ff0e2867863f15ae74"
+      },
+      "env": {
+        "client": "required",
+        "server": "unsupported"
+      },
+      "downloads": [
+        "https://cdn.modrinth.com/data/4bM5jwAI/versions/mBdENlFw/dontopenthat-1.21.5-1.0.0.jar"
+      ],
+      "fileSize": 4002
+    },
+    {
+      "path": "mods/fabric-api-0.128.2\u002B1.21.5.jar",
+      "hashes": {
+        "sha1": "920dea0ac4ff08f539099215eace9fda3e3fb2e3",
+        "sha512": "0e42b72d1a63a45c1b64cdabafd15f4d236bbda5521964d687afa1f833d4022f96c7ffab5dd4471aba0190be588f092d156bf14a50b794895fb3286ec899bcf7"
+      },
+      "env": {
+        "client": "required",
+        "server": "unsupported"
+      },
+      "downloads": [
+        "https://cdn.modrinth.com/data/P7dR8mSH/versions/kKEGlsne/fabric-api-0.128.2%2B1.21.5.jar"
+      ],
+      "fileSize": 2248994
+    },
+    {
+      "path": "mods/ForgeConfigAPIPort-v21.5.3-1.21.5-Fabric.jar",
+      "hashes": {
+        "sha1": "105e4dd5f958a4c62a15ea4ec6d6ecb747170d64",
+        "sha512": "df1768d41868b4b8dfc8ef66ec2d336c8358ba344ddcb6e8530c78866ab29b89cde84650a93077144c492a1517959aee7d7b97f17736c04a9e15ef31f4a06f0b"
+      },
+      "env": {
+        "client": "required",
+        "server": "unsupported"
+      },
+      "downloads": [
+        "https://cdn.modrinth.com/data/ohNO6lps/versions/fWnEuNPu/ForgeConfigAPIPort-v21.5.3-1.21.5-Fabric.jar"
+      ],
+      "fileSize": 632191
+    },
+    {
+      "path": "mods/From-The-Fog-Forge-Fabric-1.21.5-v1.10.3.jar",
+      "hashes": {
+        "sha1": "47cac4af8007357d1b2166d40c88ed33be79c767",
+        "sha512": "8ef2f0a030ff2f30eb2a3dba579ce6ae7fa9a282190cd791dff006733cc1421fe37d5faa942a11798742dc47ff2bd140cc62678aa51351297c57c1d3b912c22e"
+      },
+      "env": {
+        "client": "required",
+        "server": "unsupported"
+      },
+      "downloads": [
+        "https://cdn.modrinth.com/data/p1WH6sHr/versions/SsVMuLOT/From-The-Fog-Forge-Fabric-1.21.5-v1.10.3.jar"
+      ],
+      "fileSize": 20906573
+    },
+    {
+      "path": "mods/mcw-holidays-1.1.2-mc1.21.5fabric.jar",
+      "hashes": {
+        "sha1": "3dd547eefed37b067a112a99e7419d01c5795cb4",
+        "sha512": "96d2e110263c1a0e09d430c8f4f57585fa9f1d16225b8f0303af4b11b4a2330a2e745e0f9f41ce0edf817ddb66ff79038ea400f7af3defb266e4cb240ce0f63f"
+      },
+      "env": {
+        "client": "required",
+        "server": "unsupported"
+      },
+      "downloads": [
+        "https://cdn.modrinth.com/data/rH20L2Lp/versions/H3yahFHG/mcw-holidays-1.1.2-mc1.21.5fabric.jar"
+      ],
+      "fileSize": 1021420
+    },
+    {
+      "path": "mods/MutantMonsters-v21.5.1-1.21.5-Fabric.jar",
+      "hashes": {
+        "sha1": "8ca393cf663233c47e9b4ba8035e226c2c261b32",
+        "sha512": "8b407904e4bf45444109e8465723f567126f431abc0741b78c4dec46daff83ea397fcb0459e4061a6cdf1fa1de079ebb39a7e20bf665b6857a915373ceafcb2b"
+      },
+      "env": {
+        "client": "required",
+        "server": "unsupported"
+      },
+      "downloads": [
+        "https://cdn.modrinth.com/data/derP0ten/versions/SY6U8drj/MutantMonsters-v21.5.1-1.21.5-Fabric.jar"
+      ],
+      "fileSize": 1351450
+    },
+    {
+      "path": "mods/PresenceFootsteps-1.11.2\u002B1.21.5.jar",
+      "hashes": {
+        "sha1": "029ceb7f9c67fbe89fcfeff23fd8d80f229990ed",
+        "sha512": "f17ecbe7b7f1fa7d4fee298aa27ccf5b2c77d621e25845b6577930c4d8f1f5dc7c8c01d664079ff32b139caedadb0c070f801aabcf4e94de08daffe16d3af32b"
+      },
+      "env": {
+        "client": "required",
+        "server": "unsupported"
+      },
+      "downloads": [
+        "https://cdn.modrinth.com/data/rcTfTZr3/versions/kEumLo5Q/PresenceFootsteps-1.11.2%2B1.21.5.jar"
+      ],
+      "fileSize": 5694121
+    },
+    {
+      "path": "mods/PuzzlesLib-v21.5.13-1.21.5-Fabric.jar",
+      "hashes": {
+        "sha1": "4c23e1bcfc033206672c69fdb0341317c2960e06",
+        "sha512": "d137bb4b8bee23eefcaeb674bf7e8a1eee446b63518db48815019ba2c4f005a3fdcd8d8ed6c5b4e46e3dc9bdc48883db905fe8d6c7c62d109ba29d0ec36ed8a0"
+      },
+      "env": {
+        "client": "required",
+        "server": "unsupported"
+      },
+      "downloads": [
+        "https://cdn.modrinth.com/data/QAGBst4M/versions/25gaMibl/PuzzlesLib-v21.5.13-1.21.5-Fabric.jar"
+      ],
+      "fileSize": 1206863
+    },
+    {
+      "path": "mods/spookydoors-fabric-1.21.5-21.5.4.jar",
+      "hashes": {
+        "sha1": "af5a674e3605cabfce0d415930a8cf2726baa0f0",
+        "sha512": "c6b3a0570d9457b258fc91bba2332cc0ecae842a947c6036c3a972934e203f756116213919834a6d05e1a482a411760e7e615d1799a28ebb7366a208dd9ed99d"
+      },
+      "env": {
+        "client": "required",
+        "server": "unsupported"
+      },
+      "downloads": [
+        "https://cdn.modrinth.com/data/j5axkwld/versions/Qc87eE2z/spookydoors-fabric-1.21.5-21.5.4.jar"
+      ],
+      "fileSize": 276215
+    },
+    {
+      "path": "mods/stalkercreepersfabric-1.19.2\u002B.jar",
+      "hashes": {
+        "sha1": "fe2583c0a8d41911eb21fe57c87332e9a27f2fe6",
+        "sha512": "d1a9076a8a0f46d09b588a421081034754814471f260c1d2d11a4150ac46e9bffef10098128744a2f5506f288afc451dba09bd983a858d0bf5ef039c1cc533e3"
+      },
+      "env": {
+        "client": "required",
+        "server": "unsupported"
+      },
+      "downloads": [
+        "https://cdn.modrinth.com/data/y8ciiWUO/versions/638lZKXZ/stalkercreepersfabric-1.19.2%2B.jar"
+      ],
+      "fileSize": 15528
+    },
+    {
+      "path": "mods/tenseambience-1.18.2-1.21.8-FABRIC-2.0.0.jar",
+      "hashes": {
+        "sha1": "87784235a27967208be982886359570b6ceabdc2",
+        "sha512": "4655e4ee12692969d429718c0731b30f8b07989999dd4fc919e3069b26468cebf0a481da28d2f512269d9d60030c5b50d2d49f8184cfad3f2090263c4a3e37da"
+      },
+      "env": {
+        "client": "required",
+        "server": "unsupported"
+      },
+      "downloads": [
+        "https://cdn.modrinth.com/data/9qIVVBj8/versions/ScuqVfg0/tenseambience-1.18.2-1.21.8-FABRIC-2.0.0.jar"
+      ],
+      "fileSize": 88166183
+    },
+    {
+      "path": "mods/voicechat-fabric-1.21.5-2.6.22.jar",
+      "hashes": {
+        "sha1": "5382f9a8ebfcb4d00401e832454b96ffd567b9f5",
+        "sha512": "b85bb68fd894ad95cca38139cea7334fef1faeac525e3d0742d0ed245a859cce34b8c9f64b1fcdb891d81fbde18efe5416347f47722c136ccfbc93da8c58d1fd"
+      },
+      "env": {
+        "client": "required",
+        "server": "unsupported"
+      },
+      "downloads": [
+        "https://cdn.modrinth.com/data/9eGKb6K1/versions/dI1XjreF/voicechat-fabric-1.21.5-2.6.22.jar"
+      ],
+      "fileSize": 5466242
+    }
+  ],
+  "dependencies": {
+    "minecraft": "1.21.5",
+    "fabric-loader": "0.19.5"
+  }
+}
