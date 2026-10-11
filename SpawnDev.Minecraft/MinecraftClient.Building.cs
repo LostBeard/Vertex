@@ -31,7 +31,7 @@ public sealed partial class MinecraftClient
             {
                 Goal goal = BodyOverlaps(p.X, p.Y, p.Z) ? Goal.AwayFrom(p.X + 0.5, p.Z + 0.5, 1.5) : new GoalReachBlock(p.X, p.Y, p.Z, BlockReach - 0.8);
                 await GoToAsync(goal, new PathOptions { MaxNodes = 10_000 }, cancellationToken);
-                if (BodyOverlaps(p.X, p.Y, p.Z)) { failed++; continue; }
+                if (BodyOverlaps(p.X, p.Y, p.Z)) { failed++; Log($"build: could not step out of {p.X} {p.Y} {p.Z}"); continue; }
             }
             if (!await EquipAsync(p.Item, cancellationToken)) return (placed, failed, p.Description);
             if (p.Facing is { } facing)
@@ -41,7 +41,11 @@ public sealed partial class MinecraftClient
                 await WaitTicksAsync(2, cancellationToken);
             }
             if (await PlaceBlockAsync(p.X, p.Y, p.Z, cancellationToken)) placed++;
-            else failed++;
+            else
+            {
+                failed++;
+                Log($"build: could not place {p.Description} at {p.X} {p.Y} {p.Z} (there: {World.GetBlock(p.X, p.Y, p.Z)}, from {Position.X:0.##} {Position.Y:0.##} {Position.Z:0.##}, holding {Inventory.MainHand})");
+            }
         }
         return (placed, failed, null);
     }

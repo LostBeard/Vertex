@@ -15,6 +15,7 @@ public sealed class VertexAi : IAsyncDisposable
 {
     private readonly Context _context;
     private readonly HttpClient _http = new() { Timeout = Timeout.InfiniteTimeSpan };
+    private readonly SpawnDev.ILGPU.ML.Hub.IModelSource _models;
 
     public Accelerator Accelerator { get; }
     public ModelRegistry Registry { get; }
@@ -36,6 +37,7 @@ public sealed class VertexAi : IAsyncDisposable
 
         var modelStore = SpawnDev.ILGPU.ML.Hub.FileModelStore.Default();
         var modelSource = new SpawnDev.ILGPU.ML.Hub.HttpClientModelSource(_http, modelStore);
+        _models = modelSource;
         Registry = new ModelRegistry(new OllamaCacheModelProvider(new OllamaModelStore()), Accelerator);
         Chat = new AiChatEngine(Registry)
         {
@@ -54,6 +56,12 @@ public sealed class VertexAi : IAsyncDisposable
             OnLoadProgress = (stage, pct) => { if (pct % 50 == 0) Log?.Invoke($"voice model {stage} {pct}%"); },
         };
     }
+
+    /// <summary>The fast command matcher (System One for speech), loaded on first use.</summary>
+    public FastIntents? Intents { get; private set; }
+
+    public async Task<FastIntents> LoadIntentsAsync(CancellationToken ct = default) =>
+        Intents ??= await FastIntents.LoadAsync(_models, Accelerator, ct);
 
     /// <summary>The chat models available locally (Ollama cache) by name.</summary>
     public async Task<IReadOnlyList<string>> ModelNamesAsync(CancellationToken ct = default) =>
@@ -77,6 +85,7 @@ public sealed class VertexAi : IAsyncDisposable
 
     public async ValueTask DisposeAsync()
     {
+        Intents?.Dispose();
         Speech.Dispose();
         Voice.Dispose();
         await Registry.DisposeAsync();

@@ -177,6 +177,17 @@ public static class GameTools
                 return Task.FromResult("OK: I started building a house. It takes a minute; I am NOT done yet.");
             });
 
+        yield return new GameTool("explore",
+            "Go exploring in a direction and come back to tell what you found (villages, animals, ores, chests).",
+            """{"type":"object","properties":{"direction":{"type":"string","description":"north, south, east, west, or empty for any"},"distance":{"type":"integer","description":"how far, in blocks (default 100)"}}}""",
+            a =>
+            {
+                var dir = Str(a, "direction");
+                var distance = Math.Clamp(Int(a, "distance", 100), 16, 400);
+                tasks.Start($"exploring {dir ?? "around"}", ct => skills.ExploreAsync(dir, distance, brain.Memory, ct));
+                return Task.FromResult($"OK: I set off exploring {(string.IsNullOrEmpty(dir) ? "" : dir + " ")}about {distance} blocks. I will come back and tell you what I find.");
+            });
+
         yield return new GameTool("smelt",
             "Smelt or cook in a furnace: iron_ingot from raw iron, glass from sand, cooked_beef from beef, charcoal from logs. Builds a furnace from cobblestone if none is near. Takes 10 seconds per item.",
             """{"type":"object","properties":{"result":{"type":"string","description":"what to make, e.g. iron_ingot, glass, cooked_porkchop"},"count":{"type":"integer"}},"required":["result"]}""",

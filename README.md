@@ -51,7 +51,13 @@ What you can ask it (any wording; the language model picks the tool):
 | "go to bed" | sleeps in the nearest bed (the night passes when everyone sleeps) |
 | "give me your diamonds", "eat something" | walks over and drops items; eats when hungry (also by reflex) |
 | "remember this is home", "go home" | remembers named places per server and walks back to them |
+| "go explore to the north" | walks out, comes back and tells you what it found (villages are remembered as places) |
 | "be Pixel" | switches character (personality and voice) |
+
+Urgent, simple commands ("stop!", "follow me", "come here", "protect me") are matched by a small sentence
+embedding model (all-MiniLM-L6-v2 on your GPU through SpawnDev.ILGPU.ML) in milliseconds, so Vertex acts at once;
+the language model then only words its reply. Anything else, or anything negated ("don't follow me"), goes to the
+language model.
 
 Walking somewhere never breaks player builds (planks, glass, doors, bricks...): it only digs natural blocks, and
 only when there is no other way.

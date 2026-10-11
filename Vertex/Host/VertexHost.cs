@@ -109,6 +109,7 @@ public sealed class VertexHost : IAsyncDisposable
             if (string.IsNullOrEmpty(Settings.Model)) throw new InvalidOperationException("no chat model in the Ollama cache (ollama pull llama3.1:8b)");
             SetStatus(HostState.Starting, $"Loading {Settings.Model}...");
             await _ai!.Chat.EnsureReadyAsync(Settings.Model);
+            await LoadIntentsAsync();
 
             GameProfile profile;
             if (string.IsNullOrWhiteSpace(Settings.Account)) profile = GameProfile.Offline(Settings.OfflineName);
@@ -160,6 +161,15 @@ public sealed class VertexHost : IAsyncDisposable
         {
             _gate.Release();
         }
+    }
+
+    /// <summary>The fast command matcher. Optional: without it every request goes through the language model.</summary>
+    private async Task LoadIntentsAsync()
+    {
+        if (_ai!.Intents != null) return;
+        SetStatus(HostState.Starting, "Loading fast commands...");
+        try { await _ai.LoadIntentsAsync(); }
+        catch (Exception e) { Add(LineKind.Error, "fast commands unavailable (the language model handles everything): " + e.Message); }
     }
 
     public async Task StopAsync()

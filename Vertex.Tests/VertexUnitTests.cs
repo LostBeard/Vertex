@@ -194,4 +194,12 @@ public class VertexUnitTests
         }
         Assert.That(Blueprints.HouseBlocks(7, glass: false), Is.EqualTo(24 * 3 - 2 + 49));
     }
+
+    [Test]
+    public void FastIntents_CleanStripsTheNameAndPoliteness()
+    {
+        Assert.That(FastIntents.Clean("Hey Vertex, can you follow me please?", "Vertex"), Is.EqualTo("follow me"));
+        Assert.That(FastIntents.Clean("PIXEL! Come here!!", "Pixel"), Is.EqualTo("come here"));
+        Assert.That(FastIntents.Clean("okay vertex don't follow me", "Vertex"), Is.EqualTo("don't follow me"));
+    }
 }

@@ -211,6 +211,44 @@ public class LiveNavigationTests
     }
 
     [Test]
+    public async Task Explores_ReportsWhatItFound_AndComesBack()
+    {
+        const string name = "VertexExplorer";
+        // A strip running east from the course: a bell (a village) 70 blocks out, beyond the 48-block look at the
+        // start, and a sniffer (never natural) at 100, beyond Paper's 96-block animal tracking range. Both are
+        // only news on the way. The strip is past the server's view distance: force-load it so fill works.
+        var (client, x, z) = await JoinCourseAsync(name, (ax, az) =>
+        [
+            $"forceload add {ax + 40} {az - 1} {ax + 106} {az + 1}",
+            $"fill {ax + 40} 200 {az - 1} {ax + 106} 203 {az + 1} minecraft:air",
+            $"fill {ax + 40} 199 {az - 1} {ax + 106} 199 {az + 1} minecraft:stone",
+            $"setblock {ax + 70} 200 {az + 1} minecraft:bell",
+            $"summon minecraft:sniffer {ax + 100.5} 200 {az + 0.5} {{NoAI:1b,Tags:[\"vexplore\"]}}",
+        ]);
+        await using var _ = client;
+        var folder = Path.Combine(Path.GetTempPath(), "vertex-explore-" + Guid.NewGuid().ToString("N"));
+        try
+        {
+            var memory = Vertex.Brain.WorldMemory.Load(folder, "test");
+            var skills = new Vertex.Brain.Skills(client);
+            var (ok, message) = await skills.ExploreAsync("east", 100, memory, CancellationToken.None).WaitAsync(TimeSpan.FromMinutes(3));
+            TestContext.Out.WriteLine(message);
+            Assert.That(ok, message);
+            Assert.That(message, Does.Contain($"a village around {x + 70} {z + 1}").And.Contain("1 sniffer"));
+            Assert.That(message, Does.Match(@"explored (9\d|10\d) blocks east"), "went the whole way");
+            Assert.That(memory.Places.Any(p => (p.X, p.Y, p.Z) == (x + 70, 200, z + 1) && p.Name.StartsWith("village")), "remembered the village");
+            var (px, _, pz) = client.Position;
+            Assert.That(Math.Sqrt((px - x - 0.5) * (px - x - 0.5) + (pz - z - 0.5) * (pz - z - 0.5)), Is.LessThan(3), $"came back; at {client.Position}");
+        }
+        finally
+        {
+            await _server.CommandAsync("kill @e[tag=vexplore]");
+            await _server.CommandAsync($"forceload remove {x + 40} {z - 1} {x + 106} {z + 1}");
+            if (Directory.Exists(folder)) Directory.Delete(folder, true);
+        }
+    }
+
+    [Test]
     public async Task NeverDigsThroughABuild()
     {
         const string name = "VertexPolite";

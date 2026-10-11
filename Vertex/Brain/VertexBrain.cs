@@ -29,6 +29,7 @@ public sealed class VertexBrain : IAsyncDisposable
     private Task? _loop;
     private DateTime _lastExchange = DateTime.MinValue;
     private Guid? _lastPartner;
+    private readonly Dictionary<string, GameTool> _tools = [];
 
     public MinecraftClient Client { get; }
     public SimpleVoiceChat? Voice { get; }
@@ -71,7 +72,11 @@ public sealed class VertexBrain : IAsyncDisposable
 
         foreach (var tool in GameTools.Create(this))
         {
-            if (tool is GameTool g) g.OnRun = m => Log?.Invoke("  " + m);
+            if (tool is GameTool g)
+            {
+                g.OnRun = m => Log?.Invoke("  " + m);
+                _tools[g.Name] = g;
+            }
             ai.Tools.Register(tool);
         }
         client.ChatReceived += OnChat;
@@ -121,7 +126,12 @@ public sealed class VertexBrain : IAsyncDisposable
                         _lastPartner = s.Speaker;
                         _lastExchange = DateTime.UtcNow;
                         Mouth.Hush();
-                        await RespondAsync($"{s.SpeakerName} says{(s.Voice ? " (out loud)" : " (in chat)")}: {s.Text}", ct);
+                        var said = $"{s.SpeakerName} says{(s.Voice ? " (out loud)" : " (in chat)")}: {s.Text}";
+                        // System One: an urgent command we are sure of runs NOW; the language model only words the reply.
+                        if (await FastActAsync(s) is { } done)
+                            await RespondAsync($"{said}\n[You already did it: {done}] Answer in one short sentence; do not call tools.", ct, allowTools: false);
+                        else
+                            await RespondAsync(said, ct);
                         break;
                     case TaskEvent t:
                         Log?.Invoke($"task ended: {t.Outcome.Task}: {t.Outcome.Summary}");
@@ -137,6 +147,21 @@ public sealed class VertexBrain : IAsyncDisposable
                 Log?.Invoke("brain error: " + ex.Message);
             }
         }
+    }
+
+    /// <summary>
+    /// Runs the tool for a request the fast matcher is sure about (Ai.Intents, when loaded). Returns the tool's
+    /// result, or null to let the language model decide.
+    /// </summary>
+    public async Task<string?> FastActAsync(SaidEvent s)
+    {
+        if (Ai.Intents is not { } intents) return null;
+        var match = await intents.MatchAsync(s.Text, Character.Name);
+        if (match == null || !_tools.TryGetValue(match.Intent.Tool, out var tool)) return null;
+        Log?.Invoke($"  fast: \"{match.Cleaned}\" = {match.Intent.Tool} ({match.Score:0.00} vs {match.RunnerUp:0.00}, {match.Milliseconds:0} ms)");
+        var args = match.Intent.AboutSpeaker ? JsonSerializer.Serialize(new { player = s.SpeakerName }) : "{}";
+        var result = await tool.ExecuteAsync(args);
+        return result.TextForModel;
     }
 
     // ---------------------------------------------------------------- talking

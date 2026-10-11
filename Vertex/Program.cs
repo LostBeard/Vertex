@@ -113,6 +113,8 @@ static async Task<int> PlayAsync(string[] args)
         ?? throw new InvalidOperationException("no chat model found in the Ollama cache (ollama pull llama3.1:8b)");
     Log($"models: {string.Join(", ", models)}; using {model}");
     await ai.Chat.EnsureReadyAsync(model);
+    try { await ai.LoadIntentsAsync(); }
+    catch (Exception e) { Log("fast commands unavailable: " + e.Message); }
 
     var characters = new CharacterStore();
     var character = characters.Find(Option(args, "--character") ?? "Vertex") ?? Character.BuiltIn[0];

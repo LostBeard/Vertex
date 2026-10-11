@@ -527,6 +527,103 @@ public sealed class Skills(MinecraftClient client)
         return null;
     }
 
+    // ---------------------------------------------------------------- exploring
+
+    /// <summary>Blocks worth telling friends about, by what to call them.</summary>
+    private static readonly (string Block, string Says)[] NotableBlocks =
+    [
+        ("minecraft:bell", "a village"), ("minecraft:diamond_ore", "diamonds"), ("minecraft:deepslate_diamond_ore", "diamonds"),
+        ("minecraft:emerald_ore", "emeralds"), ("minecraft:deepslate_emerald_ore", "emeralds"), ("minecraft:gold_ore", "gold"),
+        ("minecraft:deepslate_gold_ore", "gold"), ("minecraft:spawner", "a monster spawner"), ("minecraft:chest", "a chest"),
+        ("minecraft:lava", "lava"), ("minecraft:obsidian", "obsidian"), ("minecraft:pumpkin", "pumpkins"), ("minecraft:melon", "melons"),
+        ("minecraft:sweet_berry_bush", "berry bushes"), ("minecraft:sugar_cane", "sugar cane"), ("minecraft:bee_nest", "a bee nest"),
+    ];
+
+    private static readonly HashSet<string> NotableMobs =
+    [
+        "minecraft:villager", "minecraft:cow", "minecraft:sheep", "minecraft:pig", "minecraft:chicken", "minecraft:horse",
+        "minecraft:wolf", "minecraft:cat", "minecraft:fox", "minecraft:panda", "minecraft:axolotl", "minecraft:rabbit",
+        "minecraft:llama", "minecraft:turtle", "minecraft:parrot", "minecraft:goat", "minecraft:frog", "minecraft:camel", "minecraft:sniffer",
+    ];
+
+    /// <summary>
+    /// Walks `distance` blocks one way (north/south/east/west, or any way that is open), noting what it finds:
+    /// villages, animals, rare ores, chests and spawners. Remembers a village as a place, then comes back.
+    /// </summary>
+    public async Task<(bool, string)> ExploreAsync(string? direction, int distance, WorldMemory? memory, CancellationToken ct)
+    {
+        var (sx, sy, sz) = client.Position;
+        var start = ((int)Math.Floor(sx), (int)Math.Floor(sy), (int)Math.Floor(sz));
+        var dir = (direction ?? "").Trim().ToLowerInvariant();
+        var (dx, dz) = dir switch
+        {
+            "north" => (0, -1), "south" => (0, 1), "east" => (1, 0), "west" => (-1, 0),
+            _ => new[] { (0, -1), (0, 1), (1, 0), (-1, 0) }[Random.Shared.Next(4)],
+        };
+        var way = dx == 0 ? (dz < 0 ? "north" : "south") : (dx > 0 ? "east" : "west");
+        var stateKind = new Dictionary<int, string>();
+        foreach (var (block, says) in NotableBlocks)
+            if (D.Block(block) is { } b)
+                for (var st = 0; st < D.StateCount; st++)
+                    if (D.StateBlock[st] == b.Id) stateKind[st] = says;
+        var seenBlocks = new Dictionary<string, (int X, int Y, int Z)>();
+        var villages = new List<(int X, int Y, int Z)>(); // each bell 64+ blocks from the others is another village
+        var seenMobs = new Dictionary<string, HashSet<int>>();
+        void Look()
+        {
+            foreach (var (x, y, z) in client.World.FindBlocks(stateKind.ContainsKey, client.Position, 48, 4096))
+            {
+                var kind = stateKind[client.World.GetState(x, y, z)];
+                if (kind == "a village") { if (villages.All(v => (v.X - x) * (v.X - x) + (v.Z - z) * (v.Z - z) > 64 * 64)) villages.Add((x, y, z)); }
+                else if (!seenBlocks.ContainsKey(kind)) seenBlocks[kind] = (x, y, z);
+            }
+            foreach (var e in client.Entities.Values.Where(e => NotableMobs.Contains(e.Name)))
+                (seenMobs.TryGetValue(e.Name, out var ids) ? ids : seenMobs[e.Name] = []).Add(e.Id);
+        }
+        Look();
+        var before = seenBlocks.Keys.ToHashSet(); // what was already in view at the start is not news
+        var villagesBefore = villages.Count;
+        var beforeMobs = seenMobs.ToDictionary(kv => kv.Key, kv => kv.Value.ToHashSet());
+        var target = (X: start.Item1 + dx * distance, Z: start.Item3 + dz * distance);
+        var far = 0.0;
+        for (var hop = 0; hop < distance / 8 + 4; hop++)
+        {
+            ct.ThrowIfCancellationRequested();
+            var (px, _, pz) = client.Position;
+            far = Math.Abs((px - sx) * dx + (pz - sz) * dz);
+            if (far >= distance - 2) break;
+            using var step = CancellationTokenSource.CreateLinkedTokenSource(ct);
+            step.CancelAfter(TimeSpan.FromSeconds(4));
+            try { await client.GoToAsync(Goal.XZ(target.X, target.Z), new PathOptions { CanDig = false, MaxNodes = 20_000 }, step.Token); }
+            catch (OperationCanceledException) when (!ct.IsCancellationRequested) { }
+            Look();
+            var (nx, _, nz) = client.Position;
+            if (Math.Abs((nx - sx) * dx + (nz - sz) * dz) <= far + 1 && hop > 2) break; // stuck: report what we have
+        }
+        var (ex, _, ez) = client.Position;
+        far = Math.Abs((ex - sx) * dx + (ez - sz) * dz);
+
+        var found = new List<string>();
+        foreach (var v in villages.Skip(villagesBefore))
+        {
+            found.Add($"a village around {v.X} {v.Z}");
+            // Remembered by name: the first is "village", more are "village 2"...
+            var n = 1;
+            while (memory?.Places.Any(p => p.Name == (n == 1 ? "village" : $"village {n}") && (p.X - v.X) * (p.X - v.X) + (p.Z - v.Z) * (p.Z - v.Z) > 64 * 64) == true) n++;
+            memory?.SetPlace(n == 1 ? "village" : $"village {n}", client.World.Dimension, v.X, v.Y, v.Z, null);
+        }
+        foreach (var (kind, _) in seenBlocks.Where(kv => !before.Contains(kv.Key))) found.Add(kind);
+        foreach (var (mob, ids) in seenMobs)
+        {
+            var count = ids.Count - (beforeMobs.TryGetValue(mob, out var b) ? b.Count : 0);
+            if (count > 0) found.Add($"{count} {mob.Replace("minecraft:", "").Replace('_', ' ')}{(count > 1 && !mob.EndsWith("sheep") ? "s" : "")}");
+        }
+        var summary = $"I explored {far:0} blocks {way}" + (found.Count > 0 ? $" and found {string.Join(", ", found)}." : ", but didn't find anything special.");
+        // Back to where we started (where our friends are).
+        await TravelAsync(start.Item1, start.Item2, start.Item3, "where I started", ct);
+        return (true, summary);
+    }
+
     // ---------------------------------------------------------------- creepers
 
     /// <summary>
