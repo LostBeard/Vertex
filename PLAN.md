@@ -78,7 +78,13 @@ Every milestone is tested against REAL servers started locally (Paper 1.21.5 bui
   bridges across water, lava or ravines to ground on the far side
 - [x] Characters: name, personality (system prompt), voice, play style knobs; switch in game by voice or chat
 - [x] Memory: remembered facts (persisted)
-- [ ] Per-player memory, long-running goals
+- [x] Per-player memory, long-running goals (2026-10-11): players kept by UUID (first met, visits, facts about
+  them, what Vertex did for them), shown in the prompt for whoever is around; greets a player who comes back to
+  play by name. Goals (set_goal / finish_goal) persist per world; when nobody needs Vertex for a minute it takes
+  the next step on its own, and after each step decides whether the goal is reached. Real-model runs taught it
+  three things: an 8B model decorates tool arguments ("§7me§f", U+00A0, quotes: cleaned for every tool), names
+  the player in a fact instead of "about" (matched by name), and says "I remember" without calling remember
+  (caught like "on my way")
 - [x] Reflexes ("System One"): eat, fight back or flee, surface for air, every few ticks without the LLM
 - [ ] A learned fast policy for reflexes (SpawnDev.ILGPU.ML)
 

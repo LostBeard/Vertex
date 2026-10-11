@@ -218,11 +218,113 @@ public class VertexUnitTests
     }
 
     [Test]
+    public void WorldMemory_KnowsPlayersByUuid_CountsVisits_KeepsGoals_AcrossRestarts()
+    {
+        var folder = Path.Combine(Path.GetTempPath(), "vertex-people-" + Guid.NewGuid().ToString("N"));
+        try
+        {
+            var aubri = Guid.NewGuid();
+            var t0 = new DateTime(2026, 10, 11, 15, 0, 0, DateTimeKind.Utc);
+            var m = WorldMemory.Load(folder, "test");
+
+            var (first, before) = m.Meet(aubri, "Aubri", t0);
+            Assert.That((before, first.Visits, first.FirstMet), Is.EqualTo(((DateTime?)null, 1, t0)), "first meeting");
+            m.Seen(aubri, t0.AddMinutes(50));
+            var (_, b2) = m.Meet(aubri, "Aubri", t0.AddMinutes(55)); // a proxy server switch: still the same visit
+            Assert.That((b2, first.Visits), Is.EqualTo(((DateTime?)t0.AddMinutes(50), 1)));
+            var (again, b3) = m.Meet(aubri, "AubriB", t0.AddHours(5)); // back later, under a new name
+            Assert.That((b3, again.Visits, again.Name), Is.EqualTo(((DateTime?)t0.AddMinutes(55), 2, "AubriB")));
+            Assert.That(m.Person("aubrib"), Is.SameAs(again));
+            Assert.That(m.Person("Aubrey B"), Is.SameAs(again), "a speech-to-text spelling");
+            Assert.That(m.Person("TJ"), Is.Null);
+            Assert.That(m.PersonNamedIn("AubriB loves pink axolotls"), Is.SameAs(again), "named in the fact");
+            Assert.That(m.PersonNamedIn("the castle is AubriB's"), Is.SameAs(again), "possessive");
+            Assert.That(m.PersonNamedIn("diamonds are rare"), Is.Null);
+            Assert.That(m.PersonNamedIn("/type/player/AubriB"), Is.SameAs(again), "a decorated argument (seen from the model)");
+            Assert.That(m.PersonNamedIn("Aubs loves pink axolotls"), Is.SameAs(again), "a nickname (seen from the model)");
+            Assert.That(m.PersonNamedIn("aubs loves pink"), Is.Null, "nicknames only when capitalized");
+            Assert.That(m.PersonNamedIn("Autumn is here"), Is.Null, "two shared letters are not a nickname");
+            Assert.That(m.PersonNamedIn("Aubri loves pink"), Is.SameAs(again), "her old name reads as a nickname of AubriB");
+
+            m.AddPersonFact(again, "loves pink axolotls");
+            for (var i = 0; i < 40; i++) m.AddHistory(again, $"job {i}", t0.AddHours(5));
+            Assert.That(again.History, Has.Count.EqualTo(30), "history keeps the most recent");
+            Assert.That(again.History[^1], Is.EqualTo("2026-10-11: job 39"));
+
+            var castle = m.AddGoal("build a castle by the lake", "AubriB", t0);
+            m.AddGoal("collect 64 diamonds", null, t0);
+            Assert.That(m.FindGoal("the castle"), Is.SameAs(castle));
+            Assert.That(m.FindGoal("collect 64 dimonds")?.Text, Is.EqualTo("collect 64 diamonds"));
+            Assert.That(m.FindGoal(null), Is.Null, "two goals: which one?");
+            m.AddProgress(castle, "collected 64 cobblestone");
+            m.FinishGoal(m.FindGoal("diamonds")!, t0.AddDays(1));
+            Assert.That(m.ActiveGoals, Is.EqualTo(new[] { castle }));
+            Assert.That(m.FindGoal(null), Is.SameAs(castle), "only one left");
+
+            var loaded = WorldMemory.Load(folder, "test");
+            var p = loaded.People[aubri];
+            Assert.That((p.Name, p.Visits, p.FirstMet, p.Facts.Single(), p.History.Count), Is.EqualTo(("AubriB", 2, t0, "loves pink axolotls", 30)));
+            Assert.That(loaded.ActiveGoals.Single().Text, Is.EqualTo("build a castle by the lake"));
+            Assert.That(loaded.ActiveGoals.Single().Progress, Is.EqualTo(new[] { "collected 64 cobblestone" }));
+            Assert.That(loaded.Goals.Single(g => g.Done != null).Done, Is.EqualTo(t0.AddDays(1)));
+            Assert.That(File.Exists(Path.Combine(folder, "test.json.tmp")), Is.False, "saved by replacing, no temp file left");
+        }
+        finally
+        {
+            if (Directory.Exists(folder)) Directory.Delete(folder, true);
+        }
+    }
+
+    [Test]
+    public async Task TaskRunner_RemembersWhoEachJobWasFor_ButNotForReflexes()
+    {
+        var runner = new TaskRunner();
+        var who = "Aubri";
+        runner.Requester = () => who;
+        Objective? working = new Objective { Text = "a wooden house" };
+        var goal = working;
+        runner.GoalOf = () => working;
+        var outcomes = new System.Collections.Concurrent.ConcurrentQueue<TaskOutcome>();
+        runner.Finished += outcomes.Enqueue;
+        var release = new TaskCompletionSource();
+
+        runner.Start("collecting wood", async ct => { await release.Task.WaitAsync(ct); return (true, "got 8 logs"); });
+        who = "TJ"; // whoever talks next does not take the job over
+        working = null; // and the brain stops "working on" the goal before the step ends: the step keeps it
+        runner.Interrupt("escaping a creeper", _ => Task.FromResult((true, "got away")));
+        var until = DateTime.UtcNow.AddSeconds(5);
+        while (outcomes.Count < 1 && DateTime.UtcNow < until) await Task.Delay(10);
+        release.SetResult();
+        while (outcomes.Count < 2 && DateTime.UtcNow < until) await Task.Delay(10);
+
+        Assert.That(outcomes, Is.EqualTo(new[]
+        {
+            new TaskOutcome("escaping a creeper", true, "got away", null, Interruption: true),
+            new TaskOutcome("collecting wood", true, "got 8 logs", "Aubri", Goal: goal),
+        }));
+    }
+
+    [Test]
+    public void ToolArguments_LoseTheDecorationsAModelAdds()
+    {
+        // Each one seen from llama3.1:8b on 2026-10-11.
+        Assert.That(GameTools.Clean("\u00A0me\u00A0"), Is.EqualTo("me"));
+        Assert.That(GameTools.Clean("'me'"), Is.EqualTo("me"));
+        Assert.That(GameTools.Clean("\u00A77me\u00A7f"), Is.EqualTo("me"));
+        Assert.That(GameTools.Clean("\u00A7cCollect 5 dirt blocks for Aubri\u00A7f"), Is.EqualTo("Collect 5 dirt blocks for Aubri"));
+        Assert.That(GameTools.Clean("\"Aubri loves pink axolotls\""), Is.EqualTo("Aubri loves pink axolotls"));
+        Assert.That(GameTools.Clean("TJ's house"), Is.EqualTo("TJ's house"), "an apostrophe inside stays");
+        Assert.That(GameTools.Clean("<player name: Aubri>"), Is.EqualTo("Aubri"));
+        Assert.That(GameTools.Clean("[Aubri]"), Is.EqualTo("Aubri"));
+        Assert.That(GameTools.Clean("build a castle (big)"), Is.EqualTo("build a castle (big)"), "brackets inside stay");
+    }
+
+    [Test]
     public void Brain_NoticesWhenItClaimsAnActionInWords()
     {
-        foreach (var r in new[] { "I'm on my way.", "I'll get you some wood!", "Coming!", "Let me grab that.", "I’m following you, Aubs!" })
+        foreach (var r in new[] { "I'm on my way.", "I'll get you some wood!", "Coming!", "Let me grab that.", "I’m following you, Aubs!", "I remember, Aubri loves pink axolotls.", "I remember that you love pink axolotls.", "Noted!" })
             Assert.That(VertexBrain.ClaimsAction(r), r);
-        foreach (var r in new[] { "Hi Aubri!", "I like turtles too.", "It's night time now.", "That was fun!", "Let me know if you need anything." })
+        foreach (var r in new[] { "Hi Aubri!", "I like turtles too.", "It's night time now.", "That was fun!", "Let me know if you need anything.", "I remember the castle we built!", "That is annotated." })
             Assert.That(VertexBrain.ClaimsAction(r), Is.False, r);
     }
 }

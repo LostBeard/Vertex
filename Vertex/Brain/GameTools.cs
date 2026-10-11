@@ -40,10 +40,29 @@ public static class GameTools
     private static string? Str(JsonElement a, string p) =>
         a.ValueKind == JsonValueKind.Object && a.TryGetProperty(p, out var v) ? v.ValueKind switch
         {
-            JsonValueKind.String => v.GetString(),
+            JsonValueKind.String => Clean(v.GetString()),
             JsonValueKind.Number => v.GetRawText(),
             _ => null,
         } : null;
+
+    private static readonly System.Text.RegularExpressions.Regex FormattingCode = new("§.?", System.Text.RegularExpressions.RegexOptions.Compiled);
+
+    /// <summary>
+    /// A tool argument as the model meant it. An 8B model playing Minecraft decorates words like chat: seen on
+    /// 2026-10-11 "me" between U+00A0 spaces, "'me'" in quotes, and "§7me§f" in color codes. Removes formatting
+    /// codes, then Unicode spaces and quotes around the value.
+    /// </summary>
+    public static string? Clean(string? value)
+    {
+        if (value == null) return null;
+        var v = FormattingCode.Replace(value, "").Trim().Trim('\'', '"').Trim();
+        // A template echoed back ("<player name: Aubri>") or a bracketed value ("[Aubri]", "<Aubri>").
+        if (TemplateValue.Match(v) is { Success: true } m) v = m.Groups[1].Value.Trim();
+        else if (v.Length > 2 && (v[0], v[^1]) is ('<', '>') or ('[', ']') or ('{', '}') or ('(', ')')) v = v[1..^1].Trim();
+        return v;
+    }
+
+    private static readonly System.Text.RegularExpressions.Regex TemplateValue = new(@"^<[^<>:]*:\s*([^<>]+)>$", System.Text.RegularExpressions.RegexOptions.Compiled);
 
     private static int Int(JsonElement a, string p, int fallback)
     {
@@ -61,7 +80,15 @@ public static class GameTools
         var client = brain.Client;
 
         // "me"/"here" in a request means whoever is talking.
-        string? Who(JsonElement a) => Str(a, "player") is { Length: > 0 } p && p.ToLowerInvariant() is not ("me" or "you" or "here" or "i") ? p : brain.CurrentSpeaker;
+        string? Speaker(string? name)
+        {
+            if (Clean(name) is not { Length: > 0 } n || n.ToLowerInvariant() is "me" or "you" or "here" or "i") return brain.CurrentSpeaker;
+            // A player on the server named inside a decorated argument ("/type/player/Aubri", "<player name: Aubri>")
+            // is that player: more decorations turn up than any cleaning can list.
+            var words = System.Text.RegularExpressions.Regex.Split(n, @"[^\p{L}\p{N}_]+");
+            return client.Players.Values.Select(p => p.Name).FirstOrDefault(p => words.Contains(p, StringComparer.OrdinalIgnoreCase)) ?? n;
+        }
+        string? Who(JsonElement a) => Speaker(Str(a, "player"));
 
         yield return new GameTool("follow_player",
             "Follow a player around (keeps going until told to stop or given another job). Use when asked to follow or come along.",
@@ -312,8 +339,18 @@ public static class GameTools
             a => Task.FromResult(brain.Memory.ForgetPlace(Owned(Str(a, "name") ?? "")) ? "OK: forgotten." : "I don't know that place."));
 
         yield return new GameTool("remember",
-            "Remember an important fact for later. Name who it is about, e.g. \"Aubs loves axolotls\" or \"TJ is building a castle\".",
-            """{"type":"object","properties":{"fact":{"type":"string"}},"required":["fact"]}""",
-            a => Task.FromResult(brain.Remember(Str(a, "fact") ?? "")));
+            "Remember an important fact for later, e.g. \"Aubs loves axolotls\" or \"TJ is building a castle\". If it is about a player, say who in 'about'.",
+            """{"type":"object","properties":{"fact":{"type":"string"},"about":{"type":"string","description":"the player it is about ('me' = the person talking); empty for facts about the world"}},"required":["fact"]}""",
+            a => Task.FromResult(brain.Remember(Str(a, "fact") ?? "", Str(a, "about") is { Length: > 0 } about ? Speaker(about) : null)));
+
+        yield return new GameTool("set_goal",
+            "Take on a long-term goal that needs many steps over time (build a castle, collect 64 diamonds, find a village). You work on it by yourself whenever nobody needs you, and remember it between games.",
+            """{"type":"object","properties":{"goal":{"type":"string","description":"the goal, e.g. 'build a castle by the lake'"},"player":{"type":"string","description":"who it is for ('me' = the person talking)"}},"required":["goal"]}""",
+            a => Task.FromResult(brain.SetGoal(Str(a, "goal") ?? "", Who(a))));
+
+        yield return new GameTool("finish_goal",
+            "Mark a long-term goal as done (or no longer wanted).",
+            """{"type":"object","properties":{"goal":{"type":"string","description":"which goal; empty if there is only one"}}}""",
+            a => Task.FromResult(brain.FinishGoal(Str(a, "goal"))));
     }
 }
