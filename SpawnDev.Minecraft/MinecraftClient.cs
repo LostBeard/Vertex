@@ -42,6 +42,9 @@ public sealed partial class MinecraftClient : IAsyncDisposable
     private TaskCompletionSource? _chatSessionAccepted;
     private readonly System.Collections.Concurrent.ConcurrentDictionary<Guid, PlayerInfo> _players = new();
 
+    /// <summary>The server's command tree for this player (null until the server sends it).</summary>
+    public CommandTree? Commands { get; private set; }
+
     /// <summary>The server's player list (tab list), keyed by player UUID.</summary>
     public IReadOnlyDictionary<Guid, PlayerInfo> Players => _players;
     /// <summary>A player was added to the player list (joined the server, or was already on when we joined).</summary>
@@ -560,6 +563,20 @@ public sealed partial class MinecraftClient : IAsyncDisposable
             case CB.Play.Clientbound.PlayerInfoUpdate:
                 OnPlayerInfoUpdate(packet);
                 return null;
+            case CB.Play.Clientbound.Commands:
+            {
+                var r = packet.Reader();
+                try { Commands = CommandTree.Read(ref r); }
+                catch (InvalidDataException e)
+                {
+                    // A modded argument type has properties we cannot size, so the whole tree is unreadable.
+                    // Commands with signable arguments then go out unsigned, which a secure-profile server refuses.
+                    Commands = null;
+                    PacketErrors++;
+                    Log("command tree unreadable, commands will be sent unsigned: " + e.Message);
+                }
+                return null;
+            }
             case CB.Play.Clientbound.PlayerInfoRemove:
             {
                 var r = packet.Reader();
@@ -577,6 +594,7 @@ public sealed partial class MinecraftClient : IAsyncDisposable
                 State = ConnectionState.Configuration;
                 Registries.Clear();
                 _players.Clear(); // the next server sends its own list
+                Commands = null; // and its own commands
                 await SendClientInformationAsync(CB.Configuration.Serverbound.ClientInformation, ct);
                 await RegisterFabricChannelsAsync(ct); // the next server may be a Fabric one (proxy server switch)
                 return null;
@@ -786,22 +804,12 @@ public sealed partial class MinecraftClient : IAsyncDisposable
         if (State != ConnectionState.Play) throw new InvalidOperationException("not in game");
         if (message.StartsWith('/'))
         {
-            using var command = new PacketWriter(CB.Play.Serverbound.ChatCommand);
-            command.WriteString(message[1..]);
-            await c.SendAsync(command, cancellationToken);
+            await SendCommandAsync(c, message[1..], cancellationToken);
             return;
         }
         if (message.Length > 256) throw new ArgumentException("chat messages are at most 256 characters", nameof(message));
 
-        // Paper applies a chat session on its main thread (next tick) but decodes chat on the network thread, so a
-        // signed message sent right after joining arrives before the session and is dropped ("Chat disabled due to
-        // missing profile public key"; reproduced in LiveOnlineTests). Wait for the server's own confirmation: the
-        // INITIALIZE_CHAT player-info entry it broadcasts once our session is in place.
-        if (_chatSessionAccepted is { Task.IsCompleted: false } accepted)
-        {
-            var confirmed = await Task.WhenAny(accepted.Task, Task.Delay(TimeSpan.FromSeconds(10), cancellationToken));
-            if (confirmed != accepted.Task) Log("server never confirmed our chat session; sending anyway");
-        }
+        await WaitForChatSessionAsync(cancellationToken);
 
         // One chat at a time: the server checks that the session index counts up and timestamps never go back.
         await _chatLock.WaitAsync(cancellationToken);
@@ -825,6 +833,61 @@ public sealed partial class MinecraftClient : IAsyncDisposable
         finally
         {
             _chatLock.Release();
+        }
+    }
+
+    /// <summary>
+    /// Vanilla ClientPacketListener.sendCommand: a command with signable arguments (/msg, /me, /say...) goes out
+    /// as chat_command_signed, each such argument signed like a chat message over its own text (the server's
+    /// collectSignedArguments builds SignedMessageBody(argument text, timestamp, salt, last seen) per entry, in
+    /// order, one chain index each). Anything else, or any command without a chat session, is a plain command.
+    /// </summary>
+    private async Task SendCommandAsync(MinecraftConnection c, string command, CancellationToken cancellationToken)
+    {
+        var signable = _chatSession != null ? Commands?.SignableArguments(command) : null;
+        if (signable is not { Count: > 0 })
+        {
+            using var plain = new PacketWriter(CB.Play.Serverbound.ChatCommand);
+            plain.WriteString(command);
+            await c.SendAsync(plain, cancellationToken);
+            return;
+        }
+
+        await WaitForChatSessionAsync(cancellationToken);
+        await _chatLock.WaitAsync(cancellationToken);
+        try
+        {
+            var now = DateTimeOffset.UtcNow;
+            var salt = Random.Shared.NextInt64();
+            var (offset, acknowledged, seenSignatures) = _lastSeen.TakeUpdate();
+            using var signed = new PacketWriter(CB.Play.Serverbound.ChatCommandSigned, 1024 + 300 * signable.Count);
+            signed.WriteString(command)
+                .WriteLong(now.ToUnixTimeMilliseconds())
+                .WriteLong(salt)
+                .WriteVarInt(signable.Count);
+            foreach (var (name, value) in signable)
+                signed.WriteString(name).WriteBytes(_chatSession!.Sign(Profile.Id, value, now, salt, seenSignatures));
+            signed.WriteVarInt(offset)
+                .WriteBytes(acknowledged)
+                .WriteByte(0);
+            await c.SendAsync(signed, cancellationToken);
+        }
+        finally
+        {
+            _chatLock.Release();
+        }
+    }
+
+    private async Task WaitForChatSessionAsync(CancellationToken cancellationToken)
+    {
+        // Paper applies a chat session on its main thread (next tick) but decodes chat on the network thread, so a
+        // signed message sent right after joining arrives before the session and is dropped ("Chat disabled due to
+        // missing profile public key"; reproduced in LiveOnlineTests). Wait for the server's own confirmation: the
+        // INITIALIZE_CHAT player-info entry it broadcasts once our session is in place.
+        if (_chatSessionAccepted is { Task.IsCompleted: false } accepted)
+        {
+            var confirmed = await Task.WhenAny(accepted.Task, Task.Delay(TimeSpan.FromSeconds(10), cancellationToken));
+            if (confirmed != accepted.Task) Log("server never confirmed our chat session; sending anyway");
         }
     }
 

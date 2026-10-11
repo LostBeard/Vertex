@@ -189,9 +189,9 @@ static JsonObject GameData(string version, string reports, JsonNode dump, ZipArc
     }
 
     // Static registries whose network ids the protocol uses directly (attribute ids in update_attributes, menu
-    // types in open_screen...), as name lists in protocol-id order.
+    // types in open_screen, command argument parsers in commands...), as name lists in protocol-id order.
     var staticRegistries = new JsonObject();
-    foreach (var reg in new[] { "minecraft:attribute", "minecraft:menu", "minecraft:mob_effect", "minecraft:block_entity_type", "minecraft:sound_event" })
+    foreach (var reg in new[] { "minecraft:attribute", "minecraft:menu", "minecraft:mob_effect", "minecraft:block_entity_type", "minecraft:sound_event", "minecraft:command_argument_type" })
     {
         var entries = registries[reg]!["entries"]!.AsObject().OrderBy(e => e.Value!["protocol_id"]!.GetValue<int>()).ToList();
         for (var i = 0; i < entries.Count; i++)

@@ -13,16 +13,25 @@ public sealed class LastSeenMessages
     private readonly byte[]?[] _window = new byte[]?[WindowSize];
     private int _tail;
     private int _offset;
+    private byte[]? _lastTracked;
     private readonly object _lock = new(); // Add runs on the receive loop, TakeUpdate on the sender
 
     /// <summary>Messages received since the last update was sent; vanilla sends a chat_ack above 64.</summary>
     public int PendingCount => _offset;
 
+    /// <summary>
+    /// Tracks a received signature. The same message twice in a row counts once (LastSeenMessagesTracker
+    /// .addPending, mirrored by the server's LastSeenMessagesValidator): a /msg to ourselves arrives as both the
+    /// sent and the received copy, and counting both gets us kicked ("Advanced last seen window by 2 messages,
+    /// but expected at most 1").
+    /// </summary>
     public void Add(ReadOnlySpan<byte> signature)
     {
-        var copy = signature.ToArray();
         lock (_lock)
         {
+            if (_lastTracked != null && signature.SequenceEqual(_lastTracked)) return;
+            var copy = signature.ToArray();
+            _lastTracked = copy;
             _window[_tail] = copy;
             _tail = (_tail + 1) % WindowSize;
             _offset++;

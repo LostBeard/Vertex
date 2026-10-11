@@ -15,6 +15,7 @@ namespace Vertex.Tests;
 public class LiveOnlineTests
 {
     private const int Port = 25922;
+    private const int CommandsPort = 25944; // Port + 2 is LiveWorldTests
     private static readonly TimeSpan Timeout = TimeSpan.FromSeconds(60);
 
     private static async Task<GameProfile> CachedAccountAsync()
@@ -102,5 +103,59 @@ public class LiveOnlineTests
         Assert.That(disconnect, Is.Null);
         lock (log) Assert.That(log, Has.None.Contains("never confirmed"));
         Assert.That(client.Players[profile.Id].ChatSessionId, Is.Not.Null);
+    }
+
+    /// <summary>
+    /// enforce-secure-profile=true refuses an unsigned command with a signable argument ("invalid command
+    /// signature", the command never runs). /say, /me and /msg must go out as chat_command_signed and run, and
+    /// chat must keep chaining after them (each signed argument takes a chain index).
+    /// </summary>
+    [Test]
+    public async Task SecureProfile_SignedCommandsRun()
+    {
+        var profile = await CachedAccountAsync();
+        await using var server = await PaperServer.StartAsync("secure-commands", CommandsPort, TimeSpan.FromMinutes(4), new Dictionary<string, string>
+        {
+            ["online-mode"] = "true",
+            ["enforce-secure-profile"] = "true",
+        });
+
+        var heard = new System.Collections.Concurrent.ConcurrentQueue<ChatMessage>();
+        string? disconnect = null;
+        await using var client = new MinecraftClient(profile, new ClientOptions());
+        client.ChatReceived += heard.Enqueue;
+        client.Disconnected += r => disconnect = r;
+        using var cts = new CancellationTokenSource(Timeout);
+        await client.ConnectAsync("127.0.0.1", CommandsPort, cts.Token);
+        await server.CommandAsync("op " + profile.Name);
+        await Wait.UntilAsync(() => client.Commands?.CommandNames.Contains("say") == true, Timeout, () => "never opped");
+
+        string Heard() => string.Join(" | ", heard.Select(m => $"{m.Kind}: {m.Text}"));
+        async Task ExpectAsync(string command, string text)
+        {
+            await client.SendChatAsync(command);
+            var until = DateTime.UtcNow + Timeout;
+            while (!heard.Any(m => m.Kind == ChatKind.Player && m.SenderId == profile.Id && m.Content == text) && DateTime.UtcNow < until)
+                await Task.Delay(25);
+            Assert.That(heard.Any(m => m.Kind == ChatKind.Player && m.SenderId == profile.Id && m.Content == text),
+                $"'/{command[1..]}' did not run. Disconnect: {disconnect ?? "(none)"}. Chat: {Heard()}\n"
+                + string.Join(Environment.NewLine, server.OutputTail(15)));
+        }
+
+        var id = Guid.NewGuid().ToString("N")[..6];
+        await ExpectAsync($"/say hello {id}", $"hello {id}");
+        await ExpectAsync($"/me waves {id}", $"waves {id}");
+        await ExpectAsync($"/msg {profile.Name} psst {id}", $"psst {id}"); // a whisper to ourselves comes back to us
+        // Past "run" the server wants no signature (and refuses one): sent plain, and it must still run.
+        var nested = server.WaitForLineAsync(l => l.Contains($"nested {id}"), Timeout);
+        await client.SendChatAsync($"/execute as @s run say nested {id}");
+        await nested;
+        // Plain chat after the commands: the chain index moved on once per signed argument.
+        var console = server.WaitForLineAsync(l => l.Contains($"<{profile.Name}> after {id}"), Timeout);
+        await client.SendChatAsync($"after {id}");
+        await console;
+
+        Assert.That(heard.Where(m => m.Kind == ChatKind.System).Select(m => m.Text), Has.None.Contains("signature"), Heard());
+        Assert.That(disconnect, Is.Null);
     }
 }

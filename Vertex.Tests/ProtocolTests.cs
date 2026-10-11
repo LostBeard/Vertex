@@ -173,11 +173,22 @@ public class ProtocolTests
         Assert.That(empty.Offset, Is.EqualTo(0));
         Assert.That(empty.Acknowledged, Is.EqualTo(new byte[3]));
 
-        for (var i = 0; i < 3; i++) seen.Add(new byte[256]);
+        static byte[] Signature(byte b) { var s = new byte[256]; s[0] = b; return s; }
+        for (var i = 0; i < 3; i++) seen.Add(Signature((byte)(i + 1)));
         var update = seen.TakeUpdate();
         Assert.That(update.Offset, Is.EqualTo(3));
         // 20 slots, oldest first; the 3 messages are the newest, slots 17, 18, 19 -> byte 2 bits 1..3.
         Assert.That(update.Acknowledged, Is.EqualTo(new byte[] { 0, 0, 0b0000_1110 }));
+        Assert.That(update.Signatures.Select(s => s[0]), Is.EqualTo(new byte[] { 1, 2, 3 }));
         Assert.That(seen.TakeUpdate().Offset, Is.EqualTo(0));
+
+        // The same message twice in a row (a /msg to ourselves: the sent and the received copy) counts once, as in
+        // vanilla's LastSeenMessagesTracker and the server's validator; the same signature later on counts again.
+        seen.Add(Signature(4));
+        seen.Add(Signature(4));
+        Assert.That(seen.TakeUpdate().Offset, Is.EqualTo(1));
+        seen.Add(Signature(5));
+        seen.Add(Signature(4));
+        Assert.That(seen.TakeUpdate().Offset, Is.EqualTo(2));
     }
 }

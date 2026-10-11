@@ -158,6 +158,44 @@ public class LiveConnectTests
         Assert.That(client.State, Is.EqualTo(ConnectionState.Disconnected));
     }
 
+    /// <summary>
+    /// The server's real command tree (opped, so it holds /say, /execute, /tp...): finds exactly the arguments a
+    /// secure-profile server wants signed, through redirects (/tell -> /msg, but not past /execute ... run, where
+    /// the server stops looking). Commands without one must come back empty.
+    /// </summary>
+    [Test]
+    public async Task CommandTree_FindsTheSignableArguments()
+    {
+        await using var client = NewClient("VertexCmds");
+        using var cts = new CancellationTokenSource(Timeout);
+        await client.ConnectAsync("127.0.0.1", Port, cts.Token);
+        await _server.CommandAsync("op VertexCmds");
+        // Opping resends the tree with the operator commands in it.
+        await Wait.UntilAsync(() => client.Commands?.CommandNames.Contains("say") == true, Timeout,
+            () => "no /say in the tree: " + string.Join(" ", client.Commands?.CommandNames ?? []));
+        var tree = client.Commands!;
+        Assert.That(client.PacketErrors, Is.Zero);
+
+        Assert.That(tree.SignableArguments("msg VertexCmds hello there"), Is.EqualTo(new[] { ("message", "hello there") }));
+        Assert.That(tree.SignableArguments("tell VertexCmds hi"), Is.EqualTo(new[] { ("message", "hi") }));
+        Assert.That(tree.SignableArguments("w @p psst"), Is.EqualTo(new[] { ("message", "psst") }));
+        Assert.That(tree.SignableArguments("me waves at Aubs"), Is.EqualTo(new[] { ("action", "waves at Aubs") }));
+        Assert.That(tree.SignableArguments("say hello"), Is.EqualTo(new[] { ("message", "hello") }));
+        Assert.That(tree.SignableArguments("teammsg on my way"), Is.EqualTo(new[] { ("message", "on my way") }));
+        // The server stops collecting at a redirect back to the root ("run"), so nothing after it is signed...
+        Assert.That(tree.SignableArguments("execute as @a[name=VertexCmds, limit=1] at @s run say hi there"), Is.Empty);
+        // A selector with a space inside its brackets is one argument.
+        Assert.That(tree.SignableArguments("msg @a[name=VertexCmds, limit=1] hi there"), Is.EqualTo(new[] { ("message", "hi there") }));
+
+        Assert.That(tree.SignableArguments("tp 1 2 3"), Is.Empty);
+        Assert.That(tree.SignableArguments("tp VertexCmds ~ ~1 ~"), Is.Empty);
+        Assert.That(tree.SignableArguments("gamemode creative"), Is.Empty);
+        Assert.That(tree.SignableArguments("give VertexCmds minecraft:stone 3"), Is.Empty);
+        Assert.That(tree.SignableArguments("time set day"), Is.Empty);
+        Assert.That(tree.SignableArguments("nosuchcommand hello"), Is.Empty);
+        Assert.That(tree.SignableArguments("say"), Is.Empty, "no message given");
+    }
+
     private static async Task<ChatMessage> WaitForAsync(ConcurrentQueue<ChatMessage> queue, Func<ChatMessage, bool> match, TimeSpan timeout)
     {
         var until = DateTime.UtcNow + timeout;
