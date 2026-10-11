@@ -216,4 +216,13 @@ public class VertexUnitTests
         Assert.That(facts[^1], Is.EqualTo("TJ's favourite block is deepslate"), "then the most recent");
         Assert.That(m.FactsFor(["Nobody"], max: 5), Does.Not.Contain("Aubs loves axolotls"));
     }
+
+    [Test]
+    public void Brain_NoticesWhenItClaimsAnActionInWords()
+    {
+        foreach (var r in new[] { "I'm on my way.", "I'll get you some wood!", "Coming!", "Let me grab that.", "I’m following you, Aubs!" })
+            Assert.That(VertexBrain.ClaimsAction(r), r);
+        foreach (var r in new[] { "Hi Aubri!", "I like turtles too.", "It's night time now.", "That was fun!", "Let me know if you need anything." })
+            Assert.That(VertexBrain.ClaimsAction(r), Is.False, r);
+    }
 }

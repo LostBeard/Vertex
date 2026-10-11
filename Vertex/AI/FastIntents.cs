@@ -57,26 +57,15 @@ public sealed class FastIntents : IDisposable
             tokenizerJson = await reader.ReadToEndAsync(ct);
         var tokenizer = TokenizerLoader.FromTokenizerJson(tokenizerJson);
         InferenceSession session;
-        // WORKAROUND: SpawnDev.ILGPU.ML up to 5.3.4 fuses this BERT graph's attention wrongly (drops the attention
-        // mask, swaps K's heads and sequence): every command embedded as mostly padding. Fixed at the source in
-        // SpawnDev.ILGPU.ML fa124d95; until a release with it reaches SpawnDev.AI.Server, compile this one session
-        // unfused (exact: matches onnxruntime). Remove when the package carries the fix. Nothing else loads now.
-        var fusion = Environment.GetEnvironmentVariable("ML_NO_ATTN_FUSION");
-        Environment.SetEnvironmentVariable("ML_NO_ATTN_FUSION", "1");
-        try
-        {
-            await using var model = await source.OpenAsync(repo, "onnx/model.onnx", ct);
+        // Needs SpawnDev.ILGPU.ML 5.3.5+ (via SpawnDev.AI.Server 1.1.0): earlier versions fused this BERT graph's
+        // attention wrongly (dropped the mask, swapped K's heads and sequence).
+        await using (var model = await source.OpenAsync(repo, "onnx/model.onnx", ct))
             session = await InferenceSession.CreateFromOnnxStreamAsync(accelerator, model, inputShapes: new Dictionary<string, int[]>
             {
                 ["input_ids"] = [1, MaxTokens],
                 ["attention_mask"] = [1, MaxTokens],
                 ["token_type_ids"] = [1, MaxTokens],
             });
-        }
-        finally
-        {
-            Environment.SetEnvironmentVariable("ML_NO_ATTN_FUSION", fusion);
-        }
         var intents = new FastIntents(session, tokenizer, accelerator);
         foreach (var intent in Known)
             foreach (var example in intent.Examples)

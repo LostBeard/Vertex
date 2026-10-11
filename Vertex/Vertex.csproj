@@ -6,7 +6,7 @@
 		<Description>Vertex: an AI that plays Minecraft with you.</Description>
 	</PropertyGroup>
 	<ItemGroup>
-		<PackageReference Include="SpawnDev.AI.Server" Version="1.1.0-preview.4" />
+		<PackageReference Include="SpawnDev.AI.Server" Version="1.1.0" />
 	</ItemGroup>
 	<ItemGroup>
 		<ProjectReference Include="..\SpawnDev.Minecraft\SpawnDev.Minecraft.csproj" />

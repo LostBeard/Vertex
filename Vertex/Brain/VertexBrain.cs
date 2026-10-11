@@ -30,6 +30,7 @@ public sealed class VertexBrain : IAsyncDisposable
     private DateTime _lastExchange = DateTime.MinValue;
     private Guid? _lastPartner;
     private readonly Dictionary<string, GameTool> _tools = [];
+    private int _toolRuns;
 
     public MinecraftClient Client { get; }
     public SimpleVoiceChat? Voice { get; }
@@ -74,7 +75,7 @@ public sealed class VertexBrain : IAsyncDisposable
         {
             if (tool is GameTool g)
             {
-                g.OnRun = m => Log?.Invoke("  " + m);
+                g.OnRun = m => { Interlocked.Increment(ref _toolRuns); Log?.Invoke("  " + m); };
                 _tools[g.Name] = g;
             }
             ai.Tools.Register(tool);
@@ -210,6 +211,30 @@ public sealed class VertexBrain : IAsyncDisposable
         lock (_history) messages.AddRange(_history.TakeLast(16));
         messages.Add(new AiChatMessage("user", userMessage));
         Log?.Invoke("> " + userMessage);
+        var runsBefore = Volatile.Read(ref _toolRuns);
+        var reply = await ChatOnceAsync(messages, allowTools, ct);
+        // An 8B model sometimes SAYS it is doing something ("I'm on my way") without calling a tool, and then nothing
+        // happens in the game (seen 2026-10-11 in BrainTests.ComeHere). Once, tell it so and let it call the tool.
+        if (allowTools && Volatile.Read(ref _toolRuns) == runsBefore && ClaimsAction(reply))
+        {
+            Log?.Invoke("  (said it would act but called no tool: asking again)");
+            messages.Add(new AiChatMessage("assistant", reply));
+            messages.Add(new AiChatMessage("user", "[You said that, but you did not call any tool, so NOTHING happened in the game. Call the right tool now, then answer in one short sentence.]"));
+            reply = await ChatOnceAsync(messages, true, ct);
+        }
+        lock (_history)
+        {
+            _history.Add(new AiChatMessage("user", userMessage));
+            _history.Add(new AiChatMessage("assistant", reply.Length > 0 ? reply : "(did it)"));
+            if (_history.Count > 40) _history.RemoveRange(0, _history.Count - 40);
+        }
+        // Never speak a fragment ("I", ".") - a model that only called a tool sometimes leaves one behind.
+        if (reply.Count(char.IsLetter) >= 4) Mouth.Say(reply);
+        return reply;
+    }
+
+    private async Task<string> ChatOnceAsync(List<AiChatMessage> messages, bool allowTools, CancellationToken ct)
+    {
         var tools = Ai.Chat.Tools;
         if (!allowTools) Ai.Chat.Tools = null;
         AiChatResult result;
@@ -229,15 +254,20 @@ public sealed class VertexBrain : IAsyncDisposable
         var reply = AiChatEngine.StripToolCalls(AiChatEngine.StripThinking(result.TextWithoutToolCalls)).Trim();
         foreach (var call in result.ToolCalls) Log?.Invoke($"  tool {call.Name}({call.ArgumentsJson})");
         Log?.Invoke("< " + reply);
-        lock (_history)
-        {
-            _history.Add(new AiChatMessage("user", userMessage));
-            _history.Add(new AiChatMessage("assistant", reply.Length > 0 ? reply : "(did it)"));
-            if (_history.Count > 40) _history.RemoveRange(0, _history.Count - 40);
-        }
-        // Never speak a fragment ("I", ".") - a model that only called a tool sometimes leaves one behind.
-        if (reply.Count(char.IsLetter) >= 4) Mouth.Say(reply);
         return reply;
+    }
+
+    private static readonly string[] ActionClaims =
+    [
+        "on my way", "i'm coming", "i am coming", "coming!", "i'll ", "i will ", "heading ", "i'm going to", "i am going to",
+        "let me get", "let me grab", "let me go", "let me find", "i'm getting", "i am getting", "i'm following", "i am following", "i'm on it", "right away", "be right there",
+    ];
+
+    /// <summary>Whether a reply says Vertex is doing (or about to do) something in the game.</summary>
+    public static bool ClaimsAction(string reply)
+    {
+        var r = " " + reply.ToLowerInvariant().Replace('’', '\'') + " ";
+        return ActionClaims.Any(r.Contains);
     }
 
     // ---------------------------------------------------------------- characters and memory
