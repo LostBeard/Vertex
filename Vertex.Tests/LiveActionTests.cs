@@ -42,12 +42,18 @@ public class LiveActionTests
         await _server.CommandAsync($"fill {ax - 6} 200 {az - 6} {ax + 6} 210 {az + 6} minecraft:air");
         await _server.CommandAsync($"fill {ax - 6} 199 {az - 6} {ax + 6} 199 {az + 6} minecraft:stone");
         await _server.CommandAsync($"clear {name}");
+        // Every test starts clean: no drops (a killed zombie's rotten flesh) and no mobs from an earlier test. A killed
+        // mob stays in the world for its 20-tick death animation, and beds count it ("monsters nearby"): wait it out.
+        await _server.CommandAsync("kill @e[type=!minecraft:player]");
+        await Task.Delay(1500);
         foreach (var cmd in build(ax, az)) await _server.CommandAsync(cmd);
         await _server.CommandAsync($"tp {name} {ax + 0.5} 200 {az + 0.5} -90 0");
         await Wait.UntilAsync(() => Math.Abs(client.Position.Y - 200) < 1e-9 && client.OnGround, Timeout, () => $"{client.Position}");
         // Every arena block must be in a chunk we have (the arena can straddle a chunk border).
         await Wait.UntilAsync(() => client.World.IsLoaded(ax - 6, az - 6) && client.World.IsLoaded(ax + 6, az + 6)
             && client.World.IsLoaded(ax - 6, az + 6) && client.World.IsLoaded(ax + 6, az - 6), Timeout, () => "arena chunks");
+        // The teleport is sent at once, the arena's block changes at the end of the server tick: let them arrive.
+        await client.WaitTicksAsync(10);
         return (client, ax, az);
     }
 
@@ -64,14 +70,13 @@ public class LiveActionTests
     private static async Task PickUpAsync(MinecraftClient client, string item, int count)
     {
         if (await client.WaitUntilAsync(() => client.Inventory.Count(item) == count, 20)) return;
-        var drop = client.Entities.Values.FirstOrDefault(e => e.IsItem && e.Item?.Name == "minecraft:" + item);
-        if (drop != null)
+        // Walk to it (around whatever is in the way: drops can roll past the block they came from).
+        for (var tries = 0; tries < 3 && client.Inventory.Count(item) != count; tries++)
         {
-            var (px, _, pz) = client.Position;
-            client.Look((float)(Math.Atan2(-(drop.X - px), drop.Z - pz) * 180 / Math.PI), 0);
-            client.Controls.Forward = true;
-            await client.WaitUntilAsync(() => client.Inventory.Count(item) == count, 15);
-            client.Controls.Clear();
+            var drop = client.Entities.Values.FirstOrDefault(e => e.IsItem && e.Item?.Name == "minecraft:" + item);
+            if (drop == null) break;
+            await client.GoToAsync(SpawnDev.Minecraft.Pathing.Goal.Near(drop.X, drop.Y, drop.Z, 0.8), new SpawnDev.Minecraft.Pathing.PathOptions { MaxNodes = 5_000 });
+            await client.WaitUntilAsync(() => client.Inventory.Count(item) == count, 10);
         }
         await Wait.UntilAsync(() => client.Inventory.Count(item) == count, Timeout, () => $"{item} pickup: inventory [{client.Inventory}], at {client.Position}, items: "
             + string.Join("; ", client.Entities.Values.Where(e => e.IsItem).Select(e => $"{e.Item} at {e.X:0.##} {e.Y:0.##} {e.Z:0.##}")));
@@ -360,11 +365,11 @@ public class LiveActionTests
     {
         const string name = "VertexFarmer";
         await _server.CommandAsync("gamerule randomTickSpeed 0"); // nothing grows or dries out mid-test
-        // A row of farmland 3 blocks out: ripe wheat, unripe wheat, ripe carrots, ripe wheat; water beside it.
+        // A row of farmland 3 blocks out: ripe wheat, unripe wheat, ripe carrots, ripe wheat. No water: with random
+        // ticks off the farmland stays moist, and a water hole would float drops away.
         var (client, x, z) = await JoinOnArenaAsync(name, (ax, az) =>
         [
             $"fill {ax + 3} 199 {az - 1} {ax + 3} 199 {az + 2} minecraft:farmland[moisture=7]",
-            $"setblock {ax + 4} 199 {az} minecraft:water",
             $"setblock {ax + 3} 200 {az - 1} minecraft:wheat[age=7]",
             $"setblock {ax + 3} 200 {az} minecraft:wheat[age=3]",
             $"setblock {ax + 3} 200 {az + 1} minecraft:carrots[age=7]",
@@ -383,8 +388,7 @@ public class LiveActionTests
             Assert.That(new[] { At(-1), At(0), At(1), At(2) },
                 Is.EqualTo(new[] { "minecraft:wheat[age=0]", "minecraft:wheat[age=3]", "minecraft:carrots[age=0]", "minecraft:wheat[age=0]" }),
                 "ripe ones replanted, the unripe one left growing");
-            Assert.That(client.Inventory.Count("wheat"), Is.EqualTo(2));
-            Assert.That(client.Inventory.Count("carrot"), Is.GreaterThanOrEqualTo(1), "a carrot drop, less the one replanted");
+            Assert.That(client.Inventory.Count("wheat"), Is.EqualTo(2), "ripe wheat always drops one wheat");
         }
         finally
         {
@@ -425,6 +429,30 @@ public class LiveActionTests
         stop.Cancel();
         Assert.That(async () => await guarding, Throws.InstanceOf<OperationCanceledException>());
         await _server.CommandAsync("kill @e[tag=vguard]");
+    }
+
+    [Test]
+    public async Task CriticalHit_DoesHalfAgainTheDamage()
+    {
+        const string name = "VertexCrit";
+        var (client, x, z) = await JoinOnArenaAsync(name, (ax, az) => [$"summon minecraft:zombie {ax + 2} 200 {az} {{NoAI:1b,Tags:[\"vcrit\"],active_effects:[{{id:\"minecraft:fire_resistance\",duration:1000000}}]}}"]);
+        await using var _ = client;
+        try
+        {
+            await Wait.UntilAsync(() => client.Entities.Values.Any(e => e.Name == "minecraft:zombie" && e.Health != null), Timeout, () => "zombie");
+            var zombie = client.Entities.Values.First(e => e.Name == "minecraft:zombie");
+            await GiveAsync(client, name, "minecraft:stone_sword", 1, () => client.Inventory.Count("stone_sword") == 1);
+            Assert.That(await client.EquipAsync("stone_sword"));
+            Assert.That(await client.WaitUntilAsync(() => client.AttackReady, 40), "charged");
+            Assert.That(await client.CritAttackAsync(zombie), "the hit went out mid-fall");
+            // 5 x 1.5 = 7.5 against a zombie's 2 armor: 7.5 * (1 - clamp(2 - 7.5/2, 0.4, 20)/25) = 7.38.
+            await Wait.UntilAsync(() => zombie.Health < 20f, Timeout, () => $"zombie health {zombie.Health}");
+            Assert.That(zombie.Health, Is.EqualTo(20f - 7.38f).Within(0.01f), "a critical hit, not a plain 4.92");
+        }
+        finally
+        {
+            await _server.CommandAsync("kill @e[tag=vcrit]");
+        }
     }
 
     [Test]

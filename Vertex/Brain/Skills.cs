@@ -291,7 +291,11 @@ public sealed class Skills(MinecraftClient client)
                 continue;
             }
             client.LookAt(t.X, t.Y + t.Type.Height * 0.5, t.Z);
-            if (client.AttackReady) await client.AttackAsync(t, ct);
+            // Jump as the charge is about to complete and hit on the way down: a critical hit (x1.5) at no cost
+            // in attack rate. Not on creepers (stay mobile) or when up close to several mobs.
+            if (client.OnGround && client.TicksUntilAttackReady <= 7 && t.Name != "minecraft:creeper" && d < 2.6)
+                await client.CritAttackAsync(t, ct);
+            else if (client.AttackReady) await client.AttackAsync(t, ct);
             await client.WaitTicksAsync(1, ct);
         }
         return !client.Entities.ContainsKey(id);

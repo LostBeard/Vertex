@@ -506,6 +506,37 @@ public sealed partial class MinecraftClient
     /// </summary>
     public bool AttackReady => Ticks - Math.Max(_lastAttackTick, _lastHeldChangeTick) >= AttackCooldownTicks + AttackLatencyMarginTicks;
 
+    /// <summary>Ticks until AttackReady (0 when ready).</summary>
+    public int TicksUntilAttackReady => (int)Math.Max(0, AttackCooldownTicks + AttackLatencyMarginTicks - (Ticks - Math.Max(_lastAttackTick, _lastHeldChangeTick)));
+
+    /// <summary>
+    /// A critical hit (vanilla Player.attack: x1.5 damage when fully charged, falling - the server's fallDistance
+    /// &gt; 0 - not on the ground, not climbing, not in water, not sprinting). Jumps, waits until the server has heard
+    /// us moving down, and hits at full charge; on the ground again first, it hits normally. Returns true when the
+    /// hit went out mid-fall.
+    /// </summary>
+    public async Task<bool> CritAttackAsync(Entity target, CancellationToken cancellationToken = default)
+    {
+        var body = BodySnapshot();
+        if (!body.OnGround || body.InWater || body.OnClimbable)
+        {
+            await AttackAsync(target, cancellationToken);
+            return false;
+        }
+        Controls.Sprint = false; // sprinting turns a crit into a knockback hit
+        Controls.Jump = true;
+        await WaitTicksAsync(1, cancellationToken);
+        Controls.Jump = false;
+        // MEASURED on Paper 1.21.5: a hit right after the FIRST downward step (VelY -0.15) lands as a plain hit;
+        // after the second (VelY -0.23) it is a critical. So wait for two steps down.
+        await WaitUntilAsync(() => { var b = BodySnapshot(); return b.OnGround || b.VelY < -0.2; }, 16, cancellationToken);
+        await WaitUntilAsync(() => AttackReady || BodySnapshot().OnGround, 12, cancellationToken);
+        var crit = !BodySnapshot().OnGround && AttackReady;
+        LookAt(target.X, target.Y + target.Type.Height * 0.5, target.Z);
+        await AttackAsync(target, cancellationToken);
+        return crit;
+    }
+
     /// <summary>Extra ticks AttackReady waits for the server to catch up (2 + round-trip time in ticks).</summary>
     public int AttackLatencyMarginTicks => 2 + (Players.TryGetValue(Profile.Id, out var me) ? (me.LatencyMs + 49) / 50 : 1);
 
