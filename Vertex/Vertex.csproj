@@ -18,5 +18,7 @@
 	<ItemGroup>
 		<!-- The block dump mod (tools/ModDump builds it): run with a server's modpack to learn its modded blocks. -->
 		<EmbeddedResource Include="Mods\vertex-moddump.jar" LogicalName="Vertex.Mods.vertex-moddump.jar" />
+		<!-- The trained fight-or-flight policy (Vertex.Tests ReflexTraining), only once it beat the hand-written rule. -->
+		<EmbeddedResource Include="Brain\reflex-policy.bin" LogicalName="Vertex.Brain.reflex-policy.bin" Condition="Exists('Brain\reflex-policy.bin')" />
 	</ItemGroup>
 </Project>

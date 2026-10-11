@@ -86,7 +86,15 @@ Every milestone is tested against REAL servers started locally (Paper 1.21.5 bui
   the player in a fact instead of "about" (matched by name), and says "I remember" without calling remember
   (caught like "on my way")
 - [x] Reflexes ("System One"): eat, fight back or flee, surface for air, every few ticks without the LLM
-- [ ] A learned fast policy for reflexes (SpawnDev.ILGPU.ML)
+- [x] A learned fast policy for reflexes (SpawnDev.ILGPU.ML), 2026-10-11: fight or flight when a mob hurts us is a
+  10-32-32-2 TrainableModel (ReflexPolicy.cs) trained on real fights on local Paper (Vertex.Tests ReflexTraining,
+  explicit): each situation (mob kind and count, health, armor, sword) played twice, fighting and fleeing, 20 s
+  from the first hit; data in Vertex.Tests/Training/reflex-fights.jsonl. Trained on ILGPU's CPU accelerator (tiny),
+  runs on the brain's accelerator; bravery moves the bar. Ships only if it beats the hand-written rule on fights it
+  never saw (5-fold CV). First batch, 56 situations: learned -0.31 vs rule -1.56 mean score (always fight -1.68,
+  always flee -8.34, best possible 1.18). Honest: they chose differently in 16; the network was better in 7, the
+  rule in 3 (6 ties): the average favours it, but 7 vs 3 is within noise. More fights to firm it up. Also learned:
+  Vertex's fleeing (12 blocks, stop) is often worse than fighting, vindicators above all; skeletons are the exception
 
 ## M7 - App
 - [x] Dashboard (Vertex.exe, Blazor Server at http://localhost:5280): accounts, server, characters, model, voice,

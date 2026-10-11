@@ -1065,6 +1065,16 @@ public sealed class Skills(MinecraftClient client)
         return (false, "A creeper is chasing me!");
     }
 
+    /// <summary>Runs 12 blocks straight away from a mob (what a careful character does when one hurts it).</summary>
+    public async Task<(bool, string)> FleeFromAsync(Entity attacker, CancellationToken ct)
+    {
+        var (px, py, pz) = client.Position;
+        double dx = px - attacker.X, dz = pz - attacker.Z;
+        var len = Math.Max(0.1, Math.Sqrt(dx * dx + dz * dz));
+        var ok = await client.GoToAsync(Goal.Near(px + dx / len * 12, py, pz + dz / len * 12, 3), null, ct);
+        return (ok, ok ? "I got away from the monster." : "I couldn't get away from the monster!");
+    }
+
     public async Task EquipWeaponAsync(CancellationToken ct)
     {
         string[] order = ["netherite_sword", "diamond_sword", "iron_sword", "stone_sword", "golden_sword", "wooden_sword", "netherite_axe", "diamond_axe", "iron_axe", "stone_axe", "wooden_axe"];

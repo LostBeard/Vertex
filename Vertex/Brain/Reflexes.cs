@@ -5,7 +5,8 @@ namespace Vertex.Brain;
 /// <summary>
 /// Vertex's "System One": fast decisions every few ticks that never wait for the language model (TJ: "fast
 /// decision making is important in the game"). Eat when hungry, fight back or run when hurt, come up for air.
-/// Hand-written rules for now; this is the layer a small learned policy (SpawnDev.ILGPU.ML) can replace.
+/// Fight or flight when a mob hurts us goes through a policy: the hand-written rule, or a small network trained
+/// on real fights (LearnedReflexPolicy, SpawnDev.ILGPU.ML) when one ships.
 /// </summary>
 public sealed class Reflexes : IDisposable
 {
@@ -19,6 +20,9 @@ public sealed class Reflexes : IDisposable
     private int _escaping = -1;
 
     public bool Enabled { get; set; } = true;
+
+    /// <summary>Decides fight or flight when hurt (the hand-written rule unless a trained policy is set).</summary>
+    public IReflexPolicy Policy { get; set; } = RuleReflexPolicy.Instance;
 
     public Reflexes(VertexBrain brain) : this(brain.Client, brain.Skills, brain.Tasks, () => brain.Character.Style) { }
 
@@ -78,17 +82,16 @@ public sealed class Reflexes : IDisposable
             var (x, y, z) = c.Position;
             var attacker = c.Entities.Values.Where(e => Skills.Hostile.Contains(e.Name) && e.DistanceTo(x, y, z) < 6).OrderBy(e => e.DistanceTo(x, y, z)).FirstOrDefault();
             if (attacker == null) return;
-            if (_style().Bravery >= 0.5 && c.Health > 8)
-                _tasks.Start($"fighting a {attacker.Name.Bare()} that attacked me", ct => _skills.AttackAsync(attacker.Name.Bare(), ct));
-            else
-                _tasks.Start("running away from a monster", async ct =>
-                {
-                    var (px, py, pz) = c.Position;
-                    double dx = px - attacker.X, dz = pz - attacker.Z;
-                    var len = Math.Max(0.1, Math.Sqrt(dx * dx + dz * dz));
-                    var ok = await c.GoToAsync(SpawnDev.Minecraft.Pathing.Goal.Near(px + dx / len * 12, py, pz + dz / len * 12, 3), null, ct);
-                    return (ok, ok ? "I got away from the monster." : "I couldn't get away from the monster!");
-                });
+            var features = ReflexFeatures.From(c, attacker);
+            var bravery = _style().Bravery;
+            Run(async () =>
+            {
+                var action = await Policy.DecideAsync(features, bravery);
+                if (action == ReflexAction.Fight)
+                    _tasks.Start($"fighting a {attacker.Name.Bare()} that attacked me", ct => _skills.AttackAsync(attacker.Name.Bare(), ct));
+                else
+                    _tasks.Start("running away from a monster", ct => _skills.FleeFromAsync(attacker, ct));
+            });
         }
     }
 
@@ -103,5 +106,9 @@ public sealed class Reflexes : IDisposable
         });
     }
 
-    public void Dispose() => _client.Tick -= OnTick;
+    public void Dispose()
+    {
+        _client.Tick -= OnTick;
+        (Policy as IDisposable)?.Dispose();
+    }
 }

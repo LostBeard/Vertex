@@ -86,7 +86,8 @@ public sealed class VertexBrain : IAsyncDisposable
             Ears.Log += m => Log?.Invoke("[ears] " + m);
             Ears.Heard += h => _events.Writer.TryWrite(new SaidEvent(h.Speaker, NameOf(h.Speaker), h.Text, true));
         }
-        Reflexes = new Reflexes(this);
+        // A trained fight-or-flight policy ships only once it beat the hand-written rule (ReflexTraining).
+        Reflexes = new Reflexes(this) { Policy = (IReflexPolicy?)LearnedReflexPolicy.LoadShipped(ai.Accelerator) ?? RuleReflexPolicy.Instance };
         Memory = WorldMemory.Load(Path.Combine(characters.Folder, "..", "worlds"), world);
 
         foreach (var tool in GameTools.Create(this))
