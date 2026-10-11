@@ -112,8 +112,15 @@ Every milestone is tested against REAL servers started locally (Paper 1.21.5 bui
   mc.spawndev.com) it downloads the pack's mods (hash-checked, cached), runs the dump mod it ships in a throwaway
   Fabric server (Fabric's launcher and a Temurin JDK, downloaded once), saves the result for that world, and
   rejoins knowing them. Verified: the AubsCraft pack teaches the same 345 blocks the server's own jars do
-- [ ] Learn blocks no modpack covers in game, like a person would: guess from the name (spooky_oak_door is a
-  door), confirm the shape by touching and standing (the server is the referee), time digs where breaking is
-  allowed, and map unknown state ids to blocks from what breaking them drops; remembered per world
+- [x] Learn the shape of blocks no modpack covers by touch, like a person would (2026-10-11): chunks keep raw
+  state ids; next to an unknown block Vertex sends small moves toward it from each open side and over it, and
+  the server (which re-runs every move with real collisions) accepts or corrects each one: a binary search per
+  face. Verified against the mods' real shapes: doormat 1/16 high, wall plate, full cube, small pumpkin (bounding
+  box), and cobwebs, which accept you and then hold you (sticky: pathing avoids them). Learned shapes apply at
+  once to loaded blocks, are kept per world with the server's block-list fingerprint, and an idle Vertex studies
+  unknown blocks nearby on its own (`learn_blocks` too). Modpack learning now applies without a rejoin as well
+- [ ] More of a block by experience: time digs where breaking is allowed (hardness), learn a block's name from
+  what breaking it drops, learn doors and gates by right-clicking (the state changes), guess from the name
+  (spooky_oak_door is a door) before touching
 - [ ] Modded items and entity sizes from the same dump (found 2026-10-11: ItemStack resolves ids through the
   vanilla item table, so a modded item in the inventory reads as air; modded mobs get a default 0.6x1.8 size)

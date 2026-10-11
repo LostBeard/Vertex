@@ -96,10 +96,13 @@ public sealed class Pathfinder
     private readonly HashSet<int> _doorways;
     private readonly int _water, _lava;
 
-    public Pathfinder(GameWorld world)
+    public Pathfinder(GameWorld world) : this(world, world.Data) { }
+
+    /// <summary>A pathfinder that sees the world through one block table (e.g. one from before something was learned).</summary>
+    public Pathfinder(GameWorld world, GameData data)
     {
         _world = world;
-        _data = world.Data;
+        _data = data;
         _avoidBlocks = new[] { "lava", "fire", "soul_fire", "magma_block", "cactus", "sweet_berry_bush", "cobweb", "powder_snow", "wither_rose", "campfire", "soul_campfire", "pointed_dripstone" }
             .Select(n => _data.Block(n)!.Id).ToHashSet();
         _climbable = _data.BlockTag("minecraft:climbable").Select(n => _data.Block(n)!.Id).ToHashSet();
@@ -109,7 +112,7 @@ public sealed class Pathfinder
         _lava = _data.Block("lava")!.Id;
     }
 
-    private int State(int x, int y, int z) => _world.GetState(x, y, z);
+    private int State(int x, int y, int z) => _world.GetState(x, y, z, _data);
 
     private bool Loaded(int x, int z) => _world.IsLoaded(x, z);
 
@@ -145,7 +148,7 @@ public sealed class Pathfinder
     /// <summary>Whether a door or gate lets you through moving along x (it faces east or west) rather than z.</summary>
     private bool DoorAlongX(int state) => _data.GetProperty(state, "facing") is "east" or "west";
 
-    private bool Dangerous(int state) => state > 0 && (_avoidBlocks.Contains(_data.StateBlock[state]) || (_data.StateFlags[state] & GameData.FlagLava) != 0);
+    private bool Dangerous(int state) => state > 0 && (_avoidBlocks.Contains(_data.StateBlock[state]) || (_data.StateFlags[state] & (GameData.FlagLava | GameData.FlagSticky)) != 0);
 
     /// <summary>
     /// Where the feet are when standing in block (x,y,z): y + the top of a low collision shape in it (slab 0.5,

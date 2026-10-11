@@ -37,8 +37,29 @@ public sealed class GameWorld
 
     public bool IsLoaded(int x, int z) => _columns.ContainsKey(Key(x >> 4, z >> 4));
 
-    /// <summary>The block state at a world position; air outside the world's height, Unloaded where unknown.</summary>
+    /// <summary>
+    /// The block state at a world position, as Data knows it (a modded state it has no data for is UnknownState);
+    /// air outside the world's height, Unloaded where no chunk is loaded.
+    /// </summary>
     public int GetState(int x, int y, int z)
+    {
+        if (y < MinY || y > MaxY) return 0;
+        return _columns.TryGetValue(Key(x >> 4, z >> 4), out var c) ? Data.Known(c.Get(x, y, z)) : Unloaded;
+    }
+
+    /// <summary>
+    /// The block state as a given table knows it. For code that holds on to one table for a while (a pathfinder, the
+    /// physics): Data can be replaced at any moment (Vertex learns a block), and an id from the new table must never
+    /// index the old one's arrays.
+    /// </summary>
+    public int GetState(int x, int y, int z, GameData data)
+    {
+        var raw = GetRawState(x, y, z);
+        return raw < 0 ? raw : data.Known(raw);
+    }
+
+    /// <summary>The state id exactly as the server sent it (a modded one may be beyond Data).</summary>
+    public int GetRawState(int x, int y, int z)
     {
         if (y < MinY || y > MaxY) return 0;
         return _columns.TryGetValue(Key(x >> 4, z >> 4), out var c) ? c.Get(x, y, z) : Unloaded;
@@ -58,12 +79,11 @@ public sealed class GameWorld
 
     internal void SetState(int x, int y, int z, int state)
     {
-        state = Data.Known(state); // modded states -> the solid unknown state
         if (!_columns.TryGetValue(Key(x >> 4, z >> 4), out var c)) return;
         var old = c.Get(x, y, z);
         if (old == state) return;
-        c.Set(x, y, z, state);
-        BlockChanged?.Invoke(x, y, z, old, state);
+        c.Set(x, y, z, state); // raw, like chunks
+        BlockChanged?.Invoke(x, y, z, Data.Known(old), Data.Known(state));
     }
 
     /// <summary>
@@ -88,12 +108,12 @@ public sealed class GameWorld
                 var sy = column.MinY + (s << 4);
                 var dy = Math.Max(Math.Max(sy - from.Y, from.Y - (sy + 16)), 0);
                 if (dx * dx + dy * dy + dz * dz > max2) continue;
-                if (section.IsUniform && !stateMatches(section.Get(0, 0, 0))) continue;
+                if (section.IsUniform && !stateMatches(Data.Known(section.Get(0, 0, 0)))) continue;
                 for (var y = 0; y < 16; y++)
                 for (var z = 0; z < 16; z++)
                 for (var x = 0; x < 16; x++)
                 {
-                    if (!stateMatches(section.Get(x, y, z))) continue;
+                    if (!stateMatches(Data.Known(section.Get(x, y, z)))) continue;
                     double ex = cx + x + 0.5 - from.X, ey = sy + y + 0.5 - from.Y, ez = cz + z + 0.5 - from.Z;
                     var d = ex * ex + ey * ey + ez * ez;
                     if (d <= max2) found.Add((cx + x, sy + y, cz + z, d));

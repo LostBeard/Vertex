@@ -60,7 +60,8 @@ public sealed partial class GameData
     /// <summary>Minecraft 1.21.5.</summary>
     public static GameData Vanilla => _vanilla.Value;
 
-    public const byte FlagAir = 1, FlagNeedsTool = 2, FlagReplaceable = 4, FlagWater = 8, FlagLava = 16, FlagFluidSource = 32, FlagBlocksMotion = 64;
+    public const byte FlagAir = 1, FlagNeedsTool = 2, FlagReplaceable = 4, FlagWater = 8, FlagLava = 16, FlagFluidSource = 32, FlagBlocksMotion = 64,
+        FlagSticky = 128; // learned by touch: you can enter it but it holds you (a modded cobweb); pathing avoids it
 
     public string Version { get; private init; } = "";
     public BlockType[] Blocks { get; private init; } = [];
@@ -102,14 +103,17 @@ public sealed partial class GameData
     /// (WithModdedBlocks). UnknownState comes right after them.
     /// </summary>
     public int KnownStateCount { get; private init; }
-    /// <summary>The stand-in for block states a modded server uses that we have no data for: a solid cube.</summary>
-    public int UnknownState => KnownStateCount;
+    /// <summary>The stand-in for block states a modded server uses that we have no data for: a solid cube (the last state).</summary>
+    public int UnknownState => StateBlock.Length - 1;
     public int StateCount => StateBlock.Length;
     /// <summary>Modded blocks added by WithModdedBlocks (0 for vanilla).</summary>
     public int ModdedBlockCount { get; private init; }
 
     /// <summary>A state id from the network, with ones beyond this table (modded, no data) mapped to UnknownState.</summary>
-    public int Known(int state) => (uint)state < (uint)KnownStateCount ? state : UnknownState;
+    public int Known(int state) => (uint)state < (uint)UnknownState ? state : UnknownState;
+
+    /// <summary>A modded block we know nothing about (the unknown stand-in, or a state learned only partly): never dug.</summary>
+    public bool IsUnknownBlock(int state) => StateBlock[state] == StateBlock[UnknownState];
 
     public BlockType? Block(string name) => _blocksByName.GetValueOrDefault(Normalize(name));
     public ItemType? Item(string name) => _itemsByName.GetValueOrDefault(Normalize(name));

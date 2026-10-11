@@ -776,6 +776,56 @@ public sealed class Skills(MinecraftClient client)
         return (true, $"I built a {pretty} bridge {gap.Count} blocks long going {Name(face)}, and I'm on the other side.");
     }
 
+    // ---------------------------------------------------------------- learning unknown blocks by touch
+
+    /// <summary>
+    /// Kinds of block (raw states) near here that Vertex has no data for and has not studied yet, nearest first:
+    /// a modded server's blocks when no modpack taught them.
+    /// </summary>
+    public List<(int X, int Y, int Z, int Raw)> UnstudiedBlocks(double radius)
+    {
+        var w = client.World;
+        var known = D.KnownStateCount;
+        var seen = new HashSet<int>();
+        var result = new List<(int, int, int, int)>();
+        foreach (var (x, y, z) in w.FindBlocks(s => D.IsUnknownBlock(s), client.Position, radius, 4096))
+        {
+            var raw = w.GetRawState(x, y, z);
+            if (raw < known || client.LearnedShapes.ContainsKey(raw) || !seen.Add(raw)) continue;
+            result.Add((x, y, z, raw));
+        }
+        return result;
+    }
+
+    /// <summary>
+    /// Studies the unknown blocks around: for each kind not yet learned, walks up to one (never breaking anything)
+    /// and feels its shape from every open side and from above, the server deciding where its body fits. From then
+    /// on physics and pathing use the real shape (a doormat is a floor, a cobweb a trap to avoid).
+    /// </summary>
+    public async Task<(bool, string)> StudyBlocksAsync(double radius, CancellationToken ct)
+    {
+        var learned = 0;
+        var sticky = 0;
+        var unreachable = 0;
+        var tried = new HashSet<int>();
+        while (!ct.IsCancellationRequested)
+        {
+            var next = UnstudiedBlocks(radius).FirstOrDefault(b => !tried.Contains(b.Raw));
+            if (next == default) break;
+            tried.Add(next.Raw);
+            // The nearest instance of this kind that has room around it.
+            var probe = await client.MeasureBlockAsync(next.X, next.Y, next.Z, ct);
+            if (probe == null) { unreachable++; continue; }
+            client.Learn(probe);
+            learned++;
+            if (probe.Sticky) sticky++;
+        }
+        if (learned == 0 && unreachable == 0) return (true, "There are no blocks around here I don't know.");
+        var msg = learned == 0 ? "I couldn't get next to the strange blocks to feel them out."
+            : $"I studied {learned} kinds of block I didn't know{(sticky > 0 ? $", and {sticky} of them would trap me, so I'll stay out of those" : "")}.";
+        return (learned > 0, unreachable > 0 && learned > 0 ? msg + $" {unreachable} I couldn't get next to." : msg);
+    }
+
     // ---------------------------------------------------------------- farming
 
     /// <summary>Crops: the block, its ripe age, and the item that replants it.</summary>

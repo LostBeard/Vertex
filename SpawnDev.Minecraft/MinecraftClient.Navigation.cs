@@ -125,7 +125,7 @@ public sealed partial class MinecraftClient
     {
         if (World.Data.Hardness[state] < 0) return null;
         // Never through someone's build, nor through modded blocks we know nothing about.
-        if (state == World.Data.UnknownState || IsBuiltBlock(World.Data.BlockOf(state))) return null;
+        if (World.Data.IsUnknownBlock(state) || IsBuiltBlock(World.Data.BlockOf(state))) return null;
         // The best tool we carry (Vertex swaps to it before digging).
         var best = TicksToBreak(state);
         foreach (var slot in Inventory.Find(s => s.Type?.ToolRules.Length > 0))

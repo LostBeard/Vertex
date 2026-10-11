@@ -30,6 +30,14 @@ public sealed class ClientOptions
     public IReadOnlyDictionary<string, Data.ModdedBlock>? ModdedBlocks { get; set; }
     /// <summary>Use the modded blocks built into SpawnDev.Minecraft (tools/ModDump). Off: only ModdedBlocks.</summary>
     public bool UseEmbeddedModdedBlocks { get; set; } = true;
+    /// <summary>
+    /// Shapes learned by touch on an earlier visit (raw state id -> boxes). Used only while the server's block list
+    /// still has the fingerprint they were learned under (LearnedFingerprint): different mods number states differently.
+    /// </summary>
+    public IReadOnlyDictionary<int, Data.Box[]>? LearnedShapes { get; set; }
+    /// <summary>Learned states that hold you (sticky), saved alongside LearnedShapes.</summary>
+    public IReadOnlyCollection<int>? LearnedSticky { get; set; }
+    public string? LearnedFingerprint { get; set; }
 }
 
 /// <summary>
@@ -603,6 +611,7 @@ public sealed partial class MinecraftClient : IAsyncDisposable
                 _players.Clear(); // the next server sends its own list
                 Commands = null; // and its own commands
                 _fabricRegistries.Clear(); // and, if it is a Fabric server, its own registry sync
+                _learned.Clear(); // learned shapes are per server (its own state numbering)
                 RebuildWorldData();
                 await SendClientInformationAsync(CB.Configuration.Serverbound.ClientInformation, ct);
                 await RegisterFabricChannelsAsync(ct); // the next server may be a Fabric one (proxy server switch)

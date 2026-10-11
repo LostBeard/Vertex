@@ -175,6 +175,75 @@ public sealed partial class GameData
     }
 
     /// <summary>
+    /// This table plus shapes learned by touch for states it has no data for (raw state id -> collision boxes, from
+    /// MinecraftClient.MeasureBlockAsync). They stay "unknown blocks" (no name, never dug, hardness unknown) but
+    /// physics and pathing use their real shape: a carpet you walk over, a door plate, a small pumpkin. States that
+    /// are neither known nor learned stay solid unknown cubes.
+    /// </summary>
+    public GameData WithLearnedStates(IReadOnlyDictionary<int, Box[]> learned, IReadOnlySet<int>? sticky = null)
+    {
+        var mine = learned.Where(kv => kv.Key >= KnownStateCount && kv.Key < ModdedTableSize - 1).ToList();
+        return mine.Count == 0 ? this : Padded(mine, sticky);
+    }
+
+    /// <summary>Every 16-bit state id a server can send, plus the unknown stand-in at the end.</summary>
+    public const int ModdedTableSize = 65537;
+
+    /// <summary>
+    /// This table sized for every state id a modded server can send (unknown ones solid cubes until learned).
+    /// Learning then changes entries but never the length, so a state id read through a newer table can never index
+    /// past an older one that some code still holds.
+    /// </summary>
+    public GameData ForModdedServer() => StateBlock.Length >= ModdedTableSize ? this : Padded([], null);
+
+    private GameData Padded(List<KeyValuePair<int, Box[]>> mine, IReadOnlySet<int>? sticky)
+    {
+        var unknown = UnknownState;
+        var n = Math.Max(ModdedTableSize, StateBlock.Length);
+        var last = n - 1; // the unknown stand-in
+        T[] Grow<T>(T[] a)
+        {
+            var b = new T[n];
+            Array.Copy(a, b, a.Length);
+            for (var i = a.Length; i < n; i++) b[i] = a[unknown];
+            return b;
+        }
+        var stateBlock = Grow(StateBlock);
+        var hardness = Grow(Hardness);
+        var flags = Grow(StateFlags);
+        var shape = Grow(StateShape);
+        var shapes = Shapes.ToList();
+        foreach (var (id, boxes) in mine)
+        {
+            shape[id] = (ushort)shapes.Count;
+            shapes.Add(boxes);
+            flags[id] = boxes.Length == 0 ? (byte)0 : GameData.FlagBlocksMotion;
+            if (sticky?.Contains(id) == true) flags[id] |= GameData.FlagSticky;
+        }
+        var blocks = Blocks.ToArray();
+        var u = blocks[^1];
+        blocks[^1] = new BlockType { Id = u.Id, Name = u.Name, MinState = last, MaxState = last, DefaultState = last, ExplosionResistance = u.ExplosionResistance };
+        var data = new GameData
+        {
+            Version = Version, Blocks = blocks, Items = Items, Entities = Entities, Recipes = Recipes,
+            Registries = Registries, PlayerAttributes = PlayerAttributes,
+            StateBlock = stateBlock, Hardness = hardness, StateFlags = flags, StateShape = shape, Friction = Grow(Friction),
+            SpeedFactor = Grow(SpeedFactor), JumpFactor = Grow(JumpFactor), FluidAmount = Grow(FluidAmount), Shapes = shapes.ToArray(),
+            VanillaStateCount = VanillaStateCount, KnownStateCount = KnownStateCount, ModdedBlockCount = ModdedBlockCount,
+            LearnedStateCount = LearnedStateCount + mine.Count,
+        };
+        data._blocksByName = blocks.ToDictionary(b => b.Name);
+        data._itemsByName = _itemsByName;
+        data._entitiesByName = _entitiesByName;
+        data._itemTags = _itemTags;
+        data._blockTags = _blockTags;
+        return data;
+    }
+
+    /// <summary>States whose shape was learned by touch (WithLearnedStates).</summary>
+    public int LearnedStateCount { get; private init; }
+
+    /// <summary>
     /// This table with the block tags a server sent (update_tags: tag -> raw block ids, already flattened), which on
     /// a modded server put modded blocks in vanilla tags (a mod's doors in minecraft:wooden_doors, its ladders in
     /// minecraft:climbable). Ids beyond this table's blocks are dropped.

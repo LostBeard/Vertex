@@ -122,4 +122,35 @@ public class GameDataTests
         Assert.That(tagged.BlockTag("wooden_doors"), Is.EquivalentTo(new[] { "minecraft:oak_door", "spookydoors:spooky_oak_door" }));
         Assert.That(m.BlockTag("wooden_doors"), Does.Not.Contain("spookydoors:spooky_oak_door"), "the table it came from is unchanged");
     }
+
+    [Test]
+    public void LearnedShapes_ApplyToTheirStates_OthersStayUnknown()
+    {
+        var mat = new[] { new Box(0, 0, 0, 1, 0.0625, 1) };
+        var l = D.WithLearnedStates(new Dictionary<int, Box[]> { [D.KnownStateCount + 5] = mat, [D.KnownStateCount + 9] = [], [3] = [] },
+            new HashSet<int> { D.KnownStateCount + 9 });
+        Assert.That(l.LearnedStateCount, Is.EqualTo(2), "a vanilla state is never relearned");
+        Assert.That(l.CollisionBoxes(D.KnownStateCount + 5), Is.EqualTo(mat));
+        Assert.That(l.HasCollision(D.KnownStateCount + 9), Is.False);
+        Assert.That(l.StateFlags[D.KnownStateCount + 9] & GameData.FlagSticky, Is.Not.Zero);
+        Assert.That(l.IsUnknownBlock(D.KnownStateCount + 5), "learned by touch: still nameless, never dug");
+        // Neither known nor learned: the solid unknown cube, gaps included.
+        foreach (var s in new[] { D.KnownStateCount + 6, D.KnownStateCount + 40 })
+        {
+            var k = l.Known(s);
+            Assert.That(l.CollisionBoxes(k), Is.EqualTo(new[] { new Box(0, 0, 0, 1, 1, 1) }), $"state {s}");
+            Assert.That(l.IsUnknownBlock(k));
+        }
+        Assert.That(l.Known(D.KnownStateCount + 5), Is.EqualTo(D.KnownStateCount + 5));
+        Assert.That(l.BlockOf(l.UnknownState).Name, Is.EqualTo("vertex:unknown_modded_block"));
+        Assert.That(D.WithLearnedStates(new Dictionary<int, Box[]>()), Is.SameAs(D));
+
+        // On a modded server tables cover every state id from the start, so learning never changes their length:
+        // an id read through a newer table is always safe to look up in an older one some code still holds.
+        var before = D.ForModdedServer();
+        var after = before.WithLearnedStates(new Dictionary<int, Box[]> { [60_000] = mat });
+        Assert.That((before.StateCount, after.StateCount), Is.EqualTo((GameData.ModdedTableSize, GameData.ModdedTableSize)));
+        Assert.That(before.CollisionBoxes(after.Known(60_000)), Is.EqualTo(new[] { new Box(0, 0, 0, 1, 1, 1) }), "the older table: still unknown, no exception");
+        Assert.That(after.CollisionBoxes(after.Known(60_000)), Is.EqualTo(mat));
+    }
 }

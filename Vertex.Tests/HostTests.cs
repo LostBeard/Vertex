@@ -68,14 +68,23 @@ public class HostTests
 
     /// <summary>
     /// The dashboard path on a modded server it knows nothing about (built-in catalog off): Vertex notices at join,
-    /// learns the blocks from the server's modpack in the background, saves them for that world, rejoins, and
-    /// then knows every block. The pack is a copy of the real AubsCraft index (jars from Modrinth's CDN).
+    /// learns the blocks from the server's modpack in the background, saves them for that world, and knows every
+    /// block from then on, the ones already loaded included, without rejoining. The pack is a copy of the real
+    /// AubsCraft index (jars from Modrinth's CDN).
     /// </summary>
     [Test]
-    public async Task LearnsAModdedServersBlocks_FromItsModpack_AndRejoins()
+    public async Task LearnsAModdedServersBlocks_FromItsModpack_WhilePlaying()
     {
         if (!SpookyServer.Available) Assert.Ignore("no spooky server installed here: " + SpookyServer.Template);
         await using var server = await SpookyServer.StartAsync("host-spooky", Port + 1);
+        // A spooky door at the spawn point, there before Vertex arrives: loaded while it knows nothing about it.
+        await server.CommandAsync("gamerule spawnRadius 0");
+        await server.CommandAsync("setworldspawn 0 120 0");
+        await server.CommandAsync("forceload add -16 -16 16 16");
+        await server.CommandAsync("fill -4 119 -4 4 119 4 minecraft:stone");
+        await server.CommandAsync("fill -4 120 -4 4 124 4 minecraft:air");
+        await server.CommandAsync("setblock 2 120 0 spookydoors:spooky_oak_door[half=lower]");
+        await server.WaitForLineAsync(l => l.Contains("Changed the block"), TimeSpan.FromSeconds(30), includeHistory: true);
         var folder = Path.Combine(Path.GetTempPath(), "vertex-host-" + Guid.NewGuid().ToString("N"));
         var pack = Path.Combine(folder, "aubscraft.mrpack");
         Directory.CreateDirectory(folder);
@@ -96,14 +105,71 @@ public class HostTests
             Assert.That(first.UnknownModdedBlocks, Is.Not.Empty, "nothing known yet");
             Assert.That(host.Lines.Any(l => l.Text.Contains("modded blocks I have no data for")), "said so at join");
 
-            // It learns, then rejoins as a new client that knows them all.
-            await Wait.UntilAsync(() => host.Client != null && !ReferenceEquals(host.Client, first) && host.State == HostState.Playing, TimeSpan.FromMinutes(10),
+            var (fx, fy, fz) = (2, 120, 0);
+            await Wait.UntilAsync(() => first.World.GetRawState(fx, fy, fz) >= first.World.Data.VanillaStateCount, TimeSpan.FromSeconds(30),
+                () => $"door chunk; Vertex at {first.Position}, raw there {first.World.GetRawState(fx, fy, fz)}");
+            var unknownWhenLoaded = first.World.Data.IsUnknownBlock(first.World.GetState(fx, fy, fz));
+            TestContext.Out.WriteLine($"Vertex spawned at {first.Position}; the door was unknown when loaded: {unknownWhenLoaded}");
+            // It learns, and the same connection knows them all, the door it already had included.
+            await Wait.UntilAsync(() => first.UnknownModdedBlocks.Count == 0, TimeSpan.FromMinutes(10),
                 () => string.Join(Environment.NewLine, host.Lines.TakeLast(12).Select(l => $"{l.Kind}: {l.Text}")));
             foreach (var l in host.Lines) TestContext.Out.WriteLine($"{l.Kind}: {l.Text}");
-            Assert.That(host.Client!.UnknownModdedBlocks, Is.Empty);
-            Assert.That(host.Client.World.Data.ModdedBlockCount, Is.EqualTo(host.Client.FabricRegistries["minecraft:block"].Count - (SpawnDev.Minecraft.Data.GameData.Vanilla.Blocks.Length - 1)));
+            Assert.That(host.Client, Is.SameAs(first), "no rejoin");
+            Assert.That(unknownWhenLoaded, "the door was loaded before Vertex knew what it was");
+            Assert.That(first.World.GetBlock(fx, fy, fz)?.Name, Is.EqualTo("spookydoors:spooky_oak_door"), "and now it knows it, no rejoin");
+            Assert.That(host.Lines.Any(l => l.Text.Contains("I know this server's blocks now")), "said so");
+            Assert.That(first.World.Data.ModdedBlockCount, Is.EqualTo(first.FabricRegistries["minecraft:block"].Count - (SpawnDev.Minecraft.Data.GameData.Vanilla.Blocks.Length - 1)));
             Assert.That(Directory.GetFiles(Path.Combine(folder, "worlds"), "*.blocks.json"), Has.Length.EqualTo(1), "saved for this world");
             Assert.That(host.Lines.Any(l => l.Kind == LineKind.Error), Is.False, string.Join(Environment.NewLine, host.Lines.Where(l => l.Kind == LineKind.Error).Select(l => l.Text)));
+            await host.StopAsync();
+        }
+        finally
+        {
+            await host.DisposeAsync();
+            if (Directory.Exists(folder)) Directory.Delete(folder, true);
+        }
+    }
+
+    /// <summary>
+    /// Curiosity: on a modded server with no modpack (and the built-in catalog off), an idle Vertex studies the
+    /// unknown blocks around it by touch on its own, saves what it learned for that world, and starts the next
+    /// session knowing them.
+    /// </summary>
+    [Test]
+    public async Task StudiesUnknownBlocks_WhenIdle_AndRemembersThem()
+    {
+        if (!SpookyServer.Available) Assert.Ignore("no spooky server installed here: " + SpookyServer.Template);
+        await using var server = await SpookyServer.StartAsync("host-curious", Port + 2);
+        var folder = Path.Combine(Path.GetTempPath(), "vertex-host-" + Guid.NewGuid().ToString("N"));
+        var host = new VertexHost(folder) { UseEmbeddedModdedBlocks = false, ModsCache = PaperServer.CacheRoot };
+        try
+        {
+            host.Settings.Server = "127.0.0.1";
+            host.Settings.Port = Port + 2;
+            host.Settings.Account = "";
+            host.Settings.OfflineName = "VertexCurious";
+            host.Settings.Voice = false;
+            await host.StartAsync().WaitAsync(Timeout);
+            Assert.That(host.State, Is.EqualTo(HostState.Playing), host.Status);
+            var client = host.Client!;
+            host.Brain!.IdleBeforeGoals = TimeSpan.FromSeconds(3);
+            var (x, y, z) = client.FeetBlock;
+            await server.CommandAsync($"fill {x - 6} {y} {z - 6} {x + 6} {y + 4} {z + 6} minecraft:air");
+            await server.CommandAsync($"fill {x - 6} {y - 1} {z - 6} {x + 6} {y - 1} {z + 6} minecraft:stone");
+            await server.CommandAsync($"setblock {x + 3} {y} {z} mcwholidays:bat_doormat");
+            await server.CommandAsync($"setblock {x} {y} {z + 3} mcwholidays:blue_candy_cane_block");
+            // Nobody asks it anything: it gets curious by itself.
+            await Wait.UntilAsync(() => client.LearnedShapes.Count >= 2 && host.Brain!.Tasks.Current == null, TimeSpan.FromMinutes(5),
+                () => string.Join(Environment.NewLine, host.Lines.TakeLast(12).Select(l => $"{l.Kind}: {l.Text}")));
+            foreach (var l in host.Lines) TestContext.Out.WriteLine($"{l.Kind}: {l.Text}");
+            Assert.That(host.Lines.Any(l => l.Text.Contains("studying blocks I don't know") || l.Text.Contains("studied")), "it said what it was doing");
+            await host.StopAsync();
+            Assert.That(Directory.GetFiles(Path.Combine(folder, "worlds"), "*.touched.json"), Has.Length.EqualTo(1), "saved for this world");
+
+            // Next session: it knows them from the start.
+            await host.StartAsync().WaitAsync(Timeout);
+            Assert.That(host.State, Is.EqualTo(HostState.Playing), host.Status);
+            Assert.That(host.Client!.LearnedShapes.Count, Is.GreaterThanOrEqualTo(2));
             await host.StopAsync();
         }
         finally

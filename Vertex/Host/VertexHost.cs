@@ -74,9 +74,21 @@ public sealed class VertexHost : IAsyncDisposable
     /// <summary>Where downloaded mods, the Fabric server and Java are kept.</summary>
     internal string ModsCache { get; set; } = Mods.ModpackBlocks.DefaultCache;
 
+    /// <summary>Block shapes learned by touch on this server.</summary>
+    private string WorldTouchedFile => WorldFileBase + ".touched.json";
+
+    private void SaveTouched()
+    {
+        if (_client is { LearnedShapes.Count: > 0, BlockRegistryFingerprint: { } fp } c)
+            Mods.TouchedBlocks.Save(WorldTouchedFile, new Mods.TouchedBlocks(fp, c.LearnedShapes.ToDictionary(), c.StickyStates.ToList()));
+    }
+
     /// <summary>What Vertex has learned about this server's modded blocks (next to its world memory).</summary>
-    private string WorldBlocksFile => System.IO.Path.Combine(_dataFolder, "worlds",
-        string.Concat($"{Settings.Server}_{Settings.Port}".ToLowerInvariant().Split(System.IO.Path.GetInvalidFileNameChars())) + ".blocks.json");
+    private string WorldBlocksFile => WorldFileBase + ".blocks.json";
+
+    /// <summary>worlds/&lt;server_port&gt; under the data folder (the world memory is worlds/&lt;server_port&gt;.json).</summary>
+    private string WorldFileBase => System.IO.Path.Combine(_dataFolder, "worlds",
+        string.Concat($"{Settings.Server}_{Settings.Port}".ToLowerInvariant().Split(System.IO.Path.GetInvalidFileNameChars())));
     private VertexAi? _ai;
     private MinecraftClient? _client;
     private SimpleVoiceChat? _voice;
@@ -168,11 +180,15 @@ public sealed class VertexHost : IAsyncDisposable
             SetStatus(HostState.Starting, $"Joining {Settings.Server}...");
             // Brand "vertex": honest, and not "vanilla" (AubsCraft's proxy keeps vanilla clients off modded servers
             // because they cannot answer Fabric's registry sync; Vertex can).
+            var touched = Mods.TouchedBlocks.Load(WorldTouchedFile);
             _client = new MinecraftClient(profile, new ClientOptions
             {
                 Brand = "vertex",
                 Log = m => { if (m.StartsWith("disconnected") || m.StartsWith("joined") || m.StartsWith("spawned") || m.StartsWith("modded blocks")) Add(LineKind.System, m); },
                 ModdedBlocks = Mods.ModpackBlocks.LoadWorld(WorldBlocksFile),
+                LearnedShapes = touched?.Shapes,
+                LearnedSticky = touched?.Sticky,
+                LearnedFingerprint = touched?.Fingerprint,
                 UseEmbeddedModdedBlocks = UseEmbeddedModdedBlocks,
             });
             _client.ChatReceived += m => Add(LineKind.Chat, m.Text);
@@ -211,7 +227,7 @@ public sealed class VertexHost : IAsyncDisposable
 
     /// <summary>
     /// After joining: blocks from mods Vertex has no data for are solid unknown cubes. Says which, and (once per
-    /// session) learns them from the server's modpack, saves that for this world, and rejoins to use it.
+    /// session) learns them from the server's modpack, saves that for this world, and uses it at once (no rejoin: chunks keep raw state ids).
     /// </summary>
     private void CheckModdedBlocks()
     {
@@ -237,11 +253,9 @@ public sealed class VertexHost : IAsyncDisposable
                 Mods.ModpackBlocks.SaveWorld(WorldBlocksFile, known.Where(k => !learned.ContainsKey(k.Name)).Concat(learned.Values), pack);
                 var missing = unknown.Where(n => !learned.ContainsKey(n)).ToList();
                 if (missing.Count > 0) Add(LineKind.System, $"the modpack does not have {missing.Count} of them: {string.Join(", ", missing.Take(10))}");
-                if (State != HostState.Playing) return;
-                _brain?.Mouth.Say("I learned this server's blocks! Be right back.");
-                await Task.Delay(TimeSpan.FromSeconds(3));
-                await StopAsync();
-                await StartAsync();
+                if (State != HostState.Playing || _client == null) return;
+                _client.AddModdedBlocks(learned); // applies at once: chunks keep raw state ids, no rejoin needed
+                _brain?.Mouth.Say("Got it, I know this server's blocks now!");
             }
             catch (Exception e)
             {
@@ -269,6 +283,7 @@ public sealed class VertexHost : IAsyncDisposable
 
     private async Task TearDownAsync()
     {
+        SaveTouched();
         if (_brain != null) { await _brain.DisposeAsync(); _brain = null; }
         if (_voice != null) { await _voice.DisposeAsync(); _voice = null; }
         if (_client != null) { await _client.DisposeAsync(); _client = null; }

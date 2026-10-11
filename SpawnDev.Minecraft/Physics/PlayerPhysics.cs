@@ -342,7 +342,7 @@ public sealed class PlayerPhysics
         if (dy != cy)
         {
             // Block.updateEntityMovementAfterFallOn: slime bounces, beds bounce a little, else stop.
-            var on = s.SupportingBlock is { } sb ? _data.StateBlock[Math.Max(0, _world.GetState(sb.X, sb.Y, sb.Z))] : -1;
+            var on = s.SupportingBlock is { } sb ? _data.StateBlock[Math.Max(0, StateAt(sb.X, sb.Y, sb.Z))] : -1;
             if (on == _slime && !c.Sneak && s.VelY < 0) s.VelY = -s.VelY;
             else if (_bedLike.Contains(on) && !c.Sneak && s.VelY < 0) s.VelY = -s.VelY * 0.66f;
             else s.VelY = 0;
@@ -472,7 +472,7 @@ public sealed class PlayerPhysics
             }
             for (var y = y0; y <= y1; y++)
             {
-                var state = _world.GetState(x, y, z);
+                var state = StateAt(x, y, z);
                 if (state <= 0) continue;
                 foreach (var b in _data.CollisionBoxes(state))
                 {
@@ -497,7 +497,7 @@ public sealed class PlayerPhysics
         for (var y = (int)Math.Floor(box.MinY); y <= (int)Math.Floor(box.MaxY); y++)
         for (var z = (int)Math.Floor(box.MinZ); z <= (int)Math.Floor(box.MaxZ); z++)
         {
-            var st = _world.GetState(x, y, z);
+            var st = StateAt(x, y, z);
             if (st > 0 && (_data.StateFlags[st] & (GameData.FlagWater | GameData.FlagLava)) != 0) return true;
         }
         return false;
@@ -567,7 +567,7 @@ public sealed class PlayerPhysics
         for (var y = (int)Math.Floor(under.MinY); y <= (int)Math.Floor(under.MaxY); y++)
         for (var z = (int)Math.Floor(under.MinZ); z <= (int)Math.Floor(under.MaxZ); z++)
         {
-            var st = _world.GetState(x, y, z);
+            var st = StateAt(x, y, z);
             if (st <= 0) continue;
             var hit = false;
             foreach (var b in _data.CollisionBoxes(st))
@@ -590,43 +590,46 @@ public sealed class PlayerPhysics
 
     private float Friction((int X, int Y, int Z) p)
     {
-        var st = _world.GetState(p.X, p.Y, p.Z);
+        var st = StateAt(p.X, p.Y, p.Z);
         return st < 0 ? 0.6f : _data.Friction[st];
     }
 
     private float BlockSpeedFactor(PlayerState s)
     {
-        var st = _world.GetState((int)Math.Floor(s.X), (int)Math.Floor(s.Y), (int)Math.Floor(s.Z));
+        var st = StateAt((int)Math.Floor(s.X), (int)Math.Floor(s.Y), (int)Math.Floor(s.Z));
         if (st < 0) return 1;
         var block = _data.StateBlock[st];
         if (block == _data.Block("water")!.Id || block == _bubbleColumn) return 1;
         var f = _data.SpeedFactor[st];
         if (f != 1.0f) return f;
         var b = BlockBelowThatAffectsMovement(s);
-        var below = _world.GetState(b.X, b.Y, b.Z);
+        var below = StateAt(b.X, b.Y, b.Z);
         return below < 0 ? 1 : _data.SpeedFactor[below];
     }
 
     private float BlockJumpFactor(PlayerState s)
     {
-        var st = _world.GetState((int)Math.Floor(s.X), (int)Math.Floor(s.Y), (int)Math.Floor(s.Z));
+        var st = StateAt((int)Math.Floor(s.X), (int)Math.Floor(s.Y), (int)Math.Floor(s.Z));
         var f = st < 0 ? 1 : _data.JumpFactor[st];
         if (f != 1.0f) return f;
         var b = BlockBelowThatAffectsMovement(s);
-        var below = _world.GetState(b.X, b.Y, b.Z);
+        var below = StateAt(b.X, b.Y, b.Z);
         return below < 0 ? 1 : _data.JumpFactor[below];
     }
 
+    /// <summary>A block state as this physics' table knows it (the world's table can be replaced mid-tick).</summary>
+    private int StateAt(int x, int y, int z) => _world.GetState(x, y, z, _data);
+
     private bool OnClimbable(PlayerState s)
     {
-        var st = _world.GetState((int)Math.Floor(s.X), (int)Math.Floor(s.Y), (int)Math.Floor(s.Z));
+        var st = StateAt((int)Math.Floor(s.X), (int)Math.Floor(s.Y), (int)Math.Floor(s.Z));
         if (st <= 0) return false;
         var block = _data.StateBlock[st];
         if (_climbable.Contains(block)) return true;
         // An open trapdoor directly above a ladder facing the same way climbs like the ladder.
         if (_data.BlockOf(st).Name.EndsWith("_trapdoor") && _data.GetProperty(st, "open") == "true")
         {
-            var below = _world.GetState((int)Math.Floor(s.X), (int)Math.Floor(s.Y) - 1, (int)Math.Floor(s.Z));
+            var below = StateAt((int)Math.Floor(s.X), (int)Math.Floor(s.Y) - 1, (int)Math.Floor(s.Z));
             return below > 0 && _data.StateBlock[below] == _ladder && _data.GetProperty(below, "facing") == _data.GetProperty(st, "facing");
         }
         return false;
@@ -639,7 +642,7 @@ public sealed class PlayerPhysics
         for (var y = (int)Math.Floor(box.MinY); y <= (int)Math.Floor(box.MaxY); y++)
         for (var z = (int)Math.Floor(box.MinZ); z <= (int)Math.Floor(box.MaxZ); z++)
         {
-            var st = _world.GetState(x, y, z);
+            var st = StateAt(x, y, z);
             if (st > 0 && _data.StateBlock[st] == blockId) return true;
         }
         return false;
@@ -653,7 +656,7 @@ public sealed class PlayerPhysics
         for (var y = (int)Math.Floor(box.MinY); y <= (int)Math.Floor(box.MaxY); y++)
         for (var z = (int)Math.Floor(box.MinZ); z <= (int)Math.Floor(box.MaxZ); z++)
         {
-            var st = _world.GetState(x, y, z);
+            var st = StateAt(x, y, z);
             if (st <= 0) continue;
             var block = _data.StateBlock[st];
             if (block == _cobweb) (s.StuckX, s.StuckY, s.StuckZ) = (0.25, 0.05000000074505806, 0.25);
@@ -671,7 +674,7 @@ public sealed class PlayerPhysics
         for (var y = (int)Math.Floor(box.MinY); y < (int)Math.Ceiling(box.MaxY); y++)
         for (var z = (int)Math.Floor(box.MinZ); z < (int)Math.Ceiling(box.MaxZ); z++)
         {
-            var st = _world.GetState(x, y, z);
+            var st = StateAt(x, y, z);
             if (st <= 0) continue;
             var flags = _data.StateFlags[st];
             if ((flags & (GameData.FlagWater | GameData.FlagLava)) == 0) continue;
@@ -691,7 +694,7 @@ public sealed class PlayerPhysics
     /// <summary>FluidState.getHeight: a full block when the same fluid is above, else amount/9.</summary>
     private float FluidHeight(int x, int y, int z, int state)
     {
-        var above = _world.GetState(x, y + 1, z);
+        var above = StateAt(x, y + 1, z);
         var mask = _data.StateFlags[state] & (GameData.FlagWater | GameData.FlagLava);
         if (above > 0 && (_data.StateFlags[above] & mask) != 0) return 1f;
         return _data.FluidAmount[state] / 9f;

@@ -243,6 +243,15 @@ public static class GameTools
                 return Task.FromResult("OK: I started building a bridge. I am NOT done yet.");
             });
 
+        yield return new GameTool("learn_blocks",
+            "Study the strange blocks around here that you don't know (from mods): walk up to each kind and feel its shape, so you can walk on, around or through them properly. Breaks nothing.",
+            NoArgs,
+            a =>
+            {
+                tasks.Start("studying blocks I don't know", ct => skills.StudyBlocksAsync(16, ct));
+                return Task.FromResult("OK: I started studying the blocks I don't know. I am NOT done yet.");
+            });
+
         yield return new GameTool("explore",
             "Go exploring in a direction and come back to tell what you found (villages, animals, ores, chests).",
             """{"type":"object","properties":{"direction":{"type":"string","description":"north, south, east, west, or empty for any"},"distance":{"type":"integer","description":"how far, in blocks (default 100)"}}}""",

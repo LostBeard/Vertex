@@ -165,7 +165,29 @@ public sealed partial class MinecraftClient
     /// that tools/ModDump has data for, with the server's block tags (which put modded doors, ladders... in the
     /// vanilla tags pathing and physics read). Rebuilt when either arrives; physics picks the new table up.
     /// </summary>
+    private readonly object _dataLock = new();
+
     private void RebuildWorldData()
+    {
+        lock (_dataLock) RebuildWorldDataLocked(); // the receive loop, learning and a modpack dump can all trigger it
+    }
+
+    /// <summary>
+    /// Uses more modded block facts from now on (a modpack dumped while playing): blocks already loaded change at
+    /// once, since chunks keep raw state ids.
+    /// </summary>
+    public void AddModdedBlocks(IReadOnlyDictionary<string, ModdedBlock> blocks)
+    {
+        lock (_dataLock)
+        {
+            var merged = (_options.ModdedBlocks ?? new Dictionary<string, ModdedBlock>()).ToDictionary();
+            foreach (var (k, v) in blocks) merged[k] = v;
+            _options.ModdedBlocks = merged;
+            RebuildWorldDataLocked();
+        }
+    }
+
+    private void RebuildWorldDataLocked()
     {
         var data = GameData.Vanilla;
         var unknown = new List<string>();
@@ -181,10 +203,19 @@ public sealed partial class MinecraftClient
             if (_tags.TryGetValue("minecraft:block", out var blockTags)) data = data.WithBlockTags(blockTags);
         }
         UnknownModdedBlocks = unknown;
+        BlockRegistryFingerprint = blocks == null ? null : Fingerprint(blocks);
+        if (_learned.Count == 0 && _options.LearnedShapes is { Count: > 0 } saved && _options.LearnedFingerprint == BlockRegistryFingerprint)
+        {
+            foreach (var (id, boxes) in saved) _learned[id] = boxes;
+            foreach (var id in _options.LearnedSticky ?? []) _sticky.Add(id);
+        }
+        // A modded server: room in the table for every state id it can send (see ForModdedServer).
+        if (blocks != null) data = data.ForModdedServer().WithLearnedStates(_learned, _sticky);
         if (ReferenceEquals(data, World.Data)) return;
         var before = World.Data.ModdedBlockCount;
         World.Data = data;
-        _physics = null;
+        _physics = null;    // both hold on to one table:
+        _pathfinder = null; // the next tick and the next plan pick the new one up
         if (data.ModdedBlockCount > 0 && data.ModdedBlockCount != before) // not again when only the tags changed
             Log($"modded blocks: {data.ModdedBlockCount} with data ({data.KnownStateCount - data.VanillaStateCount} states)"
                 + (blocks!.Count > data.Blocks.Length - 1 ? $", {blocks.Count - (data.Blocks.Length - 1)} without (solid unknown blocks)" : ""));
@@ -195,6 +226,31 @@ public sealed partial class MinecraftClient
     /// what a dump of this server's mods would have to add. Empty on vanilla servers and when everything is known.
     /// </summary>
     public IReadOnlyList<string> UnknownModdedBlocks { get; private set; } = [];
+
+    private readonly Dictionary<int, Box[]> _learned = [];
+    private readonly HashSet<int> _sticky = [];
+
+    /// <summary>Learned states that hold you once you are in them (avoided by pathing).</summary>
+    public IReadOnlySet<int> StickyStates => _sticky;
+
+    /// <summary>Shapes learned by touch on this server (raw state id -> boxes): save them with BlockRegistryFingerprint.</summary>
+    public IReadOnlyDictionary<int, Box[]> LearnedShapes => _learned;
+
+    /// <summary>Identifies this server's block list (names in raw-id order): raw state ids mean the same thing only under it.</summary>
+    public string? BlockRegistryFingerprint { get; private set; }
+
+    /// <summary>Uses a shape learned by touch from now on (blocks already loaded included: chunks keep raw ids).</summary>
+    public void Learn(BlockProbe probe)
+    {
+        if (probe.RawState < World.Data.KnownStateCount) return; // we already know it
+        _learned[probe.RawState] = probe.Shape;
+        if (probe.Sticky) _sticky.Add(probe.RawState); else _sticky.Remove(probe.RawState);
+        RebuildWorldData();
+    }
+
+    private static string Fingerprint(IReadOnlyDictionary<string, int> blocks) =>
+        Convert.ToHexStringLower(System.Security.Cryptography.SHA256.HashData(
+            System.Text.Encoding.UTF8.GetBytes(string.Join("|", blocks.OrderBy(kv => kv.Value).Select(kv => kv.Key)))))[..16];
 
     private static double Angle(sbyte b) => b * 360.0 / 256.0;
 
@@ -212,7 +268,7 @@ public sealed partial class MinecraftClient
         {
             case CB.Play.Clientbound.LevelChunkWithLight:
             {
-                var column = ChunkColumn.Read(ref r, World.MinY, World.Height, World.Data);
+                var column = ChunkColumn.Read(ref r, World.MinY, World.Height);
                 World.SetColumn(column);
                 ChunkLoaded?.Invoke(column.X, column.Z);
                 return;

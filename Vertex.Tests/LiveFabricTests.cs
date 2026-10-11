@@ -83,6 +83,134 @@ public class LiveFabricTests
         }
     }
 
+    /// <summary>
+    /// Learning blocks by touch, with nothing to go on (built-in catalog off, no modpack): Vertex steps toward each
+    /// unknown block from every open side and over it, the server accepting or correcting each step. The shapes it
+    /// learns must match the real ones the mods define (our catalog is the answer key): a doormat 1/16 high, a
+    /// plate along one wall, a full cube, a small pumpkin's bounding box, and a cobweb that holds you. Then the path
+    /// over the doormat, under a low ceiling, which a solid unknown cube blocks, is open.
+    /// </summary>
+    [Test]
+    public async Task LearnsBlockShapes_ByTouch()
+    {
+        await using var client = new MinecraftClient(GameProfile.Offline("VertexToucher"), new ClientOptions
+        {
+            UseEmbeddedModdedBlocks = false,
+            Log = m => TestContext.Out.WriteLine(m),
+        });
+        using (var cts = new CancellationTokenSource(Timeout)) await client.ConnectAsync("127.0.0.1", Port, cts.Token);
+        var feet = client.FeetBlock;
+        int x0 = feet.X, y = feet.Y, z0 = feet.Z;
+        // A stone floor with open air above; the test blocks in a row along +x, 3 apart, Vertex free to walk round each.
+        await _server!.CommandAsync($"fill {x0 - 3} {y} {z0 - 4} {x0 + 18} {y + 4} {z0 + 4} minecraft:air");
+        await _server.CommandAsync($"fill {x0 - 3} {y - 1} {z0 - 4} {x0 + 18} {y - 1} {z0 + 4} minecraft:stone");
+        string[] blocks = ["mcwholidays:bat_doormat", "mcwholidays:bat_wall_deco_1", "mcwholidays:blue_candy_cane_block", "mcwholidays:small_pumpkin", "mcwholidays:hanging_cobweb"];
+        for (var i = 0; i < blocks.Length; i++) await _server.CommandAsync($"setblock {x0 + 3 + 3 * i} {y} {z0} {blocks[i]}");
+        await Wait.UntilAsync(() => client.World.GetRawState(x0 + 3 + 3 * (blocks.Length - 1), y, z0) >= client.World.Data.KnownStateCount, TimeSpan.FromSeconds(10), () => "blocks placed");
+        var teleportsBefore = client.TeleportCount;
+        var unlearned = client.World.Data;
+
+        for (var i = 0; i < blocks.Length; i++)
+        {
+            var bx = x0 + 3 + 3 * i;
+            Assert.That(client.World.Data.IsUnknownBlock(client.World.GetState(bx, y, z0)), blocks[i] + " starts unknown");
+            var probe = await client.MeasureBlockAsync(bx, y, z0).WaitAsync(TimeSpan.FromMinutes(2));
+            Assert.That(probe, Is.Not.Null, blocks[i]);
+            client.Learn(probe!);
+            var truth = GameData.ModdedCatalog[blocks[i]];
+            var real = truth.Shapes[truth.DefaultIndex];
+            TestContext.Out.WriteLine($"{blocks[i]}: learned {string.Join(" ", probe!.Shape)} sticky={probe.Sticky} ({probe.FacesMeasured} faces); real {string.Join(" ", real)}");
+            if (real.Length == 0)
+            {
+                Assert.That(probe.Shape, Is.Empty, blocks[i]);
+                Assert.That(probe.Sticky, Is.EqualTo(blocks[i].Contains("cobweb")), blocks[i] + " holds you");
+                continue;
+            }
+            // The bounding box of the real shape, to within the probe's resolution.
+            var bounds = new Box(real.Min(b => b.MinX), real.Min(b => b.MinY), real.Min(b => b.MinZ), real.Max(b => b.MaxX), real.Max(b => b.MaxY), real.Max(b => b.MaxZ));
+            var got = probe.Shape.Single();
+            Assert.That(new[] { got.MinX, got.MinY, got.MinZ, got.MaxX, got.MaxY, got.MaxZ },
+                Is.EqualTo(new[] { bounds.MinX, bounds.MinY, bounds.MinZ, bounds.MaxX, bounds.MaxY, bounds.MaxZ }).Within(1.0 / 32), blocks[i]);
+            Assert.That(probe.Sticky, Is.False, blocks[i]);
+        }
+        PhysicsCheck(client);
+
+        // A corridor with a ceiling 2 above the floor and the doormat in it: as an unknown cube it is a 1-block step
+        // with no headroom (no path); learned, it is a floor you walk over. Entered from its open west end.
+        var mat = client.World.GetRawState(x0 + 3, y, z0);
+        await _server.CommandAsync($"fill {x0 + 1} {y + 2} {z0 - 1} {x0 + 5} {y + 2} {z0 + 1} minecraft:stone");
+        await _server.CommandAsync($"fill {x0 + 1} {y} {z0 - 1} {x0 + 5} {y + 1} {z0 - 1} minecraft:stone");
+        await _server.CommandAsync($"fill {x0 + 1} {y} {z0 + 1} {x0 + 5} {y + 1} {z0 + 1} minecraft:stone");
+        await Wait.UntilAsync(() => client.World.GetState(x0 + 5, y + 2, z0) > 0, TimeSpan.FromSeconds(10), () => "corridor built");
+        Assert.That(await client.GoToAsync(SpawnDev.Minecraft.Pathing.Goal.Block(x0, y, z0), new SpawnDev.Minecraft.Pathing.PathOptions()), $"to the corridor; at {client.Position}");
+        var goal = SpawnDev.Minecraft.Pathing.Goal.Block(x0 + 4, y, z0);
+        Assert.That(new SpawnDev.Minecraft.Pathing.Pathfinder(client.World, unlearned).FindPath(client.FeetBlock, goal, new SpawnDev.Minecraft.Pathing.PathOptions()).Complete,
+            Is.False, "before learning, the doormat is a solid cube under a low ceiling");
+        Assert.That(new SpawnDev.Minecraft.Pathing.Pathfinder(client.World).FindPath(client.FeetBlock, goal, new SpawnDev.Minecraft.Pathing.PathOptions()).Complete, "over the learned doormat");
+        Assert.That(await client.GoToAsync(goal, new SpawnDev.Minecraft.Pathing.PathOptions()), $"walked it; at {client.Position}");
+        Assert.That(client.World.GetRawState(x0 + 3, y, z0), Is.EqualTo(mat), "and did not break it");
+        TestContext.Out.WriteLine($"server corrections while probing and walking: {client.TeleportCount - teleportsBefore}");
+    }
+
+    /// <summary>
+    /// The skill: Vertex studies every kind of unknown block around (one of each), saves what it learned with the
+    /// server's block-list fingerprint, and on the next visit starts out knowing them.
+    /// </summary>
+    [Test]
+    public async Task StudiesTheUnknownBlocksAround_AndRemembersThemNextVisit()
+    {
+        var file = Path.Combine(Path.GetTempPath(), $"vertex-touched-{Guid.NewGuid():N}.json");
+        try
+        {
+            int x0, y, z0;
+            HashSet<int> kinds;
+            await using (var client = new MinecraftClient(GameProfile.Offline("VertexStudent"), new ClientOptions { UseEmbeddedModdedBlocks = false }))
+            {
+                using (var cts = new CancellationTokenSource(Timeout)) await client.ConnectAsync("127.0.0.1", Port, cts.Token);
+                (x0, y, z0) = client.FeetBlock;
+                await _server!.CommandAsync($"fill {x0 - 6} {y} {z0 - 6} {x0 + 6} {y + 4} {z0 + 6} minecraft:air");
+                await _server!.CommandAsync($"fill {x0 - 6} {y - 1} {z0 - 6} {x0 + 6} {y - 1} {z0 + 6} minecraft:stone");
+                // Two of the same kind (studied once) and two other kinds, spread out.
+                await _server!.CommandAsync($"setblock {x0 + 3} {y} {z0} mcwholidays:bat_doormat");
+                await _server!.CommandAsync($"setblock {x0 - 3} {y} {z0} mcwholidays:bat_doormat");
+                await _server!.CommandAsync($"setblock {x0} {y} {z0 + 3} mcwholidays:blue_candy_cane_block");
+                await _server!.CommandAsync($"setblock {x0} {y} {z0 - 3} mcwholidays:hanging_cobweb");
+                await Wait.UntilAsync(() => client.World.GetRawState(x0, y, z0 - 3) >= client.World.Data.KnownStateCount, TimeSpan.FromSeconds(10), () => "placed");
+                var skills = new Vertex.Brain.Skills(client);
+                kinds = skills.UnstudiedBlocks(16).Select(b => b.Raw).ToHashSet();
+                Assert.That(kinds, Has.Count.EqualTo(3), "three kinds to study");
+
+                var (ok, message) = await skills.StudyBlocksAsync(16, CancellationToken.None).WaitAsync(TimeSpan.FromMinutes(3));
+                TestContext.Out.WriteLine(message);
+                Assert.That(ok, message);
+                Assert.That(message, Does.Contain("studied 3 kinds").And.Contain("1 of them would trap me"));
+                Assert.That(client.LearnedShapes.Keys, Is.EquivalentTo(kinds));
+                Assert.That(skills.UnstudiedBlocks(16), Is.Empty, "nothing left to study");
+                Vertex.Mods.TouchedBlocks.Save(file, new Vertex.Mods.TouchedBlocks(client.BlockRegistryFingerprint!, client.LearnedShapes.ToDictionary(), client.StickyStates.ToList()));
+            }
+
+            // Next visit: it starts out knowing them.
+            var touched = Vertex.Mods.TouchedBlocks.Load(file)!;
+            await using var again = new MinecraftClient(GameProfile.Offline("VertexStudent"), new ClientOptions
+            {
+                UseEmbeddedModdedBlocks = false, LearnedShapes = touched.Shapes, LearnedSticky = touched.Sticky, LearnedFingerprint = touched.Fingerprint,
+            });
+            using (var cts = new CancellationTokenSource(Timeout)) await again.ConnectAsync("127.0.0.1", Port, cts.Token);
+            await Wait.UntilAsync(() => again.World.GetRawState(x0, y, z0 - 3) >= again.World.Data.KnownStateCount, TimeSpan.FromSeconds(10), () => "chunks arrived");
+            Assert.That(again.LearnedShapes.Keys, Is.EquivalentTo(kinds));
+            Assert.That(again.World.Data.LearnedStateCount, Is.EqualTo(3));
+            var mat = again.World.GetState(x0 + 3, y, z0);
+            Assert.That(again.World.Data.CollisionBoxes(mat).Single().MaxY, Is.EqualTo(0.0625).Within(1.0 / 64));
+            var web = again.World.GetState(x0, y, z0 - 3);
+            Assert.That(again.World.Data.StateFlags[web] & GameData.FlagSticky, Is.Not.Zero, "still knows the cobweb traps");
+            Assert.That(new Vertex.Brain.Skills(again).UnstudiedBlocks(16), Is.Empty);
+        }
+        finally { File.Delete(file); }
+    }
+
+    private static void PhysicsCheck(MinecraftClient client) =>
+        Assert.That(client.PhysicsEnabled, "physics back on after probing");
+
     [Test]
     public async Task JoinsTheModdedServer_AndStaysOnline()
     {

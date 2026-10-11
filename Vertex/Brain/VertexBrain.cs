@@ -43,6 +43,8 @@ public sealed class VertexBrain : IAsyncDisposable
 
     /// <summary>How long Vertex waits with nothing to do (nobody talking, no job) before working on a goal by itself.</summary>
     public TimeSpan IdleBeforeGoals { get; set; } = TimeSpan.FromSeconds(60);
+    /// <summary>When idle with no goal, study unknown (modded) blocks nearby by touch.</summary>
+    public bool StudyWhenIdle { get; set; } = true;
     /// <summary>How often the idle check runs.</summary>
     public TimeSpan IdleCheckEvery { get; set; } = TimeSpan.FromSeconds(10);
     /// <summary>The clock (tests move it).</summary>
@@ -140,7 +142,17 @@ public sealed class VertexBrain : IAsyncDisposable
                 foreach (var p in Client.Players.Values.Where(p => p.Id != Client.Profile.Id)) Memory.Seen(p.Id, now);
                 if (Tasks.IsBusy) { _lastActivity = now; continue; }
                 if (_goalQueued || !Client.IsSpawned || now - _lastActivity < IdleBeforeGoals) continue;
-                if (Memory.ActiveGoals.FirstOrDefault() is not { } goal) continue;
+                if (Memory.ActiveGoals.FirstOrDefault() is not { } goal)
+                {
+                    // Nothing to do: be curious about the blocks around that Vertex does not know (no language model
+                    // needed; nothing is broken, it only walks up to them and feels them out).
+                    if (StudyWhenIdle && Skills.UnstudiedBlocks(16).Count > 0)
+                    {
+                        _lastActivity = now;
+                        Tasks.Start("studying blocks I don't know", ct => Skills.StudyBlocksAsync(16, ct));
+                    }
+                    continue;
+                }
                 _goalQueued = true;
                 _lastActivity = now;
                 _events.Writer.TryWrite(new GoalEvent(goal));
