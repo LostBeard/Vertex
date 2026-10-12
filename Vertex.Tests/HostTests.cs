@@ -185,4 +185,46 @@ public class HostTests
             if (Directory.Exists(folder)) Directory.Delete(folder, true);
         }
     }
+
+    /// <summary>
+    /// What TJ does from the tray: Start Vertex with the robot and no game, talk to it from the control panel, Stop.
+    /// The robot wakes, answers out loud, and is parked (motors off) when Vertex stops. EXPLICIT: it moves and sounds
+    /// the real robot (reachy-mini.local, or VERTEX_REACHY_HOST).
+    /// </summary>
+    [Test, Explicit("moves and sounds the real robot"), Category("Robot")]
+    public async Task Start_WithTheRobotAndNoGame_AnswersAndParks()
+    {
+        var folder = Path.Combine(Path.GetTempPath(), "vertex-host-" + Guid.NewGuid().ToString("N"));
+        var host = new VertexHost(folder);
+        try
+        {
+            host.Settings.Minecraft = false;
+            host.Settings.Reachy = true;
+            host.Settings.ReachyHost = Environment.GetEnvironmentVariable("VERTEX_REACHY_HOST") ?? "reachy-mini.local";
+            host.Settings.ReachySpeaker = "TJ";
+            await host.StartAsync().WaitAsync(Timeout);
+            foreach (var l in host.Lines) TestContext.Out.WriteLine($"{l.Kind}: {l.Text}");
+            Assert.That(host.State, Is.EqualTo(HostState.Playing), host.Status);
+            Assert.That(host.RobotConnected, host.Status);
+            Assert.That(host.InGame, Is.False);
+            Assert.That(host.Status, Does.Contain("Reachy Mini"));
+
+            host.Tell("Vertex, tell me one fun fact about robots in one short sentence.");
+            // The reply's own clip, played to the end (the greeting's clip comes before the reply).
+            await Wait.UntilAsync(() => host.Lines.SkipWhile(l => !(l.Kind == LineKind.Said && l.Text.Length > 3)).Any(l => l.Text.Contains("played vertex_")),
+                TimeSpan.FromMinutes(2), () => string.Join("\n", host.Lines.TakeLast(12).Select(l => $"{l.Kind}: {l.Text}")));
+
+            await host.StopAsync();
+            foreach (var l in host.Lines) TestContext.Out.WriteLine($"{l.Kind}: {l.Text}");
+            Assert.That(host.State, Is.EqualTo(HostState.Idle));
+            Assert.That(host.Lines.Any(l => l.Text.Contains("parked")), "the robot was parked");
+            Assert.That(host.Lines.Any(l => l.Kind == LineKind.Error), Is.False,
+                string.Join(Environment.NewLine, host.Lines.Where(l => l.Kind == LineKind.Error).Select(l => l.Text)));
+        }
+        finally
+        {
+            await host.DisposeAsync();
+            if (Directory.Exists(folder)) Directory.Delete(folder, true);
+        }
+    }
 }

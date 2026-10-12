@@ -217,7 +217,6 @@ public sealed class VertexHost : IAsyncDisposable
             await _ai.WarmUpAsync(character.Voice);
             _companion = new Companion(_ai, Characters, character, Settings.Model);
             _companion.Log += AddLog;
-            _companion.Start();
             if (Settings.Reachy) await ConnectRobotCoreAsync();
             if (Settings.Minecraft)
             {
@@ -225,6 +224,9 @@ public sealed class VertexHost : IAsyncDisposable
                 try { await JoinGameCoreAsync(); }
                 catch (Exception e) { SignInPrompt = null; Add(LineKind.Error, $"could not join {Settings.Server}: {e.Message}"); }
             }
+            // Started once its bodies are attached: the prompt and every body's tools are prefilled once, not again per
+            // body (each Attach to a running companion prefills again).
+            _companion.Start();
             SetStatus(HostState.Playing, OnStatus());
             if (_robot != null && _brain == null) _companion.Say($"Hi! It's {character.Name}. I'm here.");
         }
@@ -471,9 +473,13 @@ public sealed class VertexHost : IAsyncDisposable
 
     private async Task TearDownAsync()
     {
+        // The conversation stops first (no more turns, the mouth falls silent), so taking the bodies away does not
+        // prefill a prompt for nobody; then the game is left and the robot parked.
+        var companion = _companion;
+        if (companion != null) await companion.DisposeAsync();
         await LeaveGameCoreAsync();
         await DisconnectRobotCoreAsync();
-        if (_companion != null) { await _companion.DisposeAsync(); _companion = null; }
+        _companion = null;
     }
 
     /// <summary>The operator talks to Vertex (as if in chat, always addressed).</summary>

@@ -26,8 +26,8 @@ public sealed class RobotBody : IBody
 
     public string Name => "Reachy Mini";
 
-    public string Setting => "You have a small robot body at home, a Reachy Mini on the desk, with a head that turns and tilts, two antennas " +
-                             "and a speaker. People in the room talk to you through it.";
+    public string Setting => "You have a small robot body at home, a Reachy Mini on the desk: a head that turns and tilts, two antennas, a body that " +
+                             "turns, and a speaker (no arms, hands or legs). People in the room talk to you through it.";
 
     public IReadOnlyList<string> Rules { get; } =
     [
