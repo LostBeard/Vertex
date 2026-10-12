@@ -25,7 +25,12 @@ public sealed class ReachyChannel : IVoiceChannel
     private int _clip;
 
     public string Name => "Reachy";
+    public string HeardThrough => "to your robot body";
+    /// <summary>Whoever talks to the robot is talking to Vertex.</summary>
+    public bool AnswersEverything => true;
     public bool CanSpeak => true;
+    /// <summary>A clip started (true) or finished (false) playing: the robot's body language follows it.</summary>
+    public event Action<bool>? Playing;
     /// <summary>Lift the head clear of the chest speaker before speaking (Rose's recipe).</summary>
     public bool LiftHeadToSpeak { get; set; } = true;
     /// <summary>Who the room microphone is heard as, until speakers can be told apart.</summary>
@@ -88,15 +93,23 @@ public sealed class ReachyChannel : IVoiceChannel
         if (LiftHeadToSpeak)
             try { await _robot.GotoAsync(headPose: new XyzRpyPose(Z: ReachyBody.HeadLiftMax, Pitch: -0.05), duration: 0.4, interpolation: Interpolation.EaseInOut, ct: ct); }
             catch (Exception e) when (e is not OperationCanceledException) { /* posture never blocks speech */ }
-        await _robot.PlaySoundAsync(name, ct);
+        Playing?.Invoke(true);
+        var sw = System.Diagnostics.Stopwatch.StartNew();
         try
         {
+            await _robot.PlaySoundAsync(name, ct);
             await Task.Delay(TimeSpan.FromSeconds(pcm.Length / 24000.0) + TimeSpan.FromMilliseconds(250), ct);
         }
         catch (OperationCanceledException)
         {
             try { await _robot.StopSoundAsync(CancellationToken.None); } catch { }
             throw;
+        }
+        finally
+        {
+            // Start and end of every clip, so non-overlap can be checked from the log, not only by ear (Reachy CLAUDE.md).
+            Log?.Invoke($"played {name} ({pcm.Length / 24000.0:0.00} s) in {sw.Elapsed.TotalSeconds:0.00} s");
+            Playing?.Invoke(false);
         }
     }
 

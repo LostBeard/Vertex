@@ -2,6 +2,7 @@ using System.Collections.Concurrent;
 using SpawnDev.Minecraft;
 using SpawnDev.Minecraft.VoiceChat;
 using Vertex.AI;
+using Vertex.Core;
 using Vertex.Tests.Live;
 
 namespace Vertex.Tests;
@@ -78,11 +79,12 @@ public class SpeechTests
         var heard = new ConcurrentQueue<HeardSpeech>();
         ears.Heard += heard.Enqueue;
         ears.Log += m => TestContext.Out.WriteLine("[ears] " + m);
-        await using var mouth = new Mouth(speaker, speakerVoice, _ai.SpeakAsync) { EchoToChat = false };
+        await using var game = new MinecraftChannel(speaker, speakerVoice, _ai.TranscribeAsync) { EchoText = false };
+        await using var mouth = new Mouth(_ai.SpeakAsync);
         mouth.Log += m => TestContext.Out.WriteLine("[mouth] " + m);
 
         const string line = "Hello Aubri, follow me to the cave.";
-        mouth.Say(line);
+        mouth.Say(line, [game]);
         await Wait.UntilAsync(() => !heard.IsEmpty, Timeout, () => "nothing heard");
         var got = heard.First();
         TestContext.Out.WriteLine($"said: {line}\nheard: {got.Text} ({got.Seconds:0.0} s)");

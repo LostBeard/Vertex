@@ -91,7 +91,12 @@ SpawnDev.ILGPU.ML), so that 1 s is the bar our libraries have to meet. Library d
 ## M10 - Vertex without Minecraft
 - [ ] Split the brain: a companion core (conversation, characters, memory, ears, mouth, per-person memory) that
   runs with no game; Minecraft becomes one world it can join, plugging in its tools, skills and reflexes while
-  connected (today `VertexBrain` requires a `MinecraftClient`)
+  connected (today `VertexBrain` requires a `MinecraftClient`). 10-12 code: `Brain/Companion.cs` (turns, barge-in,
+  prompt, streaming speech, priming, characters) + `IBody` hooks (IsAddressed, OnFriendSpoke, FastActAsync,
+  HandleEventAsync, Act) + `IVoiceChannel.AnswersEverything/HeardThrough`; `VertexBrain` is now the Minecraft body
+  (a facade keeps its old members); `Core/MinecraftChannel.cs` (SVC ears + chat); `Mouth` speaks into channels
+  (render ahead, play in order, ears closed for the whole reply). Bodies' tools come and go with them
+  (`AiToolRegistry.Unregister`, SpawnDev.AI 1.1.1). Tests: MouthTests (no GPU), CompanionTests (GPU) - to run
 - [ ] Talk to Vertex from the control panel with no game and no robot (text in, text + voice out)
 - [ ] Memory and characters shared between Reachy and the game (one Vertex, not two)
 
@@ -110,7 +115,8 @@ SpawnDev.ILGPU.ML), so that 1 s is the bar our libraries have to meet. Library d
   the robot (MicrophoneTests); not yet wired to the brain or run on the robot
 - [ ] Body language: `ReachyPresence` (listening / thinking / speaking), stage directions in replies become
   gestures (`SpokenText` + `GestureClassifier` + `ReachyBody`), wake on start, park on exit with TJ's recipe
-  (home -> wait -> goto_sleep -> wait -> motors off)
+  (home -> wait -> goto_sleep -> wait -> motors off). 10-12 code: `Reachy/RobotBody.cs`; host panel has Reachy and
+  Minecraft sections (each joins/leaves while Vertex stays on). Live test `RobotTests.WakesSpeaksAndParks` (explicit)
 - [ ] Never hears itself (robot AEC plus ears closed while it speaks)
 - Proven on this robot by Rose (carry over, do not relearn): `play_sound` only QUEUES and returns, so render ahead
   and play strictly one clip after another (wait for each clip's duration, log start/end); mute the ears for the whole

@@ -10,39 +10,79 @@
 <main>
     <div>
         <section>
-            <h2>Play</h2>
+            <h2>Vertex</h2>
+            <label>Brain (language model)</label>
+            <select @bind="Host.Settings.Model" disabled="@Busy">
+                @if (Host.Models.Count == 0) { <option value="@Host.Settings.Model">@(string.IsNullOrEmpty(Host.Settings.Model) ? "(loads on start)" : Host.Settings.Model)</option> }
+                @foreach (var m in Host.Models) { <option value="@m">@m</option> }
+            </select>
+            <label><input type="checkbox" style="width:auto" @bind="Host.Settings.Reachy" disabled="@Busy" /> Reachy Mini (Vertex's body at home)</label>
+            <label><input type="checkbox" style="width:auto" @bind="Host.Settings.Minecraft" disabled="@Busy" /> Join Minecraft on start</label>
+            <div class="row" style="margin-top:12px">
+                @if (Host.State == HostState.Idle)
+                {
+                    <button @onclick="Host.StartAsync">Start Vertex</button>
+                }
+                else
+                {
+                    <button class="secondary" @onclick="Host.StopAsync" disabled="@(Host.State != HostState.Playing)">Stop Vertex</button>
+                }
+            </div>
+        </section>
+
+        <section style="margin-top:16px">
+            <h2>Reachy Mini</h2>
+            <label>Robot address</label>
+            <input @bind="Host.Settings.ReachyHost" disabled="@Host.RobotConnected" />
+            <label>Who talks to it (blank: "someone in the room")</label>
+            <input @bind="Host.Settings.ReachySpeaker" disabled="@Host.RobotConnected" placeholder="e.g. Aubri" />
+            @if (Host.State == HostState.Playing)
+            {
+                <div class="row" style="margin-top:12px">
+                    @if (Host.RobotConnected)
+                    {
+                        <button class="secondary" @onclick="Host.DisconnectRobotAsync">Park the robot</button>
+                    }
+                    else
+                    {
+                        <button @onclick="Host.ConnectRobotAsync">Wake the robot</button>
+                    }
+                </div>
+            }
+        </section>
+
+        <section style="margin-top:16px">
+            <h2>Minecraft</h2>
             <label>Server</label>
             <div class="row">
-                <input @bind="Host.Settings.Server" disabled="@Busy" />
-                <input type="number" style="max-width:90px" @bind="Host.Settings.Port" disabled="@Busy" />
+                <input @bind="Host.Settings.Server" disabled="@InGameOrBusy" />
+                <input type="number" style="max-width:90px" @bind="Host.Settings.Port" disabled="@InGameOrBusy" />
             </div>
             <label>Account</label>
-            <select @bind="AccountMode" disabled="@Busy">
+            <select @bind="AccountMode" disabled="@InGameOrBusy">
                 <option value="microsoft">Microsoft account (signed in)</option>
                 <option value="offline">Offline name (local test servers)</option>
             </select>
             @if (AccountMode == "offline")
             {
                 <label>Offline name</label>
-                <input @bind="Host.Settings.OfflineName" disabled="@Busy" />
+                <input @bind="Host.Settings.OfflineName" disabled="@InGameOrBusy" />
             }
-            <label>Brain (language model)</label>
-            <select @bind="Host.Settings.Model" disabled="@Busy">
-                @if (Host.Models.Count == 0) { <option value="@Host.Settings.Model">@(string.IsNullOrEmpty(Host.Settings.Model) ? "(loads on start)" : Host.Settings.Model)</option> }
-                @foreach (var m in Host.Models) { <option value="@m">@m</option> }
-            </select>
-            <label><input type="checkbox" style="width:auto" @bind="Host.Settings.Voice" disabled="@Busy" /> Voice chat (Simple Voice Chat)</label>
-            <div class="row" style="margin-top:12px">
-                @if (Host.State == HostState.Idle)
-                {
-                    <button @onclick="Host.StartAsync">Start playing</button>
-                }
-                else
-                {
-                    <button class="secondary" @onclick="Host.StopAsync" disabled="@(Host.State != HostState.Playing)">Leave</button>
-                    <button class="secondary" @onclick="Host.StopTask" disabled="@(Host.State != HostState.Playing)">Stop task</button>
-                }
-            </div>
+            <label><input type="checkbox" style="width:auto" @bind="Host.Settings.Voice" disabled="@InGameOrBusy" /> Voice chat (Simple Voice Chat)</label>
+            @if (Host.State == HostState.Playing)
+            {
+                <div class="row" style="margin-top:12px">
+                    @if (Host.InGame)
+                    {
+                        <button class="secondary" @onclick="Host.LeaveGameAsync">Leave the game</button>
+                        <button class="secondary" @onclick="Host.StopTask">Stop task</button>
+                    }
+                    else
+                    {
+                        <button @onclick="Host.JoinGameAsync">Join the game</button>
+                    }
+                </div>
+            }
             @if (Host.SignInPrompt is { } p)
             {
                 <p>Sign in at <a href="@p.DirectLink" target="_blank">microsoft.com/link</a> with the code</p>
@@ -94,7 +134,7 @@
                 <div class="stat"><b>@(Host.Voice?.IsConnected == true ? "on" : "off")</b><span>voice</span></div>
             </div>
             <div class="row" style="margin-bottom:10px">
-                <input @bind="Message" @bind:event="oninput" @onkeydown="OnKey" placeholder="Tell Vertex something, e.g. follow Aubri" disabled="@(Host.State != HostState.Playing)" />
+                <input @bind="Message" @bind:event="oninput" @onkeydown="OnKey" placeholder="Tell Vertex something, e.g. hi Vertex, how are you?" disabled="@(Host.State != HostState.Playing)" />
                 <button style="flex:0" @onclick="Send" disabled="@(Host.State != HostState.Playing)">Say</button>
             </div>
             <div class="log">
@@ -116,6 +156,7 @@
     private Timer? _timer;
 
     private bool Busy => Host.State != HostState.Idle;
+    private bool InGameOrBusy => Host.InGame || Host.State is HostState.Starting or HostState.Stopping;
 
     private string AccountMode
     {
@@ -152,7 +193,7 @@
     {
         if (Editing == null) return;
         Host.Characters.Save(Editing);
-        if (Host.Brain != null && Host.Brain.Character.Name == Editing.Name) Host.SwitchCharacter(Editing.Name);
+        if (Host.Companion != null && Host.Companion.Character.Name == Editing.Name) Host.SwitchCharacter(Editing.Name);
         Characters = Host.Characters.All();
     }
 

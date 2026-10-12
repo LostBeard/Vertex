@@ -96,7 +96,7 @@ public sealed class VertexTray : ApplicationContext
         var menu = _icon.ContextMenuStrip!;
         ((ToolStripMenuItem)menu.Items["header"]!).Text = status;
         var startStop = (ToolStripMenuItem)menu.Items["startstop"]!;
-        startStop.Text = _host.State == HostState.Idle ? "Start" : "Leave";
+        startStop.Text = _host.State == HostState.Idle ? "Start" : "Stop";
         startStop.Enabled = !_busy && _host.State is HostState.Idle or HostState.Playing;
         ((ToolStripMenuItem)menu.Items["autostart"]!).Checked = IsAutostart();
     }

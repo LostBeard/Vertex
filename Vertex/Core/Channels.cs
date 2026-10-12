@@ -1,4 +1,5 @@
 using SpawnDev.AI;
+using Vertex.Brain;
 
 namespace Vertex.Core;
 
@@ -26,6 +27,15 @@ public interface IVoiceChannel : IAsyncDisposable
 
     /// <summary>Ears closed while Vertex is talking on this channel, so it never hears itself.</summary>
     bool Muted { get; set; }
+
+    /// <summary>
+    /// Everything heard here is said to Vertex (the robot's microphone: whoever talks to the robot is talking to it).
+    /// False where people also talk among themselves (game voice and chat), so Vertex answers only when addressed.
+    /// </summary>
+    bool AnswersEverything => false;
+
+    /// <summary>How a line heard here reached Vertex, for the prompt once it is in more than one place ("in the game").</summary>
+    string HeardThrough => "through " + Name;
 }
 
 /// <summary>A line heard on a channel.</summary>
@@ -61,4 +71,19 @@ public interface IBody : IAsyncDisposable
 
     /// <summary>What Vertex can do here, as tools for the language model.</summary>
     IReadOnlyList<IAiTool> Tools { get; }
+
+    /// <summary>Whether a line is said to Vertex as far as this body can tell (true), or no opinion (null).</summary>
+    bool? IsAddressed(SaidEvent e) => null;
+
+    /// <summary>A friend is talking to Vertex (a turn for them is starting).</summary>
+    void OnFriendSpoke(SaidEvent e) { }
+
+    /// <summary>Does an urgent request at once, without the language model; returns what was done, or null.</summary>
+    Task<string?> FastActAsync(SaidEvent e) => Task.FromResult<string?>(null);
+
+    /// <summary>Handles an event of this body's own (a finished job, a player joining); false when it is not one.</summary>
+    Task<bool> HandleEventAsync(BrainEvent e, TurnClock clock, CancellationToken ct) => Task.FromResult(false);
+
+    /// <summary>A stage direction from a reply ("antennas perk up"): acted out if this body can.</summary>
+    void Act(string action) { }
 }

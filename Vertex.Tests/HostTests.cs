@@ -31,10 +31,13 @@ public class HostTests
             host.Settings.Account = "";            // offline
             host.Settings.OfflineName = "VertexHost";
             host.Settings.Voice = false;           // no Simple Voice Chat on this server
+            host.Settings.Minecraft = true;
+            host.Settings.Reachy = false;          // the robot is not part of this test
             await host.StartAsync().WaitAsync(Timeout);
             foreach (var l in host.Lines) TestContext.Out.WriteLine($"{l.Kind}: {l.Text}");
             Assert.That(host.State, Is.EqualTo(HostState.Playing), host.Status);
-            Assert.That(host.Status, Does.Contain("Playing as Vertex (VertexHost)"));
+            Assert.That(host.InGame, host.Status);
+            Assert.That(host.Lines.Any(l => l.Text.Contains("Playing as Vertex (VertexHost)")), "said where it plays");
             Assert.That(File.Exists(Path.Combine(folder, "settings.json")), "settings saved in the host's folder");
             var vertex = host.Client!;
 
@@ -98,6 +101,8 @@ public class HostTests
             host.Settings.Account = "";
             host.Settings.OfflineName = "VertexLearner";
             host.Settings.Voice = false;
+            host.Settings.Minecraft = true;
+            host.Settings.Reachy = false;
             host.Settings.Modpack = pack;
             await host.StartAsync().WaitAsync(Timeout);
             Assert.That(host.State, Is.EqualTo(HostState.Playing), host.Status);
@@ -149,6 +154,8 @@ public class HostTests
             host.Settings.Account = "";
             host.Settings.OfflineName = "VertexCurious";
             host.Settings.Voice = false;
+            host.Settings.Minecraft = true;
+            host.Settings.Reachy = false;
             await host.StartAsync().WaitAsync(Timeout);
             Assert.That(host.State, Is.EqualTo(HostState.Playing), host.Status);
             var client = host.Client!;

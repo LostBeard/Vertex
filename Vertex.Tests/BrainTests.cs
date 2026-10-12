@@ -61,7 +61,7 @@ public class BrainTests
         var store = new CharacterStore(Path.Combine(root, "characters"));
         var brain = new VertexBrain(vertex, null, _ai, store, Character.BuiltIn[0], _model);
         brain.Log += m => { log.Enqueue(m); TestContext.Out.WriteLine(m); };
-        brain.Mouth.EchoToChat = true;
+        brain.Channel.EchoText = true;
         configure?.Invoke(brain);
         brain.Start();
         await Wait.UntilAsync(() => vertex.Entities.Values.Any(e => e.PlayerName == "Aubri"), Timeout, () => "Vertex sees Aubri");
