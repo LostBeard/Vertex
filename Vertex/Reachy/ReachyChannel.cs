@@ -26,8 +26,12 @@ public sealed class ReachyChannel : IVoiceChannel
 
     public string Name => "Reachy";
     public string HeardThrough => "to your robot body";
-    /// <summary>Whoever talks to the robot is talking to Vertex.</summary>
-    public bool AnswersEverything => true;
+    /// <summary>
+    /// Answer everything heard in the room (off: Vertex is called by name to start, then the conversation carries on).
+    /// Off by default: the first live run (2026-10-12) answered room speech that was not meant for it ("and I hope you
+    /// enjoyed this ..." - it sounded like a video playing nearby).
+    /// </summary>
+    public bool AnswersEverything { get; set; }
     public bool CanSpeak => true;
     /// <summary>A clip started (true) or finished (false) playing: the robot's body language follows it.</summary>
     public event Action<bool>? Playing;

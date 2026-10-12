@@ -14,6 +14,7 @@
 		<PackageReference Include="SpawnDev.AI.Server" Version="1.1.2-local.1" />
 		<!-- AiToolRegistry.Unregister; drops out once AI.Server 1.1.2 (which carries it) is released -->
 		<PackageReference Include="SpawnDev.AI" Version="1.1.1-local.2" />
+		<PackageReference Include="SpawnDev.ILGPU.ML" Version="5.3.7-local.8" />
 		<!-- The Reachy Mini (Vertex's body out of the game): daemon REST API + WebRTC microphone. -->
 		<PackageReference Include="SpawnDev.Reachy" Version="0.1.0-preview.4" />
 	</ItemGroup>

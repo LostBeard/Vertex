@@ -36,6 +36,7 @@
             <input @bind="Host.Settings.ReachyHost" disabled="@Host.RobotConnected" />
             <label>Who talks to it (blank: "someone in the room")</label>
             <input @bind="Host.Settings.ReachySpeaker" disabled="@Host.RobotConnected" placeholder="e.g. Aubri" />
+            <label><input type="checkbox" style="width:auto" @bind="Host.Settings.ReachyAnswersEverything" disabled="@Host.RobotConnected" /> Answer everything said near the robot (off: say "Vertex" to start talking)</label>
             @if (Host.State == HostState.Playing)
             {
                 <div class="row" style="margin-top:12px">

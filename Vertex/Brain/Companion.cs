@@ -154,7 +154,7 @@ public sealed class Companion : IAsyncDisposable
     /// </summary>
     private void Hear(SaidEvent e)
     {
-        if (Volatile.Read(ref _turn) is { } turn && IsAddressed(e) && (!turn.ForPerson || Interrupts(e.Text)))
+        if (Volatile.Read(ref _turn) is { } turn && turn.Interruptible && IsAddressed(e) && (!turn.ForPerson || Interrupts(e.Text)))
         {
             Log?.Invoke($"  (interrupted by {e.SpeakerName})");
             turn.Interrupted = true;
@@ -168,9 +168,19 @@ public sealed class Companion : IAsyncDisposable
     private bool Interrupts(string text)
     {
         var t = " " + text.ToLowerInvariant() + " ";
-        return t.Contains(Character.Name.ToLowerInvariant()) || t.Contains("vertex")
+        return NamesVertex(t)
             || t.Contains(" stop") || t.Contains(" wait") || t.Contains(" never mind") || t.Contains(" nevermind");
     }
+
+    /// <summary>
+    /// What Whisper writes when someone says "Vertex". MEASURED, never guessed from spelling (SpawnDev.Reachy's
+    /// lesson): TJ said "Hi, Vertex" in game on 2026-10-12 and it came back "Hi, birdtakes".
+    /// </summary>
+    public static readonly string[] VertexHeardAs = ["vertex", "vortex", "birdtakes", "bird takes"];
+
+    /// <summary>The line calls Vertex (or the current character) by name.</summary>
+    private bool NamesVertex(string lowerText) =>
+        lowerText.Contains(Character.Name.ToLowerInvariant()) || VertexHeardAs.Any(lowerText.Contains);
 
     /// <summary>
     /// Talk back when our name is said, when we are mid-conversation with this speaker (within 45 s), when the channel
@@ -180,8 +190,7 @@ public sealed class Companion : IAsyncDisposable
     public bool IsAddressed(SaidEvent e)
     {
         if (e.Speaker == Guid.Empty) return true; // the operator's console and the control panel talk only to us
-        var text = e.Text.ToLowerInvariant();
-        if (text.Contains(Character.Name.ToLowerInvariant()) || text.Contains("vertex")) return true;
+        if (NamesVertex(e.Text.ToLowerInvariant())) return true;
         if (_lastPartner == e.Speaker && DateTime.UtcNow - _lastExchange < TimeSpan.FromSeconds(45)) return true;
         if (e.Channel?.AnswersEverything == true) return true;
         foreach (var body in Bodies)
@@ -190,10 +199,13 @@ public sealed class Companion : IAsyncDisposable
     }
 
     /// <summary>The turn being thought or spoken right now (null when Vertex is idle).</summary>
-    private sealed class Turn(CancellationTokenSource cts, bool forPerson)
+    private sealed class Turn(CancellationTokenSource cts, bool forPerson, bool interruptible)
     {
         public CancellationTokenSource Cts { get; } = cts;
         public bool ForPerson { get; } = forPerson;
+        /// <summary>False for the prefill at start: two seconds, and cutting it only makes the next answer slower
+        /// (on the robot, the room's first words cut it off - 2026-10-12).</summary>
+        public bool Interruptible { get; } = interruptible;
         public volatile bool Interrupted;
     }
 
@@ -211,7 +223,7 @@ public sealed class Companion : IAsyncDisposable
             var forPerson = e is SaidEvent;
             using var cts = CancellationTokenSource.CreateLinkedTokenSource(ct);
             cts.CancelAfter(TurnTimeout);
-            var turn = new Turn(cts, forPerson);
+            var turn = new Turn(cts, forPerson, interruptible: e is not PrimeEvent);
             var clock = e is SaidEvent heard ? new TurnClock(heard.HeardTick, heard.SttMs) : new TurnClock();
             Volatile.Write(ref _turn, turn);
             // Shown (the robot looks thoughtful) only for something Vertex will actually answer or do.
@@ -532,8 +544,11 @@ public sealed class Companion : IAsyncDisposable
         return $"you are now {c.Name}";
     }
 
+    private int _disposed;
+
     public async ValueTask DisposeAsync()
     {
+        if (Interlocked.Exchange(ref _disposed, 1) != 0) return; // a host tearing down twice must not throw
         _events.Writer.TryComplete();
         _cts.Cancel();
         if (_loop != null) { try { await _loop; } catch (OperationCanceledException) { } }

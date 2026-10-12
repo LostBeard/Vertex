@@ -89,14 +89,15 @@ SpawnDev.ILGPU.ML), so that 1 s is the bar our libraries have to meet. Library d
 - [ ] Target: about 1 s from the end of a question to the start of the spoken answer (Rose's measured number)
 
 ## M10 - Vertex without Minecraft
-- [ ] Split the brain: a companion core (conversation, characters, memory, ears, mouth, per-person memory) that
+- [x] Split the brain: a companion core (conversation, characters, memory, ears, mouth, per-person memory) that
   runs with no game; Minecraft becomes one world it can join, plugging in its tools, skills and reflexes while
   connected (today `VertexBrain` requires a `MinecraftClient`). 10-12 code: `Brain/Companion.cs` (turns, barge-in,
   prompt, streaming speech, priming, characters) + `IBody` hooks (IsAddressed, OnFriendSpoke, FastActAsync,
   HandleEventAsync, Act) + `IVoiceChannel.AnswersEverything/HeardThrough`; `VertexBrain` is now the Minecraft body
   (a facade keeps its old members); `Core/MinecraftChannel.cs` (SVC ears + chat); `Mouth` speaks into channels
   (render ahead, play in order, ears closed for the whole reply). Bodies' tools come and go with them
-  (`AiToolRegistry.Unregister`, SpawnDev.AI 1.1.1). Tests: MouthTests (no GPU), CompanionTests (GPU) - to run
+  (`AiToolRegistry.Unregister`, SpawnDev.AI 1.1.1). Green: MouthTests 6/6 (CPU), CompanionTests 2/2 (GPU, no game),
+  BrainTests 6/6 + HostTests.Start_Join 1/1 (no regression)
 - [ ] Talk to Vertex from the control panel with no game and no robot (text in, text + voice out)
 - [ ] Memory and characters shared between Reachy and the game (one Vertex, not two)
 
@@ -109,21 +110,27 @@ SpawnDev.ILGPU.ML), so that 1 s is the bar our libraries have to meet. Library d
 - [x] Control panel stays the Blazor Server dashboard at http://localhost:5280
 
 ## M12 - Reachy Mini avatar
-- [ ] Connect to the robot (SpawnDev.Reachy: REST control + `RoseAudioLink` WebRTC; robot on daemon 1.10.0)
-- [ ] Hear through the robot's microphone array (Silero VAD -> Whisper) and speak through its speaker. 10-12:
-  `ReachyChannel` + `MicrophoneEars` written (Rose's exact speaker recipe); the VAD -> Whisper path is tested without
-  the robot (MicrophoneTests); not yet wired to the brain or run on the robot
-- [ ] Body language: `ReachyPresence` (listening / thinking / speaking), stage directions in replies become
-  gestures (`SpokenText` + `GestureClassifier` + `ReachyBody`), wake on start, park on exit with TJ's recipe
-  (home -> wait -> goto_sleep -> wait -> motors off). 10-12 code: `Reachy/RobotBody.cs`; host panel has Reachy and
-  Minecraft sections (each joins/leaves while Vertex stays on). Live test `RobotTests.WakesSpeaksAndParks` (explicit)
-- [ ] Never hears itself (robot AEC plus ears closed while it speaks)
+- [x] Connect to the robot (SpawnDev.Reachy: REST control + `RoseAudioLink` WebRTC; robot on daemon 1.10.0).
+  LIVE 2026-10-12: `RobotTests.WakesSpeaksAndParks` green on the real robot (wake, a spoken reply, park, motors off)
+- [x] Hear through the robot's microphone array (Silero VAD -> Whisper) and speak through its speaker (Rose's exact
+  speaker recipe, every clip's play logged). LIVE: the microphone heard the room ("and see our rope", 300 ms to text)
+- [x] Body language: `ReachyPresence` (listening / thinking / speaking), stage directions in replies acted out
+  (`SpokenText` + `ReachyBody`: "*antennas perk up*" -> Perk, "*head tilts*" -> Tilt, LIVE), wake on start, park on
+  exit with TJ's recipe (home -> wait -> goto_sleep -> wait -> motors off). `Reachy/RobotBody.cs`; panel sections for
+  the robot and Minecraft (each joins/leaves while Vertex stays on)
+- [ ] Never hears itself: ears closed for the whole reply (MouthTests, red-checked); the robot's AEC alone is untested
+- [x] Who it answers: the room is not always talking to Vertex (the first live run answered speech that sounded like a
+  video). Default: say "Vertex" to start, then the 45 s conversation window; panel switch "answer everything". Names
+  as Whisper writes them (`Companion.VertexHeardAs`, measured: "birdtakes")
+- [x] 🔴 GPU fault after one turn, FIXED in SpawnDev.ILGPU.ML 5.3.7: two sentences with the same token count shared a
+  Kokoro executor whose node fold reused the first one's audio length; the vocoder's Pad wrote past its buffer
+  (CUDA illegal address, every model dead). Found live on the robot, reproduced in MicrophoneTests
+  (`AllModelsUnderMemoryPressure_StayHealthy`) and in ML (`Pipeline_Kokoro_SameTokenCount_...`)
 - Proven on this robot by Rose (carry over, do not relearn): `play_sound` only QUEUES and returns, so render ahead
   and play strictly one clip after another (wait for each clip's duration, log start/end); mute the ears for the whole
   reply, not per sentence; face tracking and gestures take turns (watch while listening, perform while speaking);
   motors must be enabled or every move is silently accepted and ignored; WAV format is never validated by the daemon
   (wrong format = silence or wrong pitch, judge by ear); measure what Whisper hears for names, never match spelling.
-  Robot checked 2026-10-12: daemon running, motors disabled (parked).
 
 ## M13 - Robot and game at once
 - [ ] Listen to the Reachy microphone and in-game proximity voice at the same time; every heard line carries its

@@ -197,8 +197,11 @@ public sealed class Mouth : IAsyncDisposable
         if (text.Length > 0) yield return text;
     }
 
+    private int _disposed;
+
     public async ValueTask DisposeAsync()
     {
+        if (Interlocked.Exchange(ref _disposed, 1) != 0) return; // a host tearing down twice must not throw
         _lines.Writer.TryComplete();
         _cts.Cancel();
         try { await _render; } catch (OperationCanceledException) { }

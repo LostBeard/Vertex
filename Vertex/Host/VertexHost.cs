@@ -27,6 +27,8 @@ public sealed class VertexSettings
     public string ReachyHost { get; set; } = "reachy-mini.local";
     /// <summary>Who talks to Vertex through the robot, until voices can be told apart ("someone in the room").</summary>
     public string ReachySpeaker { get; set; } = "";
+    /// <summary>Answer everything said near the robot, not only when Vertex is called by name.</summary>
+    public bool ReachyAnswersEverything { get; set; }
     /// <summary>
     /// The server's modpack (a Modrinth .mrpack URL or file), for learning its modded blocks the way a player gets
     /// them. Empty: AubsCraft's pack on mc.spawndev.com, none elsewhere.
@@ -293,6 +295,7 @@ public sealed class VertexHost : IAsyncDisposable
         {
             _reachy = await ReachyChannel.ConnectAsync(Settings.ReachyHost, _ai!);
             if (!string.IsNullOrWhiteSpace(Settings.ReachySpeaker)) _reachy.RoomSpeakerName = Settings.ReachySpeaker.Trim();
+            _reachy.AnswersEverything = Settings.ReachyAnswersEverything;
             _reachy.Log += m => Add(LineKind.System, "[reachy] " + m);
             _robot = new RobotBody(_reachy, _companion);
             _robot.Log += m => Add(LineKind.System, "[reachy] " + m);
