@@ -11,10 +11,7 @@
 		<!-- 1.1.2-local.1 (local feed, 2026-10-12): tool definitions without unicode escapes; on SpawnDev.ILGPU.ML
 		     5.3.7-local.5 (GPU memory reclaimed before the driver spills, outputs that do not leak, interrupted
 		     replies that do not poison the next one). nuget.org release pending TJ's sign-off. -->
-		<PackageReference Include="SpawnDev.AI.Server" Version="1.1.2-local.1" />
-		<!-- AiToolRegistry.Unregister; drops out once AI.Server 1.1.2 (which carries it) is released -->
-		<PackageReference Include="SpawnDev.AI" Version="1.1.1-local.2" />
-		<PackageReference Include="SpawnDev.ILGPU.ML" Version="5.3.7-local.8" />
+		<PackageReference Include="SpawnDev.AI.Server" Version="1.1.2" />
 		<!-- The Reachy Mini (Vertex's body out of the game): daemon REST API + WebRTC microphone. -->
 		<PackageReference Include="SpawnDev.Reachy" Version="0.1.0-preview.4" />
 	</ItemGroup>
