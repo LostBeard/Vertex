@@ -4,7 +4,9 @@ using SpawnDev.Minecraft.VoiceChat;
 namespace Vertex.AI;
 
 /// <summary>Something a player said out loud, as Whisper heard it.</summary>
-public sealed record HeardSpeech(Guid Speaker, string Text, double Seconds);
+/// <param name="EndedTick">When the speaker stopped (<see cref="Environment.TickCount64"/>): where a turn's clock starts.</param>
+/// <param name="SttMs">How long speech to text took.</param>
+public sealed record HeardSpeech(Guid Speaker, string Text, double Seconds, long EndedTick = 0, double SttMs = 0);
 
 /// <summary>
 /// Turns proximity voice into text: collects each speaker's 20 ms frames into an utterance, which ends when the
@@ -71,7 +73,8 @@ public sealed class Ears : IDisposable
     private void Finish(Guid speaker, Utterance u)
     {
         short[] pcm;
-        lock (u) pcm = u.Pcm.ToArray();
+        long endedTick;
+        lock (u) { pcm = u.Pcm.ToArray(); endedTick = u.LastFrameMs; }
         var seconds = pcm.Length / (double)SimpleVoiceChat.SampleRate;
         if (seconds < MinSeconds || Audio.Rms(pcm) < MinRms) return;
         _ = Task.Run(async () =>
@@ -79,10 +82,12 @@ public sealed class Ears : IDisposable
             await _gpu.WaitAsync();
             try
             {
+                var stt = System.Diagnostics.Stopwatch.StartNew();
                 var text = await _transcribe(Audio.Downsample48To16(pcm), CancellationToken.None);
+                stt.Stop();
                 if (string.IsNullOrWhiteSpace(text) || IsNoise(text)) return;
-                Log?.Invoke($"heard {speaker}: \"{text}\" ({seconds:0.0} s)");
-                Heard?.Invoke(new HeardSpeech(speaker, text, seconds));
+                Log?.Invoke($"heard {speaker}: \"{text}\" ({seconds:0.0} s, text in {stt.ElapsedMilliseconds} ms)");
+                Heard?.Invoke(new HeardSpeech(speaker, text, seconds, endedTick, stt.Elapsed.TotalMilliseconds));
             }
             catch (Exception e)
             {
@@ -96,7 +101,7 @@ public sealed class Ears : IDisposable
     }
 
     // Whisper's well-known outputs for silence/noise.
-    private static bool IsNoise(string text)
+    internal static bool IsNoise(string text)
     {
         var t = text.Trim().Trim('.', '!', '?', ' ').ToLowerInvariant();
         return t.Length == 0 || t is "you" or "thank you" or "thanks for watching" or "[blank_audio]" or "[music]" || t.StartsWith('[') || t.StartsWith('(');

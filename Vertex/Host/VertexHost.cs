@@ -107,6 +107,16 @@ public sealed class VertexHost : IAsyncDisposable
         Characters = new CharacterStore(System.IO.Path.Combine(dataFolder ?? VertexSettings.DefaultFolder, "characters"));
     }
     public HostState State { get; private set; } = HostState.Idle;
+
+    /// <summary>What Vertex is doing right now (the tray dot): off, starting, listening, thinking or speaking.</summary>
+    public VertexActivity Activity => State switch
+    {
+        HostState.Starting => VertexActivity.Starting,
+        HostState.Playing when _brain?.Mouth.IsSpeaking == true => VertexActivity.Speaking,
+        HostState.Playing when _brain?.IsThinking == true => VertexActivity.Thinking,
+        HostState.Playing => VertexActivity.Listening,
+        _ => VertexActivity.Off,
+    };
     public string Status { get; private set; } = "Not playing";
     /// <summary>Shown while a Microsoft sign-in waits for the device code to be approved.</summary>
     public DeviceCodePrompt? SignInPrompt { get; private set; }
@@ -159,8 +169,10 @@ public sealed class VertexHost : IAsyncDisposable
             await EnsureAiAsync();
             if (string.IsNullOrEmpty(Settings.Model)) throw new InvalidOperationException("no chat model in the Ollama cache (ollama pull llama3.1:8b)");
             SetStatus(HostState.Starting, $"Loading {Settings.Model}...");
-            await _ai!.Chat.EnsureReadyAsync(Settings.Model);
+            await _ai!.EnsureChatReadyAsync(Settings.Model);
             await LoadIntentsAsync();
+            SetStatus(HostState.Starting, "Warming up ears and voice...");
+            await _ai.WarmUpAsync((Characters.Find(Settings.Character) ?? Character.BuiltIn[0]).Voice);
 
             GameProfile profile;
             if (string.IsNullOrWhiteSpace(Settings.Account)) profile = GameProfile.Offline(Settings.OfflineName);

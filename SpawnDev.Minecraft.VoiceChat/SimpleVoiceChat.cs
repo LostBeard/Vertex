@@ -373,19 +373,27 @@ public sealed class SimpleVoiceChat : IAsyncDisposable
         var frame = new short[FrameSize];
         var start = Environment.TickCount64;
         var frames = 0;
-        for (var offset = 0; offset < pcm48kMono.Length; offset += FrameSize)
+        try
         {
-            var n = Math.Min(FrameSize, pcm48kMono.Length - offset);
-            pcm48kMono.Span.Slice(offset, n).CopyTo(frame);
-            if (n < FrameSize) Array.Clear(frame, n, FrameSize - n);
-            var size = _encoder.Encode(frame, FrameSize, opus, opus.Length);
-            await SendMicAsync(opus.AsSpan(0, size).ToArray(), whisper, cancellationToken);
-            frames++;
-            var due = start + frames * 20L;
-            var wait = due - Environment.TickCount64;
-            if (wait > 0) await Task.Delay((int)wait, cancellationToken);
+            for (var offset = 0; offset < pcm48kMono.Length; offset += FrameSize)
+            {
+                var n = Math.Min(FrameSize, pcm48kMono.Length - offset);
+                pcm48kMono.Span.Slice(offset, n).CopyTo(frame);
+                if (n < FrameSize) Array.Clear(frame, n, FrameSize - n);
+                var size = _encoder.Encode(frame, FrameSize, opus, opus.Length);
+                await SendMicAsync(opus.AsSpan(0, size).ToArray(), whisper, cancellationToken);
+                frames++;
+                var due = start + frames * 20L;
+                var wait = due - Environment.TickCount64;
+                if (wait > 0) await Task.Delay((int)wait, cancellationToken);
+            }
         }
-        await SendMicAsync([], false, cancellationToken); // stop packet
+        finally
+        {
+            // The stop packet goes out even when speaking is cut off (Vertex interrupted mid-sentence): without it
+            // every listener's client holds the stream open until its own timeout.
+            if (IsConnected) await SendMicAsync([], false, CancellationToken.None);
+        }
     }
 
     private ValueTask SendMicAsync(byte[] opus, bool whisper, CancellationToken ct)

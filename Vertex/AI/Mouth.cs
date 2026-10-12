@@ -14,9 +14,11 @@ public sealed class Mouth : IAsyncDisposable
     private readonly MinecraftClient _client;
     private readonly SimpleVoiceChat? _voice;
     private readonly Func<string, string, CancellationToken, Task<(float[] Samples, int SampleRate)>> _tts;
-    private readonly Channel<string> _queue = Channel.CreateUnbounded<string>();
+    private readonly Channel<(string Text, Action? OnStarted)> _queue = Channel.CreateUnbounded<(string, Action?)>();
     private readonly CancellationTokenSource _cts = new();
     private readonly Task _worker;
+    // The line being said right now; Hush cuts it off.
+    private CancellationTokenSource? _line;
 
     /// <summary>The Kokoro voice ("kokoro:af_heart"...).</summary>
     public string VoiceId { get; set; } = "kokoro:af_heart";
@@ -36,41 +38,52 @@ public sealed class Mouth : IAsyncDisposable
     }
 
     /// <summary>Queues a line to say.</summary>
-    public void Say(string text)
+    /// <param name="onStarted">Called when the line starts to be heard (or typed, without voice): a turn's clock stops there.</param>
+    public void Say(string text, Action? onStarted = null)
     {
-        if (!string.IsNullOrWhiteSpace(text)) _queue.Writer.TryWrite(text.Trim());
+        if (!string.IsNullOrWhiteSpace(text)) _queue.Writer.TryWrite((text.Trim(), onStarted));
     }
 
-    /// <summary>Drops anything not yet said (being interrupted).</summary>
+    /// <summary>Stops talking: drops what is not yet said and cuts off the line being said (being interrupted).</summary>
     public void Hush()
     {
         while (_queue.Reader.TryRead(out _)) { }
+        try { Volatile.Read(ref _line)?.Cancel(); } catch (ObjectDisposedException) { }
     }
 
     private async Task WorkAsync()
     {
-        await foreach (var line in _queue.Reader.ReadAllAsync(_cts.Token))
+        await foreach (var (line, onStarted) in _queue.Reader.ReadAllAsync(_cts.Token))
         {
+            var started = onStarted;
+            void Started() { started?.Invoke(); started = null; }
+            using var lineCts = CancellationTokenSource.CreateLinkedTokenSource(_cts.Token);
+            Volatile.Write(ref _line, lineCts);
+            var ct = lineCts.Token;
             try
             {
                 IsSpeaking = true;
                 if (EchoToChat && _client.State == ConnectionState.Play)
-                    foreach (var chunk in ChatChunks(line)) await _client.SendChatAsync(chunk, _cts.Token);
+                    foreach (var chunk in ChatChunks(line)) await _client.SendChatAsync(chunk, ct);
                 if (_voice is { IsConnected: true })
                     foreach (var sentence in Sentences(line))
                     {
-                        var (samples, rate) = await _tts(sentence, VoiceId, _cts.Token);
+                        var (samples, rate) = await _tts(sentence, VoiceId, ct);
                         if (rate != 24000) throw new InvalidOperationException($"unexpected TTS rate {rate}");
-                        await _voice.SpeakAsync(Audio.Upsample24To48(samples, Gain), false, _cts.Token);
+                        Started();
+                        await _voice.SpeakAsync(Audio.Upsample24To48(samples, Gain), false, ct);
                     }
+                else Started(); // text only: the line is out as soon as it is typed
             }
             catch (OperationCanceledException) when (_cts.IsCancellationRequested) { return; }
+            catch (OperationCanceledException) { Log?.Invoke("stopped talking (interrupted)"); }
             catch (Exception e)
             {
                 Log?.Invoke("speaking failed: " + e.Message);
             }
             finally
             {
+                Interlocked.CompareExchange(ref _line, null, lineCts);
                 IsSpeaking = false;
             }
         }

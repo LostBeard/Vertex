@@ -3,6 +3,7 @@ using System.Text.Json;
 using System.Threading.Channels;
 using SpawnDev.AI;
 using SpawnDev.AI.Server;
+using SpawnDev.ILGPU.ML.Preprocessing;
 using SpawnDev.Minecraft;
 using SpawnDev.Minecraft.VoiceChat;
 using Vertex.AI;
@@ -11,12 +12,16 @@ namespace Vertex.Brain;
 
 /// <summary>Something the brain should consider: speech, chat, or a finished task.</summary>
 public abstract record BrainEvent;
-public sealed record SaidEvent(Guid Speaker, string SpeakerName, string Text, bool Voice) : BrainEvent;
+/// <param name="HeardTick">When the speaker stopped (<see cref="Environment.TickCount64"/>; 0 = when it arrived).</param>
+/// <param name="SttMs">Speech to text time for a spoken line.</param>
+public sealed record SaidEvent(Guid Speaker, string SpeakerName, string Text, bool Voice, long HeardTick = 0, double SttMs = 0) : BrainEvent;
 public sealed record TaskEvent(TaskOutcome Outcome) : BrainEvent;
 /// <summary>A player came to play (joined, or is back after a while away).</summary>
 public sealed record JoinedEvent(PlayerMemory Player, DateTime? LastSeen) : BrainEvent;
 /// <summary>Nobody needs Vertex right now: time to work on a long-running goal.</summary>
 public sealed record GoalEvent(Objective Goal) : BrainEvent;
+/// <summary>Prefill the system prompt and tool list before anyone talks (at start, after a character switch).</summary>
+public sealed record PrimeEvent : BrainEvent;
 
 /// <summary>
 /// Vertex's mind. Listens to voice (Whisper) and chat, decides when it is being talked to, and answers as the
@@ -28,6 +33,8 @@ public sealed class VertexBrain : IAsyncDisposable
 {
     private readonly Channel<BrainEvent> _events = Channel.CreateUnbounded<BrainEvent>();
     private readonly List<AiChatMessage> _history = [];
+    /// <summary>History messages kept (user + assistant); past this, the older half is dropped at once.</summary>
+    public const int MaxHistory = 24;
     private readonly CancellationTokenSource _cts = new();
     private readonly CharacterStore _characters;
     private Task? _loop;
@@ -84,10 +91,10 @@ public sealed class VertexBrain : IAsyncDisposable
         {
             Ears = new Ears(voice, ai.TranscribeAsync);
             Ears.Log += m => Log?.Invoke("[ears] " + m);
-            Ears.Heard += h => _events.Writer.TryWrite(new SaidEvent(h.Speaker, NameOf(h.Speaker), h.Text, true));
+            Ears.Heard += h => Hear(new SaidEvent(h.Speaker, NameOf(h.Speaker), h.Text, true, h.EndedTick, h.SttMs));
         }
         // A trained fight-or-flight policy ships only once it beat the hand-written rule (ReflexTraining).
-        Reflexes = new Reflexes(this) { Policy = (IReflexPolicy?)LearnedReflexPolicy.LoadShipped(ai.Accelerator) ?? RuleReflexPolicy.Instance };
+        Reflexes = new Reflexes(this) { Policy = (IReflexPolicy?)LearnedReflexPolicy.LoadShipped(ai.Accelerator, ai.Lane) ?? RuleReflexPolicy.Instance };
         Memory = WorldMemory.Load(Path.Combine(characters.Folder, "..", "worlds"), world);
 
         foreach (var tool in GameTools.Create(this))
@@ -110,6 +117,7 @@ public sealed class VertexBrain : IAsyncDisposable
     {
         _started = Now();
         foreach (var p in Client.Players.Values.Where(p => p.Id != Client.Profile.Id)) Memory.Meet(p.Id, p.Name, _started);
+        _events.Writer.TryWrite(new PrimeEvent());
         _loop = Task.Run(() => LoopAsync(_cts.Token));
         _idleLoop = Task.Run(() => IdleLoopAsync(_cts.Token));
     }
@@ -167,11 +175,56 @@ public sealed class VertexBrain : IAsyncDisposable
     private void OnChat(ChatMessage m)
     {
         if (m.Kind != ChatKind.Player || m.SenderId == Client.Profile.Id || m.SenderId == null) return;
-        _events.Writer.TryWrite(new SaidEvent(m.SenderId.Value, m.SenderName ?? NameOf(m.SenderId.Value), m.Content, false));
+        Hear(new SaidEvent(m.SenderId.Value, m.SenderName ?? NameOf(m.SenderId.Value), m.Content, false, Environment.TickCount64));
     }
 
     /// <summary>Lets code (and tests) hand the brain something to consider.</summary>
-    public void Post(BrainEvent e) => _events.Writer.TryWrite(e);
+    public void Post(BrainEvent e)
+    {
+        if (e is SaidEvent s) Hear(s);
+        else _events.Writer.TryWrite(e);
+    }
+
+    /// <summary>
+    /// Something was said. Hearing never waits for thinking: a turn already running is interrupted when this is
+    /// addressed to Vertex and either the running turn is not a friend's (a game update, a goal step) or Vertex is
+    /// called by name or told to stop. Anything else waits its turn (and a speaker's waiting lines are answered
+    /// together). Before 2026-10-12 one slow turn left every later line queued behind it ("not hearing anything").
+    /// </summary>
+    private void Hear(SaidEvent e)
+    {
+        if (Volatile.Read(ref _turn) is { } turn && IsAddressed(e) && (!turn.ForPerson || Interrupts(e.Text)))
+        {
+            Log?.Invoke($"  (interrupted by {e.SpeakerName})");
+            turn.Interrupted = true;
+            Mouth.Hush();
+            try { turn.Cts.Cancel(); } catch (ObjectDisposedException) { }
+        }
+        _events.Writer.TryWrite(e);
+    }
+
+    /// <summary>Called by name, or told to stop or wait: worth cutting a friend's turn short for.</summary>
+    private bool Interrupts(string text)
+    {
+        var t = " " + text.ToLowerInvariant() + " ";
+        return t.Contains(Character.Name.ToLowerInvariant()) || t.Contains("vertex")
+            || t.Contains(" stop") || t.Contains(" wait") || t.Contains(" never mind") || t.Contains(" nevermind");
+    }
+
+    /// <summary>The turn being thought or spoken right now (null when Vertex is idle).</summary>
+    private sealed class Turn(CancellationTokenSource cts, bool forPerson)
+    {
+        public CancellationTokenSource Cts { get; } = cts;
+        public bool ForPerson { get; } = forPerson;
+        public volatile bool Interrupted;
+    }
+    private Turn? _turn;
+
+    /// <summary>True while a turn is being thought about (or its reply generated).</summary>
+    public bool IsThinking => Volatile.Read(ref _turn) != null;
+
+    /// <summary>The longest a turn may think before it gives up and says so (a stalled generation must not deafen Vertex).</summary>
+    public TimeSpan TurnTimeout { get; set; } = TimeSpan.FromSeconds(60);
 
     // ---------------------------------------------------------------- deciding to answer
 
@@ -192,51 +245,86 @@ public sealed class VertexBrain : IAsyncDisposable
 
     private async Task LoopAsync(CancellationToken ct)
     {
-        await foreach (var e in _events.Reader.ReadAllAsync(ct))
+        await foreach (var first in _events.Reader.ReadAllAsync(ct))
         {
+            var e = first;
+            // A friend's lines that arrived while Vertex was busy are one turn: answer them together, once.
+            if (e is SaidEvent said && IsAddressed(said))
+                while (_events.Reader.TryPeek(out var next) && next is SaidEvent more && more.Speaker == said.Speaker && IsAddressed(more)
+                       && _events.Reader.TryRead(out _))
+                    e = said = said with { Text = said.Text + " " + more.Text, HeardTick = more.HeardTick, SttMs = more.SttMs };
+
+            var forPerson = e is SaidEvent;
+            using var cts = CancellationTokenSource.CreateLinkedTokenSource(ct);
+            cts.CancelAfter(TurnTimeout);
+            var turn = new Turn(cts, forPerson);
+            var clock = e is SaidEvent heard ? new TurnClock(heard.HeardTick, heard.SttMs) : new TurnClock();
+            Volatile.Write(ref _turn, turn);
             try
             {
-                switch (e)
-                {
-                    case SaidEvent s when IsAddressed(s):
-                        CurrentSpeaker = s.SpeakerName;
-                        _lastPartner = s.Speaker;
-                        _lastExchange = DateTime.UtcNow;
-                        _lastActivity = Now();
-                        _pursuing = null; // a friend asking comes first; the goal waits for the next quiet spell
-                        Mouth.Hush();
-                        var said = $"{s.SpeakerName} says{(s.Voice ? " (out loud)" : " (in chat)")}: {s.Text}";
-                        // System One: an urgent command we are sure of runs NOW; the language model only words the reply.
-                        if (await FastActAsync(s) is { } done)
-                            await RespondAsync($"{said}\n[You already did it: {done}] Answer in one short sentence; do not call tools.", ct, allowTools: false);
-                        else
-                            await RespondAsync(said, ct);
-                        break;
-                    case TaskEvent t:
-                        Log?.Invoke($"task ended: {t.Outcome.Task}: {t.Outcome.Summary}");
-                        _lastActivity = Now();
-                        var forGoal = t.Outcome.Interruption || t.Outcome.Goal is not { Done: null } stepGoal ? null : stepGoal;
-                        Remember(t.Outcome);
-                        if (forGoal != null)
-                            await ReviewGoalStepAsync(forGoal, t.Outcome, ct);
-                        // Report back in character (failures always; successes unless very quiet).
-                        else if (!t.Outcome.Success || Character.Style.Chattiness >= 0.2)
-                            await RespondAsync($"[Game update, not a friend talking: you finished {t.Outcome.Task}. Result: {t.Outcome.Summary}] Tell your friends how it went, in one short first-person sentence.", ct, allowTools: false);
-                        break;
-                    case JoinedEvent j when Character.Style.Chattiness >= 0.2:
-                        await RespondAsync($"[Game update, not a friend talking: {j.Player.Name} just came to play. {Acquaintance(j.Player, j.LastSeen)}] "
-                            + $"Say hello to {j.Player.Name}, using the name {j.Player.Name}, in one short, warm sentence (you may mention last time). Do not call tools.", ct, allowTools: false);
-                        break;
-                    case GoalEvent g:
-                        await PursueGoalAsync(g.Goal, ct);
-                        break;
-                }
+                await HandleAsync(e, clock, cts.Token);
             }
             catch (OperationCanceledException) when (ct.IsCancellationRequested) { return; }
+            catch (OperationCanceledException)
+            {
+                // Interrupted (someone spoke) or out of time: either way the next thing in line gets a turn now.
+                if (!turn.Interrupted)
+                {
+                    Log?.Invoke($"  (gave up thinking after {TurnTimeout.TotalSeconds:0} s)");
+                    if (forPerson) Mouth.Say("Sorry, I lost my train of thought. Can you say that again?");
+                }
+                if (clock.TakeReport()) Log?.Invoke("timing: " + clock.Describe(turn.Interrupted ? "interrupted" : "timed out"));
+            }
             catch (Exception ex)
             {
                 Log?.Invoke("brain error: " + ex.Message);
             }
+            finally
+            {
+                Interlocked.CompareExchange(ref _turn, null, turn);
+            }
+        }
+    }
+
+    private async Task HandleAsync(BrainEvent e, TurnClock clock, CancellationToken ct)
+    {
+        switch (e)
+        {
+            case SaidEvent s when IsAddressed(s):
+                CurrentSpeaker = s.SpeakerName;
+                _lastPartner = s.Speaker;
+                _lastExchange = DateTime.UtcNow;
+                _lastActivity = Now();
+                _pursuing = null; // a friend asking comes first; the goal waits for the next quiet spell
+                Mouth.Hush();
+                var said = $"{s.SpeakerName} says{(s.Voice ? " (out loud)" : " (in chat)")}: {s.Text}";
+                // System One: an urgent command we are sure of runs NOW; the language model only words the reply.
+                if (await FastActAsync(s) is { } done)
+                    await RespondAsync($"{said}\n[You already did it: {done}] Answer in one short sentence; do not call tools.", ct, allowTools: false, clock);
+                else
+                    await RespondAsync(said, ct, clock: clock);
+                break;
+            case TaskEvent t:
+                Log?.Invoke($"task ended: {t.Outcome.Task}: {t.Outcome.Summary}");
+                _lastActivity = Now();
+                var forGoal = t.Outcome.Interruption || t.Outcome.Goal is not { Done: null } stepGoal ? null : stepGoal;
+                Remember(t.Outcome);
+                if (forGoal != null)
+                    await ReviewGoalStepAsync(forGoal, t.Outcome, ct);
+                // Report back in character (failures always; successes unless very quiet).
+                else if (!t.Outcome.Success || Character.Style.Chattiness >= 0.2)
+                    await RespondAsync($"[Game update, not a friend talking: you finished {t.Outcome.Task}. Result: {t.Outcome.Summary}] Tell your friends how it went, in one short first-person sentence.", ct, allowTools: false, clock);
+                break;
+            case JoinedEvent j when Character.Style.Chattiness >= 0.2:
+                await RespondAsync($"[Game update, not a friend talking: {j.Player.Name} just came to play. {Acquaintance(j.Player, j.LastSeen)}] "
+                    + $"Say hello to {j.Player.Name}, using the name {j.Player.Name}, in one short, warm sentence (you may mention last time). Do not call tools.", ct, allowTools: false, clock);
+                break;
+            case PrimeEvent:
+                await PrimeAsync(ct);
+                break;
+            case GoalEvent g:
+                await PursueGoalAsync(g.Goal, ct);
+                break;
         }
     }
 
@@ -333,8 +421,23 @@ public sealed class VertexBrain : IAsyncDisposable
         sb.AppendLine("- If you are asked to do something you have no tool for, say so kindly and suggest something you can do.");
         sb.AppendLine("- When a friend gives you a long-term goal (\"a goal for you\", \"work on it over time\", \"whenever you have time\"), call set_goal so you remember it; you may also start on it.");
         sb.AppendLine("- Never be mean, never use bad words, and never attack players.");
-        sb.AppendLine();
-        sb.AppendLine("Right now:");
+        sb.AppendLine("- A friend saying hello, thanks or something friendly gets a friendly answer, not a job: only call a tool when you are asked to do something.");
+        sb.AppendLine("- Before each message you get a note about what is going on in the game. It is for you to know; never read it out or repeat its words.");
+        var others = _characters.All().Where(c => c.Name != Character.Name).Select(c => c.Name);
+        sb.AppendLine($"- Other characters you can switch to: {string.Join(", ", others)}.");
+        return sb.ToString();
+    }
+
+    /// <summary>
+    /// What is going on right now (position, health, nearby, memory of the people here, goals, places). A note of its own
+    /// just before the newest message, NOT in the system prompt: the system prompt plus the tool list is the long, unchanging
+    /// start of every prompt, and the language model reuses it from the last turn only while it stays byte-identical.
+    /// With the game state inside it, every turn paid for the whole tool list again.
+    /// </summary>
+    public string NowPrompt()
+    {
+        var sb = new StringBuilder();
+        sb.AppendLine("What is going on in the game (background for you, not something to say):");
         var (x, y, z) = Client.Position;
         sb.AppendLine($"- You are at x {x:0} y {y:0} z {z:0} in {Client.World.Dimension.Bare()}, " +
                       $"health {Client.Health / 2:0.#} of 10 hearts, food {Client.Food / 2:0.#} of 10, game mode {Client.GameMode.ToString().ToLowerInvariant()}.");
@@ -361,20 +464,26 @@ public sealed class VertexBrain : IAsyncDisposable
             sb.AppendLine("- Places you know: " + string.Join(", ", Memory.Places.Select(p => p.Dimension == Client.World.Dimension
                 ? $"{p.Name} ({Math.Sqrt((p.X + 0.5 - x) * (p.X + 0.5 - x) + (p.Z + 0.5 - z) * (p.Z + 0.5 - z)):0} blocks away)"
                 : $"{p.Name} (in the {p.Dimension.Bare().Replace("the_", "")})")) + ".");
-        var others = _characters.All().Where(c => c.Name != Character.Name).Select(c => c.Name);
-        sb.AppendLine($"- Other characters you can switch to: {string.Join(", ", others)}.");
         return sb.ToString();
     }
 
-    /// <summary>One turn: prompt + recent history + this message, tools on; speaks the reply.</summary>
-    public async Task<string> RespondAsync(string userMessage, CancellationToken ct = default, bool allowTools = true)
+    /// <summary>
+    /// One turn: system prompt + recent history + this message (with what is going on right now), tools on. The reply
+    /// is spoken sentence by sentence AS IT IS GENERATED, so Vertex starts talking while it is still thinking.
+    /// </summary>
+    public async Task<string> RespondAsync(string userMessage, CancellationToken ct = default, bool allowTools = true, TurnClock? clock = null)
     {
+        clock ??= new TurnClock();
         var messages = new List<AiChatMessage> { new("system", SystemPrompt()) };
-        lock (_history) messages.AddRange(_history.TakeLast(16));
+        lock (_history) messages.AddRange(_history);
+        // The game state is its own note just before the message. Glued to the front of the message, the model began
+        // its replies with the note's label ("Right now: I'm on my way to Aubri", BrainTests 2026-10-12).
+        messages.Add(new AiChatMessage("system", NowPrompt()));
         messages.Add(new AiChatMessage("user", userMessage));
         Log?.Invoke("> " + userMessage);
         var runsBefore = Volatile.Read(ref _toolRuns);
-        var reply = await ChatOnceAsync(messages, allowTools, ct);
+        var spoken = new List<string>();
+        var reply = await ChatOnceAsync(messages, allowTools, ct, clock, spoken);
         // An 8B model sometimes SAYS it is doing something ("I'm on my way") without calling a tool, and then nothing
         // happens in the game (seen 2026-10-11 in BrainTests.ComeHere). Once, tell it so and let it call the tool.
         if (allowTools && Volatile.Read(ref _toolRuns) == runsBefore && ClaimsAction(reply))
@@ -382,7 +491,8 @@ public sealed class VertexBrain : IAsyncDisposable
             Log?.Invoke("  (said it would act but called no tool: asking again)");
             messages.Add(new AiChatMessage("assistant", reply));
             messages.Add(new AiChatMessage("user", "[You said that, but you did not call any tool, so NOTHING happened in the game. Call the right tool now, then answer in one short sentence.]"));
-            reply = await ChatOnceAsync(messages, true, ct);
+            // What it already said was heard; the second answer is only spoken when nothing was.
+            reply = await ChatOnceAsync(messages, true, ct, clock, spoken.Count > 0 ? null : spoken);
         }
         // Nothing said and nothing done is no answer at all (seen 2026-10-11 for "remember that I love pink
         // axolotls"): once, tell it so.
@@ -391,36 +501,119 @@ public sealed class VertexBrain : IAsyncDisposable
             Log?.Invoke("  (no answer and no tool: asking again)");
             messages.Add(new AiChatMessage("assistant", reply));
             messages.Add(new AiChatMessage("user", "[You gave no answer and called no tool. If you were asked to do something, call the right tool now; then answer in one short sentence.]"));
-            reply = await ChatOnceAsync(messages, true, ct);
+            reply = await ChatOnceAsync(messages, true, ct, clock, spoken.Count > 0 ? null : spoken);
         }
         lock (_history)
         {
             _history.Add(new AiChatMessage("user", userMessage));
             _history.Add(new AiChatMessage("assistant", reply.Length > 0 ? reply : "(did it)"));
-            if (_history.Count > 40) _history.RemoveRange(0, _history.Count - 40);
+            // Old exchanges leave in CHUNKS, not one per turn: the language model reuses the start of the prompt from
+            // the last turn only while it is unchanged, and a window that slid every turn made it prefill the whole
+            // history again each time (MEASURED 2026-10-12, AiSessionTests: reused 525 of 543 tokens, first word
+            // 0.68 s, while the history grew; 26 of 569 and 2.4 s once it slid).
+            if (_history.Count > MaxHistory) _history.RemoveRange(0, _history.Count - MaxHistory / 2);
         }
-        // Never speak a fragment ("I", ".") - a model that only called a tool sometimes leaves one behind.
-        if (reply.Count(char.IsLetter) >= 4) Mouth.Say(reply);
+        // The end of the reply that was not a whole sentence while streaming (or all of it, when nothing streamed).
+        var rest = Unspoken(reply, spoken);
+        if (rest.Count(char.IsLetter) >= 4 && !ChatTemplates.IsOnlyPythonicCalls(rest))
+            SayInTurn(rest, clock);
+        else if (spoken.Count == 0 && clock.TakeReport())
+            Log?.Invoke("timing: " + clock.Describe(reply.Length > 0 ? "answered without speaking" : "acted without speaking"));
         return reply;
     }
 
-    private async Task<string> ChatOnceAsync(List<AiChatMessage> messages, bool allowTools, CancellationToken ct)
+    /// <summary>Speaks a line for the current turn; the turn's timing is logged when it is first heard.</summary>
+    private void SayInTurn(string line, TurnClock clock)
+    {
+        clock.FirstSentence();
+        Mouth.Say(line, () =>
+        {
+            if (clock.FirstSound() && clock.TakeReport()) Log?.Invoke("timing: " + clock.Describe());
+        });
+    }
+
+    /// <summary>What is left of <paramref name="reply"/> once the sentences already spoken are taken off its front.</summary>
+    internal static string Unspoken(string reply, List<string> spoken)
+    {
+        var rest = reply;
+        foreach (var s in spoken)
+        {
+            var at = rest.IndexOf(s, StringComparison.Ordinal);
+            if (at < 0) return spoken.Count == 0 ? reply : ""; // the final text differs from the stream: say nothing twice
+            rest = rest[(at + s.Length)..];
+        }
+        return rest.Trim();
+    }
+
+    /// <summary>
+    /// Prefills the system prompt and the tool list - the long, fixed start of every prompt - so the first thing anybody
+    /// says only costs its own words. MEASURED 2026-10-12 (BrainTests): the first turn after a start prefilled 2,951 tokens
+    /// and took 16.95 s to its first word; with the prefix already cached, 2,847 tokens were reused and it took 1.2 s.
+    /// One throwaway output token, never spoken.
+    /// </summary>
+    private async Task PrimeAsync(CancellationToken ct)
+    {
+        var sw = System.Diagnostics.Stopwatch.StartNew();
+        await Ai.ChatAsync(new AiChatRequest
+        {
+            Model = Model,
+            Messages = [new("system", SystemPrompt()), new("user", "(getting ready)")],
+            Options = new AiGenerationOptions { MaxOutputTokens = 1, Strategy = "greedy" },
+        }, null, ct);
+        Log?.Invoke($"ready: prompt and tools prefilled in {sw.Elapsed.TotalSeconds:0.0} s");
+    }
+
+    /// <param name="spoken">When given, whole sentences are spoken as they stream in and added here.</param>
+    private async Task<string> ChatOnceAsync(List<AiChatMessage> messages, bool allowTools, CancellationToken ct, TurnClock clock, List<string>? spoken)
     {
         var tools = Ai.Chat.Tools;
         if (!allowTools) Ai.Chat.Tools = null;
+        var pending = new StringBuilder();
+        Task OnDelta(string delta)
+        {
+            clock.FirstToken();
+            if (spoken == null) return Task.CompletedTask;
+            pending.Append(delta);
+            // A sentence is whole once its end mark is followed by a space; speak it while the rest is generated.
+            var text = pending.ToString();
+            var cut = -1;
+            for (var i = 0; i + 1 < text.Length; i++)
+                if (text[i] is '.' or '!' or '?' && char.IsWhiteSpace(text[i + 1])) cut = i + 1;
+            if (cut > 0)
+            {
+                var whole = text[..cut].Trim();
+                pending.Remove(0, cut);
+                foreach (var sentence in Mouth.Sentences(whole))
+                {
+                    // Llama writes some tool calls as text ("come_here(player='Aubri')"): never speak one.
+                    if (sentence.Count(char.IsLetter) < 2 || ChatTemplates.IsOnlyPythonicCalls(sentence)) continue;
+                    spoken.Add(sentence);
+                    SayInTurn(sentence, clock);
+                }
+            }
+            return Task.CompletedTask;
+        }
+        void OnPass(string line)
+        {
+            if (line.Contains("prompt=", StringComparison.Ordinal)) lock (clock.Passes) clock.Passes.Add(line);
+        }
         AiChatResult result;
+        clock.Thinking();
+        var perf = Ai.Chat.PerfLog;
+        Ai.Chat.PerfLog = OnPass;
         try
         {
-            result = await Ai.Chat.ChatAsync(new AiChatRequest
+            result = await Ai.ChatAsync(new AiChatRequest
             {
                 Model = Model,
                 Messages = messages,
                 Options = new AiGenerationOptions { MaxOutputTokens = 160, Strategy = "top_p", Temperature = 0.7f, TopP = 0.9f, RepetitionPenalty = 1.1f },
-            }, ct);
+            }, OnDelta, ct);
         }
         finally
         {
             Ai.Chat.Tools = tools;
+            Ai.Chat.PerfLog = perf;
         }
         var reply = AiChatEngine.StripToolCalls(AiChatEngine.StripThinking(result.TextWithoutToolCalls)).Trim();
         foreach (var call in result.ToolCalls) Log?.Invoke($"  tool {call.Name}({call.ArgumentsJson})");
@@ -456,6 +649,7 @@ public sealed class VertexBrain : IAsyncDisposable
         Character = c;
         Mouth.VoiceId = c.Voice;
         lock (_history) _history.Clear(); // a new character starts a new conversation
+        _events.Writer.TryWrite(new PrimeEvent()); // a new persona is a new system prompt: prefill it again
         Log?.Invoke($"now playing as {c.Name}");
         return $"you are now {c.Name}";
     }

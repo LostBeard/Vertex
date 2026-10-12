@@ -327,4 +327,68 @@ public class VertexUnitTests
         foreach (var r in new[] { "Hi Aubri!", "I like turtles too.", "It's night time now.", "That was fun!", "Let me know if you need anything.", "I remember the castle we built!", "That is annotated." })
             Assert.That(VertexBrain.ClaimsAction(r), Is.False, r);
     }
+
+    [Test]
+    public async Task GpuLane_OneModelAtATime()
+    {
+        var lane = new GpuLane();
+        int inside = 0, most = 0;
+        async Task Work()
+        {
+            using (await lane.EnterAsync())
+            {
+                var n = Interlocked.Increment(ref inside);
+                lock (lane) most = Math.Max(most, n);
+                await Task.Delay(20);
+                Interlocked.Decrement(ref inside);
+            }
+        }
+        await Task.WhenAll(Enumerable.Range(0, 8).Select(_ => Task.Run(Work)));
+        Assert.That(most, Is.EqualTo(1), "two holders of the GPU at once");
+    }
+
+    /// <summary>
+    /// Speech to text gets the GPU between two tokens of a long reply instead of after it (hearing must not wait for
+    /// thinking). Red-check: with YieldAsync doing nothing, the transcription runs after all ten tokens.
+    /// </summary>
+    [Test]
+    public async Task GpuLane_UrgentWorkRunsBetweenTheStepsOfALongHolder()
+    {
+        var lane = new GpuLane();
+        var order = new System.Collections.Concurrent.ConcurrentQueue<string>();
+        var holding = new TaskCompletionSource();
+        var reply = Task.Run(async () =>
+        {
+            using (await lane.EnterAsync())
+            {
+                holding.SetResult();
+                for (var token = 0; token < 10; token++)
+                {
+                    await Task.Delay(15);
+                    order.Enqueue("token");
+                    await lane.YieldAsync();
+                }
+            }
+        });
+        await holding.Task;
+        await Task.Delay(30);
+        var heard = Task.Run(async () =>
+        {
+            using (await lane.EnterAsync(urgent: true)) order.Enqueue("transcribe");
+        });
+        await Task.WhenAll(reply, heard);
+        var list = order.ToList();
+        var at = list.IndexOf("transcribe");
+        Assert.That(at, Is.GreaterThan(0).And.LessThan(list.Count - 1), "transcription ran at " + at + " of " + string.Join(",", list));
+    }
+
+    [Test]
+    public void Unspoken_IsWhatStreamingLeftUnsaid()
+    {
+        Assert.That(VertexBrain.Unspoken("Hello there! I'm coming over. See you", ["Hello there!", "I'm coming over."]), Is.EqualTo("See you"));
+        Assert.That(VertexBrain.Unspoken("Hello there!", ["Hello there!"]), Is.EqualTo(""));
+        Assert.That(VertexBrain.Unspoken("Nothing streamed.", []), Is.EqualTo("Nothing streamed."));
+        // The final text no longer contains what was spoken (the engine rewrote it): never say anything twice.
+        Assert.That(VertexBrain.Unspoken("Different words.", ["Hello there!"]), Is.EqualTo(""));
+    }
 }

@@ -40,15 +40,20 @@ public sealed class FastIntents : IDisposable
     private readonly LoadedTokenizer _tokenizer;
     private readonly List<(Intent Intent, float[] Embedding)> _examples = [];
     private readonly SemaphoreSlim _gate = new(1, 1);
+    // The process-wide GPU lane (null in tests that run the matcher alone): matching enters it as urgent work.
+    private readonly GpuLane? _lane;
 
-    private FastIntents(InferenceSession session, LoadedTokenizer tokenizer, Accelerator accelerator)
+    private FastIntents(InferenceSession session, LoadedTokenizer tokenizer, Accelerator accelerator, GpuLane? lane)
     {
+        _lane = lane;
         _session = session;
         _tokenizer = tokenizer;
         _pipeline = new FeatureExtractionPipeline(session, accelerator, maxLength: MaxTokens, hiddenSize: 384);
     }
 
-    public static async Task<FastIntents> LoadAsync(IModelSource source, Accelerator accelerator, CancellationToken ct = default)
+    /// <param name="lane">The GPU lane MatchAsync enters. The caller of LoadAsync must already hold it (loading embeds
+    /// the examples without entering it again).</param>
+    public static async Task<FastIntents> LoadAsync(IModelSource source, Accelerator accelerator, GpuLane? lane = null, CancellationToken ct = default)
     {
         const string repo = ModelHub.KnownModels.AllMiniLmL6V2;
         string tokenizerJson;
@@ -66,7 +71,7 @@ public sealed class FastIntents : IDisposable
                 ["attention_mask"] = [1, MaxTokens],
                 ["token_type_ids"] = [1, MaxTokens],
             });
-        var intents = new FastIntents(session, tokenizer, accelerator);
+        var intents = new FastIntents(session, tokenizer, accelerator, lane);
         foreach (var intent in Known)
             foreach (var example in intent.Examples)
                 intents._examples.Add((intent, await intents.EmbedAsync(example)));
@@ -78,6 +83,14 @@ public sealed class FastIntents : IDisposable
         await _gate.WaitAsync();
         try { return (await _pipeline.EmbedAsync(text, _tokenizer)).Embedding; }
         finally { _gate.Release(); }
+    }
+
+    /// <summary>An embedding for matching: inside the GPU lane, ahead of a reply being generated.</summary>
+    private async Task<float[]> EmbedInLaneAsync(string text)
+    {
+        if (_lane == null) return await EmbedAsync(text);
+        using (await _lane.EnterAsync(urgent: true))
+            return await EmbedAsync(text);
     }
 
     private static readonly string[] Negations = ["don't", "dont", "do not", "never", "not ", "no more", "stop following", "stop coming"];
@@ -103,7 +116,7 @@ public sealed class FastIntents : IDisposable
         var cleaned = Clean(text, name);
         if (cleaned.Length == 0 || cleaned.Split(' ').Length > 10) return null; // long sentences are conversation
         if (Negations.Any(n => (" " + cleaned + " ").Contains(" " + n))) return null;
-        var e = await EmbedAsync(cleaned);
+        var e = await EmbedInLaneAsync(cleaned);
         var best = _examples.GroupBy(x => x.Intent)
             .Select(g => (Intent: g.Key, Score: g.Max(x => Dot(e, x.Embedding))))
             .OrderByDescending(x => x.Score).ToList();
@@ -118,7 +131,7 @@ public sealed class FastIntents : IDisposable
     /// <summary>Scores against every command, best first (for tests and tuning).</summary>
     public async Task<List<(string Tool, float Score)>> ScoresAsync(string text, string name)
     {
-        var e = await EmbedAsync(Clean(text, name));
+        var e = await EmbedInLaneAsync(Clean(text, name));
         return _examples.GroupBy(x => x.Intent.Tool).Select(g => (g.Key, g.Max(x => Dot(e, x.Embedding)))).OrderByDescending(x => x.Item2).ToList();
     }
 

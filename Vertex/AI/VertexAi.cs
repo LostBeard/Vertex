@@ -24,6 +24,8 @@ public sealed class VertexAi : IAsyncDisposable
     public AiVoiceEngine Voice { get; }
     public AiToolRegistry Tools { get; } = new();
     public Action<string>? Log { get; set; }
+    /// <summary>Every model call goes through here, one at a time (see <see cref="GpuLane"/>).</summary>
+    public GpuLane Lane { get; } = new();
 
     public VertexAi(Action<string>? log = null)
     {
@@ -60,8 +62,54 @@ public sealed class VertexAi : IAsyncDisposable
     /// <summary>The fast command matcher (System One for speech), loaded on first use.</summary>
     public FastIntents? Intents { get; private set; }
 
-    public async Task<FastIntents> LoadIntentsAsync(CancellationToken ct = default) =>
-        Intents ??= await FastIntents.LoadAsync(_models, Accelerator, ct);
+    public async Task<FastIntents> LoadIntentsAsync(CancellationToken ct = default)
+    {
+        if (Intents != null) return Intents;
+        using (await Lane.EnterAsync(ct: ct))
+            return Intents ??= await FastIntents.LoadAsync(_models, Accelerator, Lane, ct);
+    }
+
+    /// <summary>
+    /// Loads and warms speech to text and the voice before anyone talks: kernels compile on FIRST EXECUTION, not at
+    /// load, so a model that is only loaded makes the first thing anybody says wait for its compile (Rose's first
+    /// reply: 6.4 s cold, 1.0 s warmed). Whisper runs once on silence (its own warm pass); Kokoro says one short
+    /// line in <paramref name="voiceId"/> and the audio is thrown away.
+    /// </summary>
+    public async Task WarmUpAsync(string voiceId, CancellationToken ct = default)
+    {
+        using (await Lane.EnterAsync(ct: ct))
+        {
+            var clock = System.Diagnostics.Stopwatch.StartNew();
+            await Speech.EnsureReadyAsync(ct);
+            var ears = clock.ElapsedMilliseconds;
+            await Voice.SpeakWithVoiceAsync("Hello there.", voiceId, ct: ct);
+            Log?.Invoke($"warmed up: speech to text {ears} ms, voice {clock.ElapsedMilliseconds - ears} ms");
+        }
+    }
+
+    /// <summary>Loads the chat model (weights to the GPU, a first pass) before anyone talks.</summary>
+    public async Task EnsureChatReadyAsync(string model, CancellationToken ct = default)
+    {
+        using (await Lane.EnterAsync(ct: ct))
+            await Chat.EnsureReadyAsync(model);
+    }
+
+    /// <summary>
+    /// One language-model call (with tools: the engine runs them between passes). Holds the GPU for the whole call
+    /// but steps aside between tokens when speech is waiting to be transcribed (<see cref="GpuLane.YieldAsync"/>).
+    /// </summary>
+    public async Task<AiChatResult> ChatAsync(AiChatRequest request, Func<string, Task>? onDelta, CancellationToken ct = default)
+    {
+        using (await Lane.EnterAsync(ct: ct))
+        {
+            async Task Delta(string d)
+            {
+                await Lane.YieldAsync(ct);
+                if (onDelta != null) await onDelta(d);
+            }
+            return await Chat.ChatStreamAsync(request, Delta, ct);
+        }
+    }
 
     /// <summary>The chat models available locally (Ollama cache) by name.</summary>
     public async Task<IReadOnlyList<string>> ModelNamesAsync(CancellationToken ct = default) =>
@@ -70,15 +118,21 @@ public sealed class VertexAi : IAsyncDisposable
     /// <summary>Whisper on 16 kHz mono float PCM.</summary>
     public async Task<string> TranscribeAsync(float[] pcm16k, CancellationToken ct = default)
     {
-        var result = await Speech.TranscribeAsync(pcm16k, 16000, ct);
-        return result.Text.Trim();
+        using (await Lane.EnterAsync(urgent: true, ct))
+        {
+            var result = await Speech.TranscribeAsync(pcm16k, 16000, ct);
+            return result.Text.Trim();
+        }
     }
 
     /// <summary>Kokoro (built-in voices, "kokoro:af_heart" etc.): text in, 24 kHz mono float PCM out.</summary>
     public async Task<(float[] Samples, int SampleRate)> SpeakAsync(string text, string voiceId, CancellationToken ct = default)
     {
-        var speech = await Voice.SpeakWithVoiceAsync(text, voiceId, ct: ct);
-        return (speech.Samples, speech.SampleRate);
+        using (await Lane.EnterAsync(ct: ct))
+        {
+            var speech = await Voice.SpeakWithVoiceAsync(text, voiceId, ct: ct);
+            return (speech.Samples, speech.SampleRate);
+        }
     }
 
     public static IReadOnlyList<string> Voices => AiVoiceEngine.KokoroVoiceIds;

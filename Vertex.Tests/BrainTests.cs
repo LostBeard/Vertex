@@ -31,7 +31,7 @@ public class BrainTests
         var model = models.FirstOrDefault(m => m.StartsWith("llama3.1"));
         if (model == null) Assert.Fail("llama3.1 not in the Ollama cache: " + string.Join(", ", models));
         _model = model!;
-        await _ai.Chat.EnsureReadyAsync(_model);
+        await _ai.EnsureChatReadyAsync(_model);
     }
 
     [OneTimeTearDown]
@@ -137,7 +137,7 @@ public class BrainTests
         await aubs.SendChatAsync("Vertex, remember that I love pink axolotls!");
         await Wait.UntilAsync(() => brain.Memory.People[aubriId].Facts.Any(f => f.Contains("axolotl", StringComparison.OrdinalIgnoreCase)), Timeout,
             () => $"facts about Aubri: [{string.Join("; ", brain.Memory.People[aubriId].Facts)}], world facts: [{string.Join("; ", brain.Memory.Facts)}]; log: {string.Join(" | ", log)}");
-        Assert.That(brain.SystemPrompt(), Does.Contain("About Aubri:").And.Contain("axolotl"));
+        Assert.That(brain.NowPrompt(), Does.Contain("About Aubri:").And.Contain("axolotl"));
 
         // Aubri goes; two hours later she is back.
         await aubs.DisposeAsync();
@@ -196,5 +196,50 @@ public class BrainTests
         TestContext.Out.WriteLine("progress: " + string.Join("; ", goal.Progress));
         Assert.That(vertex.Inventory.Count("dirt") + aubs.Inventory.Count("dirt"), Is.GreaterThanOrEqualTo(3), "it did the work (the 6-block pile leaves 3+ after drops)");
         Assert.That(brain.Memory.People[aubs.Profile.Id].History, Has.Some.Contains("dirt"), "Aubri's history has it");
+    }
+
+    /// <summary>
+    /// Calling Vertex by name while it is still answering cuts that answer short and answers the new line at once
+    /// (2026-10-12 live: one slow turn left everything TJ said after it unheard). Every turn logs where its time went.
+    /// </summary>
+    [Test]
+    public async Task CalledByNameWhileAnswering_StopsAndAnswersTheNewLine()
+    {
+        var (vertex, brain, aubs, log) = await JoinAsync("bargein");
+        await using var _v = vertex;
+        await using var _b = brain;
+        await using var _a = aubs;
+
+        await aubs.SendChatAsync("Vertex, tell me a long story about a dragon who builds a castle out of diamonds.");
+        await Wait.UntilAsync(() => log.Any(l => l.StartsWith("> ") && l.Contains("dragon")), Timeout, () => "the story never started; log: " + string.Join(" | ", log));
+        await aubs.SendChatAsync("Vertex, stop! What is your name?");
+        await Wait.UntilAsync(() => log.Any(l => l.Contains("(interrupted by Aubri)")), Timeout, () => "not interrupted; log: " + string.Join(" | ", log));
+        await Wait.UntilAsync(() => log.Any(l => l.StartsWith("> ") && l.Contains("What is your name")), Timeout, () => "the new line was not heard; log: " + string.Join(" | ", log));
+        await Wait.UntilAsync(() => log.SkipWhile(l => !(l.StartsWith("> ") && l.Contains("What is your name"))).Any(l => l.StartsWith("< ")), Timeout,
+            () => "no answer to the new line; log: " + string.Join(" | ", log));
+        await Wait.UntilAsync(() => log.Any(l => l.StartsWith("timing: spoke")), Timeout, () => "no timing line; log: " + string.Join(" | ", log));
+        TestContext.Out.WriteLine(string.Join(Environment.NewLine, log.Where(l => l.StartsWith("timing:"))));
+    }
+
+    /// <summary>A turn that runs out of time says so, and the next thing anybody says is still heard.</summary>
+    [Test]
+    public async Task ATurnThatTakesTooLong_GivesUpAndKeepsListening()
+    {
+        var (vertex, brain, aubs, log) = await JoinAsync("timeout");
+        await using var _v = vertex;
+        await using var _b = brain;
+        await using var _a = aubs;
+        var heard = new ConcurrentQueue<ChatMessage>();
+        aubs.ChatReceived += heard.Enqueue;
+
+        brain.TurnTimeout = TimeSpan.FromMilliseconds(300); // far too short for any reply
+        await aubs.SendChatAsync("Vertex, what do you like to build?");
+        await Wait.UntilAsync(() => log.Any(l => l.Contains("(gave up thinking")), Timeout, () => "never gave up; log: " + string.Join(" | ", log));
+        await Wait.UntilAsync(() => heard.Any(m => m.SenderId == vertex.Profile.Id && m.Content.Contains("train of thought")), Timeout, () => "did not say it lost the thread");
+
+        brain.TurnTimeout = TimeSpan.FromSeconds(60);
+        await aubs.SendChatAsync("Vertex, what is your favourite block?");
+        await Wait.UntilAsync(() => log.SkipWhile(l => !(l.StartsWith("> ") && l.Contains("favourite block"))).Any(l => l.StartsWith("< ") && l.Length > 3), Timeout,
+            () => "deaf after the timeout; log: " + string.Join(" | ", log));
     }
 }

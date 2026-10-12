@@ -70,8 +70,14 @@ public sealed class RuleReflexPolicy : IReflexPolicy
 /// </summary>
 public sealed class LearnedReflexPolicy : IReflexPolicy, IDisposable
 {
-    private readonly TrainableModel _model;
+    private readonly Accelerator _accelerator;
+    private readonly byte[] _weights;
+    private TrainableModel? _model;
     private readonly SemaphoreSlim _one = new(1, 1);
+
+    /// <summary>The process-wide GPU lane; the network is built and run inside it (urgent: a reflex cannot wait for a
+    /// reply to finish). Null runs it directly (tests on a private CPU accelerator).</summary>
+    public AI.GpuLane? Lane { get; init; }
 
     public const string Resource = "Vertex.Brain.reflex-policy.bin";
 
@@ -87,26 +93,38 @@ public sealed class LearnedReflexPolicy : IReflexPolicy, IDisposable
 
     public LearnedReflexPolicy(Accelerator accelerator, byte[] weights)
     {
-        _model = CreateModel(accelerator, 1);
-        _model.ImportWeights(weights);
+        _accelerator = accelerator;
+        _weights = weights;
     }
 
     /// <summary>The policy shipped with Vertex, or null if none was trained (or it did not beat the rule).</summary>
-    public static LearnedReflexPolicy? LoadShipped(Accelerator accelerator)
+    public static LearnedReflexPolicy? LoadShipped(Accelerator accelerator, AI.GpuLane? lane = null)
     {
         using var s = typeof(LearnedReflexPolicy).Assembly.GetManifestResourceStream(Resource);
         if (s == null) return null;
         using var ms = new MemoryStream();
         s.CopyTo(ms);
-        return new LearnedReflexPolicy(accelerator, ms.ToArray());
+        return new LearnedReflexPolicy(accelerator, ms.ToArray()) { Lane = lane };
     }
 
     /// <summary>The chance that fighting comes out better than fleeing.</summary>
     public async Task<float> FightChanceAsync(float[] features)
     {
-        await _one.WaitAsync();
-        try { return (await _model.PredictProbsAsync(features, 1))[(int)ReflexAction.Fight]; }
-        finally { _one.Release(); }
+        using (Lane != null ? await Lane.EnterAsync(urgent: true) : null)
+        {
+            await _one.WaitAsync();
+            try
+            {
+                // Built on first use, inside the lane: allocating while another model records a CUDA graph is fatal.
+                if (_model == null)
+                {
+                    _model = CreateModel(_accelerator, 1);
+                    _model.ImportWeights(_weights);
+                }
+                return (await _model.PredictProbsAsync(features, 1))[(int)ReflexAction.Fight];
+            }
+            finally { _one.Release(); }
+        }
     }
 
     public async Task<ReflexAction> DecideAsync(float[] features, double bravery) =>
@@ -114,7 +132,7 @@ public sealed class LearnedReflexPolicy : IReflexPolicy, IDisposable
 
     public void Dispose()
     {
-        _model.Dispose();
+        _model?.Dispose();
         _one.Dispose();
     }
 }

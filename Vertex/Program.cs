@@ -15,9 +15,17 @@ using Vertex.Brain;
 
 const string App = "Vertex";
 
-if (args.Length == 0 || args[0] == "ui")
+// No arguments (or --background, how Windows starts it at login): the tray app. Vertex.exe is a Windows app so that
+// starting with Windows shows no console window; every other command writes to the terminal it was started from.
+if (args.Length == 0 || args[0] is "--background" or "tray")
+    return await RunTrayAsync(args);
+// play and join read what is typed: a Windows app cannot share the terminal's input with the shell that started it,
+// so they get a console window of their own. Everything else prints to the terminal it was run from.
+if (args[0] is "play" or "join") AllocConsole();
+else AttachParentConsole();
+if (args[0] == "ui")
 {
-    // The dashboard: http://localhost:5280 (and on the LAN, so it can be opened from another device).
+    // The dashboard alone, in this console: http://localhost:5280 (and on the LAN, so it can be opened from another device).
     return await RunDashboardAsync(args);
 }
 if (args[0] is "help" or "--help" or "-h")
@@ -112,7 +120,7 @@ static async Task<int> PlayAsync(string[] args)
     var model = Option(args, "--model") ?? models.FirstOrDefault(m => m.StartsWith("llama3.1")) ?? models.FirstOrDefault()
         ?? throw new InvalidOperationException("no chat model found in the Ollama cache (ollama pull llama3.1:8b)");
     Log($"models: {string.Join(", ", models)}; using {model}");
-    await ai.Chat.EnsureReadyAsync(model);
+    await ai.EnsureChatReadyAsync(model);
     try { await ai.LoadIntentsAsync(); }
     catch (Exception e) { Log("fast commands unavailable: " + e.Message); }
 
@@ -140,7 +148,7 @@ static async Task<int> PlayAsync(string[] args)
     return 0;
 }
 
-static async Task<int> RunDashboardAsync(string[] args)
+static Microsoft.AspNetCore.Builder.WebApplication BuildControlPanel(string[] args)
 {
     var builder = Microsoft.AspNetCore.Builder.WebApplication.CreateBuilder();
     builder.WebHost.UseUrls(Option(args, "--urls") ?? "http://0.0.0.0:5280");
@@ -153,10 +161,61 @@ static async Task<int> RunDashboardAsync(string[] args)
     app.UseAntiforgery();
     app.MapStaticAssets(); // serves _framework/blazor.web.js (without it the page renders but nothing is clickable)
     app.MapRazorComponents<Vertex.Components.App>().AddInteractiveServerRenderMode();
+    return app;
+}
+
+static async Task<int> RunDashboardAsync(string[] args)
+{
+    var app = BuildControlPanel(args);
     Console.WriteLine("Vertex dashboard: http://localhost:5280");
-    if (!args.Contains("--no-browser"))
-        try { System.Diagnostics.Process.Start(new System.Diagnostics.ProcessStartInfo("http://localhost:5280") { UseShellExecute = true }); } catch { }
+    if (!args.Contains("--no-browser")) Vertex.Host.VertexTray.OpenControlPanel();
     await app.RunAsync();
     await app.Services.GetRequiredService<Vertex.Host.VertexHost>().DisposeAsync();
     return 0;
 }
+
+// The tray app: the control panel's web host plus an icon in the notification area. One per user session; launching
+// it again just opens the control panel.
+static async Task<int> RunTrayAsync(string[] args)
+{
+    using var single = new Mutex(initiallyOwned: true, @"Local\Vertex.Tray", out var first);
+    if (!first)
+    {
+        // Already running: a person launching it again wants the control panel; a background start wants nothing.
+        if (!args.Contains("--background")) Vertex.Host.VertexTray.OpenControlPanel();
+        return 0;
+    }
+    var app = BuildControlPanel(args);
+    await app.StartAsync();
+    var host = app.Services.GetRequiredService<Vertex.Host.VertexHost>();
+    var tray = new Thread(() =>
+    {
+        System.Windows.Forms.Application.EnableVisualStyles();
+        System.Windows.Forms.Application.SetHighDpiMode(System.Windows.Forms.HighDpiMode.PerMonitorV2);
+        System.Windows.Forms.Application.Run(new Vertex.Host.VertexTray(host, () => app.Lifetime.StopApplication()));
+    }) { Name = "Vertex tray" };
+    tray.SetApartmentState(ApartmentState.STA); // Windows Forms needs a single-threaded apartment
+    tray.Start();
+    // Started by a person: show the control panel. Started by Windows at login (--background): just the icon.
+    if (!args.Contains("--background")) Vertex.Host.VertexTray.OpenControlPanel();
+    await app.WaitForShutdownAsync();
+    await host.DisposeAsync();
+    await app.DisposeAsync();
+    return 0;
+}
+
+// Vertex.exe is a Windows (not console) app; a command run from a terminal writes its output back to that terminal.
+static void AttachParentConsole()
+{
+    if (AttachConsole(-1))
+    {
+        Console.SetOut(new StreamWriter(Console.OpenStandardOutput()) { AutoFlush = true });
+        Console.SetError(new StreamWriter(Console.OpenStandardError()) { AutoFlush = true });
+    }
+}
+
+[System.Runtime.InteropServices.DllImport("kernel32.dll")]
+static extern bool AttachConsole(int processId);
+
+[System.Runtime.InteropServices.DllImport("kernel32.dll")]
+static extern bool AllocConsole();
