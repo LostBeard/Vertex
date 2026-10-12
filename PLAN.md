@@ -91,9 +91,10 @@ Every milestone is tested against REAL servers started locally (Paper 1.21.5 bui
   explicit): each situation (mob kind and count, health, armor, sword) played twice, fighting and fleeing, 20 s
   from the first hit; data in Vertex.Tests/Training/reflex-fights.jsonl. Trained on ILGPU's CPU accelerator (tiny),
   runs on the brain's accelerator; bravery moves the bar. Ships only if it beats the hand-written rule on fights it
-  never saw (5-fold CV). First batch, 56 situations: learned -0.31 vs rule -1.56 mean score (always fight -1.68,
-  always flee -8.34, best possible 1.18). Honest: they chose differently in 16; the network was better in 7, the
-  rule in 3 (6 ties): the average favours it, but 7 vs 3 is within noise. More fights to firm it up. Also learned:
+  never saw (5-fold CV). 103 situations (two batches): learned 1.00 vs rule -1.15 mean score (always fight -0.72,
+  always flee -8.89, best possible 1.45). They chose differently in 25: the network was better in 10, the rule in
+  1, 14 ties (sign test p ~ 0.012). The first batch alone (56) was 7 vs 3, within noise; the second firmed it up.
+  Also learned:
   Vertex's fleeing (12 blocks, stop) is often worse than fighting, vindicators above all; skeletons are the exception
 
 ## M7 - App
