@@ -5,6 +5,82 @@ those servers through the ViaVersion plugins on the proxy; Vertex itself speaks 
 
 Every milestone is tested against REAL servers started locally (Paper 1.21.5 build 114, Velocity), never mocks.
 
+## 2026-10-12 PIVOT (TJ): a responsive companion first, Minecraft second
+
+The first real session (TJ on AubsCraft, 10-12) showed Vertex is too slow to be useful: "Hi, Vertex" got its answer
+5.5 minutes later. TJ's direction: get the AI and speech-to-speech working well WITHOUT Minecraft in the middle,
+through Aubs's Reachy Mini as Vertex's out-of-game avatar. Vertex becomes a tray app (start with Windows) whose
+control panel opens in the system browser. Minecraft stays: it is one place Vertex can be, and Reachy can still be
+his ears and voice while he is in game.
+
+Work order: M9 (responsive) gates everything after it. M10-M13 below; M1-M8 (the game) are done and stay as they
+are. Prior art to build on, not rewrite: SpawnDev.Reachy (`RoseAudioLink` desktop WebRTC to the robot both ways,
+`ReachyBody`/`ReachyPresence`/`GestureClassifier`/`SpokenText`), its Rose app (`RoseTray` tray + Run key,
+`RoseConversation` sentence-by-sentence speech with serialized playback and gestures, park recipe), the SpawnDev.AI
+demo's hands-free work (Silero VAD endpointing, warm passes, prepared voices). Rose answered in about 1 s from the
+end of a question with Ollama + sherpa Whisper + KokoroSharp; Vertex runs on our own stack (SpawnDev.AI,
+SpawnDev.ILGPU.ML), so that 1 s is the bar our libraries have to meet. Library defects are fixed in the library.
+
+### Defects seen live 2026-10-12 (all must be fixed and covered by a test)
+- [ ] **GPU memory overcommit (root cause of the minutes-long replies).** LLM + Whisper + Kokoro + MiniLM in one
+  process reached 11.1 GB dedicated + 1.4 GB spilled into system RAM on the 12 GB RTX 4070. Each ILGPU.ML
+  `BufferPool` keeps idle buffers and frees them only when an allocation FAILS (`AllocateWithReclaim`), but the
+  Windows driver's default CUDA sysmem fallback never fails an allocation: it spills to system RAM, so nothing is
+  ever reclaimed and the LLM decodes over PCIe (stack: `GgufGenerator` decode + Whisper decode both live, GPU 100%).
+  Reclaim is also per pool, so one model's idle buffers cannot make room for another's.
+- [ ] **One slow turn deafens Vertex.** The brain handles events strictly one at a time, so new speech queues
+  behind a stalled generation and nothing can cancel it (TJ: "not hearing anything else I say").
+- [ ] **Whisper tiny mishears**: "Hi, birdtakes", "Can you hear me for text?", "for your tax".
+- [ ] **A greeting became a job**: "Hi, Vertex" -> "I'm on my way over" with no tool call (the re-ask round), then
+  `come_here`; after the player left, three `look_at` rounds (~45 s each) on a player it "can't see".
+- [ ] **Leave/Start keeps the loaded AI**, so a fresh start never gets fresh GPU memory (and a driver setting
+  change needs a full restart to apply).
+
+## M9 - Responsive (the gate for everything below)
+- [ ] Per-turn timeline, logged and shown on the control panel: end of speech -> transcript -> first token ->
+  first sentence -> first audio -> playback start, plus per-model GPU memory. Every number below is measured
+  with it, never guessed
+- [ ] One GPU memory budget for the whole process (SpawnDev.ILGPU.ML): idle buffers released before the driver
+  spills, across every model on the accelerator, not only the pool that is allocating. Gate: a long session
+  with all models loaded never spills (shared GPU memory stays ~0) and turn 20 is as fast as turn 1
+- [ ] Never deaf: hearing runs independently of thinking; new speech addressed to Vertex cancels (barge-in) or
+  queues behind the current turn by policy, a stalled turn times out visibly, and an in-flight generation can be
+  cancelled
+- [ ] Streamed replies: speak the first sentence while the rest generates (serialized playback, Rose's pattern)
+- [ ] The system prompt + tool list prefix is computed once and reused across turns (no full re-prefill per turn)
+- [ ] Speech recognition: pick the Whisper model by measured accuracy vs latency on recorded utterances (tiny
+  fails, see above); Silero VAD endpointing for open microphones
+- [ ] Talk vs act: greetings and chat get words, not jobs; no tool rounds on a player who is not there
+- [ ] Target: about 1 s from the end of a question to the start of the spoken answer (Rose's measured number)
+
+## M10 - Vertex without Minecraft
+- [ ] Split the brain: a companion core (conversation, characters, memory, ears, mouth, per-person memory) that
+  runs with no game; Minecraft becomes one world it can join, plugging in its tools, skills and reflexes while
+  connected (today `VertexBrain` requires a `MinecraftClient`)
+- [ ] Talk to Vertex from the control panel with no game and no robot (text in, text + voice out)
+- [ ] Memory and characters shared between Reachy and the game (one Vertex, not two)
+
+## M11 - Tray app
+- [ ] Vertex.exe lives in the notification area: a status dot (off / listening / thinking / speaking, like Rose)
+  and a menu: open the control panel in the system browser, start/stop listening, join/leave Minecraft, start with
+  Windows (HKCU Run key), quit (parks the robot and leaves the game first)
+- [ ] One instance only; a second launch opens the control panel instead
+- [ ] Control panel stays the Blazor Server dashboard at http://localhost:5280
+
+## M12 - Reachy Mini avatar
+- [ ] Connect to the robot (SpawnDev.Reachy: REST control + `RoseAudioLink` WebRTC; robot on daemon 1.10.0)
+- [ ] Hear through the robot's microphone array (Silero VAD -> Whisper) and speak through its speaker
+- [ ] Body language: `ReachyPresence` (listening / thinking / speaking), stage directions in replies become
+  gestures (`SpokenText` + `GestureClassifier` + `ReachyBody`), wake on start, park on exit with TJ's recipe
+  (home -> wait -> goto_sleep -> wait -> motors off)
+- [ ] Never hears itself (robot AEC plus ears closed while it speaks)
+
+## M13 - Robot and game at once
+- [ ] Listen to the Reachy microphone and in-game proximity voice at the same time; every heard line carries its
+  source; a switch per source on the control panel
+- [ ] Answer where it was asked (robot speaker for the room, proximity voice for the game), with a setting for both
+- [ ] The same person heard twice (in the room and in game) is one utterance, not two turns
+
 ## M1 - Connect (done 2026-10-10, 26 tests green against real Paper 1.21.5)
 - [x] Wire format: VarInt/VarLong, strings, UUID, packed block position, network NBT
 - [x] Framing, zlib compression (live), AES/CFB8 encryption (AES-NI; verified against NIST + a reference
