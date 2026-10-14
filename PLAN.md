@@ -114,6 +114,9 @@ before it is a Vertex feature.
 - [ ] End of turn: the VAD waits 500 ms of silence before anything is recognised (a fixed cost before STT starts). Smart Turn v3.2
   (pipecat-ai/smart-turn-v3, open weights + data, 8M params, a Whisper-tiny encoder + classifier, ONNX, 12-70 ms on CPU) decides from the
   audio whether the person is DONE: a short VAD pause (~200 ms) plus the model replaces the 500 ms wait. Measure turn-end -> reply start
+  VERIFIED 10-14: v3.2 is BSD-2; input `input_features [batch, 80, 800]` (Whisper log-mel of the LAST 8 s, 100 frames/s), output `logits [batch, 1]` (sigmoid =
+  turn complete); 210 nodes, every op (Conv, MatMul, LayerNormalization, Softmax, Erf, Gemm, Tanh) already in the engine. Missing piece: an 8 s variant of the GPU
+  log-mel (WhisperMelPreprocessor is fixed at 30 s / 3000 frames) - library work first. Files in D:/users/tj/Projects/_speech-research/smartturn
 - [ ] The slow terms are LLM first word (1.2-2.2 s) and Kokoro first audio (1.9 s warm), not STT (170 ms): profile and fix them in ILGPU.ML
 - [ ] Streaming recognition (cache-aware Nemotron streaming FastConformer): text while the person is still talking, to cut time to first word
 - [ ] TTS: evaluate Qwen3-TTS, Chatterbox-Turbo, Supertonic, CosyVoice2 against Kokoro (quality, time to first audio, licence), streaming output
