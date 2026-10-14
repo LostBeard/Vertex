@@ -26,14 +26,25 @@ public sealed class RobotBody : IBody
 
     public string Name => "Reachy Mini";
 
-    public string Setting => "You have a small robot body at home, a Reachy Mini on the desk: a head that turns and tilts, two antennas, a body that " +
-                             "turns, and a speaker (no arms, hands or legs). People in the room talk to you through it.";
+    /// <summary>What the language model is told about this body (a constant so a test can put exactly this in front of the model).</summary>
+    public const string SettingText = "You have a small robot body at home, a Reachy Mini on the desk: a head that turns and tilts, two antennas, a body that " +
+                                      "turns, and a speaker (no arms, hands or legs). People in the room talk to you through it.";
 
-    public IReadOnlyList<string> Rules { get; } =
+    public string Setting => SettingText;
+
+    /// <summary>
+    /// The rules this body adds. The last one exists because of a live session (2026-10-14): asked "What is the capital of France?" the 8B model
+    /// answered "I don't know that one. I can look it up on the computer, though!" - it took a question for a job it had no tool for (the general rule
+    /// "if you are asked to do something you have no tool for, say so") and invented a capability. See RobotKnowledgeTests for the measured A/B.
+    /// </summary>
+    public static readonly IReadOnlyList<string> RuleLines =
     [
         "You may show a feeling with a very short stage direction in asterisks, such as *antennas perk up* or *tilts head*. Your robot body acts it out; it is never read out loud.",
         "You tell people apart by their voice. When someone tells you their name (\"I'm Nikki\"), call my_name_is so you know that voice next time; when someone introduces a person who has not spoken yet (\"this is Nikki\"), call next_voice_is.",
+        "A question is not a job. When someone asks an ordinary question (places, animals, numbers, how things work), give the answer itself in a sentence, not a comment about the question: asked \"What is the biggest animal?\" you say \"The blue whale!\". Say so honestly when you are not sure. You have no computer or internet: never say you will look something up.",
     ];
+
+    public IReadOnlyList<string> Rules => RuleLines;
 
     private const string NameSchema = "{\"type\":\"object\",\"properties\":{\"name\":{\"type\":\"string\",\"description\":\"the person's first name\"}},\"required\":[\"name\"]}";
 
@@ -63,6 +74,32 @@ public sealed class RobotBody : IBody
     }
 
     public string DescribeNow() => "";
+
+    /// <summary>
+    /// "I'm Nikki", "my name is Nikki", "call me Nikki": the first name of someone introducing themselves, or null. The name must be capitalised (the
+    /// speech recogniser capitalises names, not "I'm tired"), and "I'm Todd's friend" is not an introduction.
+    /// </summary>
+    public static string? ParseSelfIntroduction(string text)
+    {
+        var m = SelfIntroduction.Match(text);
+        return m.Success ? m.Groups["name"].Value : null;
+    }
+
+    private static readonly System.Text.RegularExpressions.Regex SelfIntroduction = new(
+        @"\b(?i:I'?m|I am|my name is|my name's|call me)\s+(?<name>[A-Z][a-z]{1,14})\b(?!['’])",
+        System.Text.RegularExpressions.RegexOptions.CultureInvariant | System.Text.RegularExpressions.RegexOptions.Compiled);
+
+    /// <summary>
+    /// A self-introduction is acted on here, not left to the language model: live, the 8B model answered "Vertex, hi, I'm Todd." with only
+    /// "*antennas perk up*" and never called my_name_is, so the voice was never learned. The model then words the reply (Companion hands it
+    /// "[You already did it: ...]" and no tools).
+    /// </summary>
+    public Task<string?> FastActAsync(SaidEvent e)
+    {
+        if (e.Channel != null && !ReferenceEquals(e.Channel, _channel)) return Task.FromResult<string?>(null);
+        var name = ParseSelfIntroduction(e.Text);
+        return Task.FromResult(name == null ? null : _channel.IntroduceSpeaker(name));
+    }
 
     public void Act(string action)
     {

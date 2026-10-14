@@ -218,4 +218,51 @@ public class TurnAssemblerTests
         await rig.WaitFor(() => rig.HoldCount >= 1, "the hold for the joined turn");
         Assert.That(rig.TurnCount, Is.Zero);
     }
+
+    [Test]
+    public async Task ATurnPutBackOnHold_WaitsForAContinuation_WithoutAskingTheModel()
+    {
+        using var rig = new Rig();
+        rig.Assembler.Hold(Rig.Speech(16000), 0, 100);
+        await rig.WaitFor(() => rig.HoldCount == 1, "the hold");
+        Assert.That(rig.Asked, Is.Empty, "a held turn is not judged again");
+        Assert.That(rig.TurnCount, Is.Zero);
+        rig.Holds[0].SetResult();
+        await rig.WaitFor(() => rig.TurnCount == 1, "the turn");
+        Assert.That(rig.Turns[0].Reason, Is.EqualTo("hold expired"));
+        Assert.That(rig.Turns[0].Samples, Has.Length.EqualTo(16000));
+        Assert.That(rig.Turns[0].StartSample, Is.EqualTo(0));
+    }
+
+    [Test]
+    public async Task AContinuationArrivingDuringTheHold_IsJoinedAndJudged()
+    {
+        using var rig = new Rig();
+        rig.Assembler.Hold(Rig.Speech(16000, 0.1f), 5000, 100);
+        await rig.WaitFor(() => rig.HoldCount == 1, "the hold");
+        rig.Assembler.Add(Rig.Speech(8000, 0.3f), 5000 + 16000 + 4000, 200);
+        await rig.WaitFor(() => rig.TurnCount == 1, "the joined turn");
+        Assert.That(rig.Turns[0].Reason, Is.EqualTo("complete"));
+        Assert.That(rig.Turns[0].Samples, Has.Length.EqualTo(16000 + 4000 + 8000));
+        Assert.That(rig.Turns[0].StartSample, Is.EqualTo(5000));
+    }
+
+    [Test]
+    public async Task SpeechThatContinuedWhileTheFragmentWasTranscribed_IsPutBehindIt()
+    {
+        // The speaker carried on and the new segment was already held when the older one came back from transcription.
+        var answers = new Queue<float>(new[] { 0.1f, 0.9f });
+        using var rig = new Rig { Model = _ => Task.FromResult(answers.Dequeue()) };
+        rig.Assembler.Add(Rig.Speech(8000, 0.3f), 30000, 300);
+        await rig.WaitFor(() => rig.HoldCount == 1, "the newer segment's hold");
+        rig.Assembler.Hold(Rig.Speech(16000, 0.1f), 10000, 100);       // the older one, 10000..26000
+        await rig.WaitFor(() => rig.TurnCount == 1, "the merged turn");
+        var turn = rig.Turns[0];
+        Assert.That(turn.StartSample, Is.EqualTo(10000));
+        Assert.That(turn.Samples, Has.Length.EqualTo(30000 - 10000 + 8000), "the two in order, with the gap between them");
+        Assert.That(turn.Samples[0], Is.EqualTo(0.1f));
+        Assert.That(turn.Samples[17000], Is.Zero, "silence in the gap");
+        Assert.That(turn.Samples[^1], Is.EqualTo(0.3f));
+        Assert.That(turn.EndedTick, Is.EqualTo(300));
+    }
 }

@@ -5,7 +5,8 @@ namespace Vertex.AI;
 /// <param name="Probability">The end-of-turn model's last answer, or null when it could not be asked.</param>
 /// <param name="Reason">"complete" (the model said the turn is over), "hold expired" (it said not yet, nobody spoke again), "max length", or "model unavailable".</param>
 /// <param name="EndedTick">When the last segment arrived (<see cref="Environment.TickCount64"/>).</param>
-public sealed record CompletedTurn(float[] Samples, float? Probability, string Reason, long EndedTick);
+/// <param name="StartSample">Where the first segment started in the VAD's sample count (so a held turn can be put back in its place).</param>
+public sealed record CompletedTurn(float[] Samples, float? Probability, string Reason, long EndedTick, long StartSample = 0);
 
 /// <summary>
 /// Turns the VAD's short pauses into whole turns. The VAD closes a segment after a brief silence (a quarter second); this asks an
@@ -110,6 +111,52 @@ public sealed class TurnAssembler : IDisposable
         _ = Task.Run(() => JudgeAsync(snapshot, generation, token));
     }
 
+    /// <summary>
+    /// Puts a turn the model called finished back on hold, because what was said reads as a sentence that stopped partway ("what's the"): the model hears
+    /// HOW something was said, not WHAT, so a trailing-off phrase can sound final. It waits like an unfinished turn (silence only, up to
+    /// <see cref="MaxHold"/>), is joined to whatever comes next, and goes out as "hold expired" if nothing does.
+    /// </summary>
+    public void Hold(float[] samples, long startSample, long endedTick)
+    {
+        int generation;
+        CancellationToken token;
+        float[]? snapshot = null;
+        lock (_lock)
+        {
+            if (_disposed) return;
+            if (_length == 0)
+            {
+                _origin = startSample;
+                if (samples.Length > _buffer.Length) _buffer = new float[samples.Length * 2];
+                Array.Copy(samples, 0, _buffer, 0, samples.Length);
+                _length = samples.Length;
+            }
+            else
+            {
+                // The speaker carried on while this turn was being transcribed: the newer audio is already held and starts later. Put this one in front of it.
+                long shiftLong = _origin - startSample;
+                int shift = (int)Math.Max(0, Math.Min(shiftLong, int.MaxValue / 4));
+                int total = Math.Max(samples.Length, shift + _length);
+                var merged = new float[Math.Max(total, 16000 * 10)];
+                Array.Copy(_buffer, 0, merged, shift, _length);
+                Array.Copy(samples, 0, merged, 0, samples.Length);      // where the two overlap they are the same audio
+                _buffer = merged;
+                _length = total;
+                if (startSample < _origin) _origin = startSample;
+                snapshot = new float[_length];
+                Array.Copy(_buffer, snapshot, _length);
+            }
+            _endedTick = Math.Max(_endedTick, endedTick);
+            _generation++;
+            generation = _generation;
+            _cts?.Cancel();
+            _cts = new CancellationTokenSource();
+            token = _cts.Token;
+        }
+        // Newer speech already joined it: ask the model about the whole of it. Otherwise this is the end of what was said so far: wait for a continuation.
+        _ = snapshot != null ? Task.Run(() => JudgeAsync(snapshot, generation, token)) : Task.Run(() => HoldAsync(generation, null, token));
+    }
+
     private async Task JudgeAsync(float[] audio, int generation, CancellationToken ct)
     {
         float? p = null;
@@ -129,7 +176,11 @@ public sealed class TurnAssembler : IDisposable
 
         if (p >= Threshold) { Emit(generation, p, "complete"); return; }
         if (audio.Length >= MaxTurn.TotalSeconds * 16000) { Emit(generation, p, "max length"); return; }
+        await HoldAsync(generation, p, ct).ConfigureAwait(false);
+    }
 
+    private async Task HoldAsync(int generation, float? p, CancellationToken ct)
+    {
         // Hold for the speaker to carry on, counting only silence: if speech opens again the clock stops, and if it closes without
         // producing a segment (a cough the VAD discarded) the full hold starts over.
         while (true)
@@ -165,7 +216,7 @@ public sealed class TurnAssembler : IDisposable
             if (generation != _generation || _length == 0) return;   // superseded
             var samples = new float[_length];
             Array.Copy(_buffer, samples, _length);
-            turn = new CompletedTurn(samples, probability, reason, _endedTick);
+            turn = new CompletedTurn(samples, probability, reason, _endedTick, _origin);
             _length = 0;
             _emitting++;
         }

@@ -14,7 +14,7 @@
             <label>Brain (language model)</label>
             <select @bind="Host.Settings.Model" disabled="@Busy">
                 @if (Host.Models.Count == 0) { <option value="@Host.Settings.Model">@(string.IsNullOrEmpty(Host.Settings.Model) ? "(loads on start)" : Host.Settings.Model)</option> }
-                @foreach (var m in Host.Models) { <option value="@m">@m</option> }
+                @foreach (var m in Host.Models) { <option value="@m" selected="@(m == Host.Settings.Model)">@m</option> }
             </select>
             <label><input type="checkbox" style="width:auto" @bind="Host.Settings.Reachy" disabled="@Busy" /> Reachy Mini (Vertex's body at home)</label>
             <label><input type="checkbox" style="width:auto" @bind="Host.Settings.Minecraft" disabled="@Busy" /> Join Minecraft on start</label>

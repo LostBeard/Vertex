@@ -173,14 +173,10 @@ public sealed class Companion : IAsyncDisposable
     }
 
     /// <summary>
-    /// What Whisper writes when someone says "Vertex". MEASURED, never guessed from spelling (SpawnDev.Reachy's
-    /// lesson): TJ said "Hi, Vertex" in game on 2026-10-12 and it came back "Hi, birdtakes".
+    /// The line calls Vertex (or the current character) by name, however the recogniser wrote it: the spellings measured so far
+    /// (Whisper wrote "birdtakes", Parakeet "Rutax" and "Per text") and near-misses of its consonants. See <see cref="WakeWord"/>.
     /// </summary>
-    public static readonly string[] VertexHeardAs = ["vertex", "vortex", "birdtakes", "bird takes"];
-
-    /// <summary>The line calls Vertex (or the current character) by name.</summary>
-    private bool NamesVertex(string lowerText) =>
-        lowerText.Contains(Character.Name.ToLowerInvariant()) || VertexHeardAs.Any(lowerText.Contains);
+    private bool NamesVertex(string text) => WakeWord.Names(text, Character.Name);
 
     /// <summary>
     /// Talk back when our name is said, when we are mid-conversation with this speaker (within 45 s), when the channel
@@ -273,7 +269,8 @@ public sealed class Companion : IAsyncDisposable
                 // Where it was said only matters once Vertex is in more than one place.
                 var how = s.Voice ? "out loud" : "in chat";
                 var where = s.Channel != null && Channels.Count > 1 ? $" ({how}, {s.Channel.HeardThrough})" : $" ({how})";
-                var said = $"{s.SpeakerName} says{where}: {s.Text}";
+                // A misheard name is put right before the model sees it ("Rutax, what's the" -> "Vertex, what's the"): left alone it answers "I'm not sure who Rutax is".
+                var said = $"{s.SpeakerName} says{where}: {WakeWord.Normalize(s.Text, Character.Name)}";
                 // System One: an urgent command we are sure of runs NOW; the language model only words the reply.
                 string? done = null;
                 foreach (var body in Bodies)

@@ -1,6 +1,7 @@
 using System.Threading.Channels;
 using SpawnDev.AI.Server;
 using SpawnDev.ILGPU.ML.Pipelines;
+using Vertex.Brain;
 
 namespace Vertex.AI;
 
@@ -32,12 +33,18 @@ public sealed class MicrophoneEars : IAsyncDisposable
     private int _pendingTranscriptions;
 
     private volatile bool _muted;
+    private long _reopenedTick = long.MinValue / 2;   // when the ears last opened after Vertex finished speaking: a short answer to its question is real then
 
     /// <summary>Ears closed (while Vertex talks): audio is dropped, not queued, and a turn being judged is forgotten.</summary>
     public bool Muted
     {
         get => _muted;
-        set { _muted = value; if (value) _turns?.Clear(); }
+        set
+        {
+            if (_muted && !value) _reopenedTick = Environment.TickCount64;
+            _muted = value;
+            if (value) _turns?.Clear();
+        }
     }
 
     /// <summary>Whether each utterance is also matched to a voice (Vertex's introduced people, else a provisional guest).</summary>
@@ -119,19 +126,27 @@ public sealed class MicrophoneEars : IAsyncDisposable
     {
         if (Muted) return;
         if (_turns != null) _turns.Add(segment.Samples, segment.StartSample, Environment.TickCount64);
-        else Process(segment.Samples, Environment.TickCount64, "silence");
+        else Process(segment.Samples, Environment.TickCount64, "silence", segment.StartSample);
     }
 
     private void OnTurn(CompletedTurn turn)
     {
         if (turn.Probability is { } p) Log?.Invoke($"turn over ({turn.Reason}, p={p:0.00}, {turn.Samples.Length / 16000.0:0.0} s)");
         if (Muted) return;     // Vertex started talking while the turn was being judged: that is its own voice or a room it is not listening to
-        Process(turn.Samples, turn.EndedTick, turn.Reason);
+        Process(turn.Samples, turn.EndedTick, turn.Reason, turn.StartSample);
     }
 
-    private void Process(float[] samples, long ended, string why)
+    private void Process(float[] samples, long ended, string why, long startSample)
     {
         var seconds = samples.Length / 16000.0;
+        // A click, a thump, hiss or a half-second blip is not something said to the robot, and the recogniser writes the nearest word it knows for it
+        // ("Yeah.", "Ha ha.", "No." in a silent room). Judged on the numbers, before any transcription is spent on it.
+        var expectingAnswer = Environment.TickCount64 - _reopenedTick < 10_000;
+        if (NoiseGate.Reject(samples, expectingAnswer) is { } notVoice)
+        {
+            Log?.Invoke($"ignored {seconds:0.00} s of sound: {notVoice}");
+            return;
+        }
         Interlocked.Increment(ref _pendingTranscriptions);
         _ = Task.Run(async () =>
         {
@@ -141,6 +156,14 @@ public sealed class MicrophoneEars : IAsyncDisposable
                 var text = await _ai.TranscribeAsync(samples, _cts.Token);
                 stt.Stop();
                 if (string.IsNullOrWhiteSpace(text) || Ears.IsNoise(text)) return;
+                // The end-of-turn model hears HOW something was said, not what: "what's the" can sound final. When the words stop partway (no closing
+                // punctuation) and nothing has already been waited for, hold the turn for a continuation instead of answering a fragment.
+                if (_turns != null && why is "complete" or "silence" && TurnText.LooksUnfinished(text) && !Muted)
+                {
+                    Log?.Invoke($"holding: \"{text}\" stops partway");
+                    _turns.Hold(samples, startSample, ended);
+                    return;
+                }
                 AiSpeakerResult? speaker = null;
                 if (IdentifySpeakers)
                 {
