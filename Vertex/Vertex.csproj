@@ -35,4 +35,29 @@
 		<!-- The trained fight-or-flight policy (Vertex.Tests ReflexTraining), only once it beat the hand-written rule. -->
 		<EmbeddedResource Include="Brain\reflex-policy.bin" LogicalName="Vertex.Brain.reflex-policy.bin" Condition="Exists('Brain\reflex-policy.bin')" />
 	</ItemGroup>
+
+	<!-- WORKAROUND (SDK defect, 2026-10-14): the package Microsoft.AspNetCore.App.Internal.Assets adds _framework/blazor.web.js (and blazor.server.js) to a project only when
+	     OutputType == 'Exe'. Vertex is a WinExe (the tray starts with Windows without a console window), so the control panel rendered but nothing on it responded: GET
+	     /_framework/blazor.web.js was a 404 from the build output AND from a publish. This target is that package's own target (10.0.12, build/Microsoft.AspNetCore.App.Internal.Assets.targets)
+	     with the condition widened to WinExe, run right after it. Remove it when the package accepts WinExe. -->
+	<Target Name="_VertexAddBlazorFrameworkStaticWebAssets" AfterTargets="_AddBlazorFrameworkStaticWebAssets" Condition="'$(OutputType)' == 'WinExe' AND '$(UsingMicrosoftNETSdkWeb)' == 'true'">
+		<ItemGroup>
+			<_VertexFrameworkCandidate Include="$(BlazorFrameworkStaticWebAssetRoot)\blazor.web.js" RelativePath="_framework/blazor.web.js" />
+			<_VertexFrameworkCandidate Include="$(BlazorFrameworkStaticWebAssetRoot)\blazor.server.js" RelativePath="_framework/blazor.server.js" />
+			<_VertexFrameworkMissing Include="@(_VertexFrameworkCandidate)" Condition="!EXISTS('%(Identity)')" />
+			<_VertexFrameworkCandidate Remove="@(_VertexFrameworkMissing)" />
+		</ItemGroup>
+		<Message Importance="High" Condition="'@(_VertexFrameworkMissing->Count())' != '0'" Text="Framework asset '%(_VertexFrameworkMissing.Identity)' could not be found and won't be included in the project." />
+		<DefineStaticWebAssets Condition="'@(_VertexFrameworkCandidate->Count())' != '0'" CandidateAssets="@(_VertexFrameworkCandidate)" ContentRoot="$(BlazorFrameworkStaticWebAssetRoot)"
+			SourceId="$(PackageId)" SourceType="Discovered" AssetKind="All" AssetMode="CurrentProject" AssetRole="Primary" FingerprintCandidates="true" BasePath="$(StaticWebAssetBasePath)">
+			<Output TaskParameter="Assets" ItemName="_VertexFrameworkStaticWebAsset" />
+		</DefineStaticWebAssets>
+		<DefineStaticWebAssetEndpoints Condition="'@(_VertexFrameworkStaticWebAsset)' != ''" CandidateAssets="@(_VertexFrameworkStaticWebAsset)" ExistingEndpoints="" ContentTypeMappings="@(StaticWebAssetContentTypeMapping)">
+			<Output TaskParameter="Endpoints" ItemName="_VertexFrameworkEndpoint" />
+		</DefineStaticWebAssetEndpoints>
+		<ItemGroup>
+			<StaticWebAsset Include="@(_VertexFrameworkStaticWebAsset)" />
+			<StaticWebAssetEndpoint Include="@(_VertexFrameworkEndpoint)" />
+		</ItemGroup>
+	</Target>
 </Project>
