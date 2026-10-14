@@ -120,6 +120,24 @@ before it is a Vertex feature.
   median 490 ms (plain rule) vs 162 ms; a sentence with a 0.7 s pause stays ONE utterance (plain rule: two). Whole sentences judged finished 11/12, cut at
   a pause judged unfinished 8/12 (12 LibriSpeech clips). 11 assembler tests (each guard red-checked). Open: the 1/12 misjudged whole sentence costs the full
   1.2 s hold (a hold scaled by how unfinished the model thinks it is would cap that); calibrate threshold/hold on the household's real voices
+- [x] First live session on the robot (10-14, TJ at home alone), what it taught and what was built (all red-checked, 86e4a15 .. d412ad9 + db6cffc):
+  hearing: the name is matched however the recogniser writes it (Parakeet wrote "Rutax" / "Per text"; `WakeWord`, 0 false positives on 314 lines) and put right before the model sees it;
+  `NoiseGate` (clicks, thumps, hiss, spectral flatness > 0.1 on short sounds: the "Yeah." / "Ha ha." / "No." / "Okay." phantoms of a silent room) with a rescue so a loud close
+  "Vertex." is not thrown out as a click; a bare "Vertex." perks the antennas and waits (no spoken answer); an unidentified voice continues a conversation with anyone for 45 s;
+  introductions ("I'm Todd") handled in code (the 8B model did not call the tool); the model's made-up lines for the friend ("Todd says (out loud): ... a castle?") are cut;
+  robot rules (questions are answered, no "I'm on my way": 0/6 -> 6/6 and 4/5 -> 0/5 measured). Turn-taking: Smart Turn + `TurnAssembler` (hold while the speech continues, never
+  lose speech), a transcript with no closing punctuation is held, a statement waits 700 ms and a continuation before the first sound replaces the half-formed answer (both lines
+  answered once), the ears are judged by WHEN audio was recorded (a sentence said before the mute is kept), and the voice detector runs on the CPU (3.4 ms per 32 ms frame) so it
+  hears while the language model prefills.
+- [ ] STREAMING recognition (TJ 10-14: "Alexa does real-time STT on my 6 year old phone ... it even corrects what it thought it heard based on the words i say next"). Chosen:
+  NVIDIA Nemotron Speech Streaming 0.6B (cache-aware FastConformer + RNN-T, NVIDIA Open Model License, LibriSpeech clean WER 2.46% at 560 ms, 2.56% at 160 ms, 2.80% at 80 ms,
+  punctuation + capitalisation built in), sherpa-onnx export `csukuangfj2/sherpa-onnx-nemotron-speech-streaming-en-0.6b-{80,160,560,1120}ms-2026-04-25` (+ int8). CONTRACT
+  (160 ms export, in D:/users/tj/Projects/_speech-research/nemotron160): encoder in `audio_signal [1,128,25]` (25 mel frames per step, shifted by 16 = 160 ms), `length`,
+  `cache_last_channel [1,24,70,1024]`, `cache_last_time [1,24,1024,8]`, `cache_last_channel_len [1]` (all zero at start); out `outputs [1,1024,T']`, the three next caches;
+  decoder = 2-layer LSTM (640), states `[2,1,640]` x2; joiner -> `[1,T,U,1025]`, blank = 1024; features 128-bin mel, hann, no normalisation (`normalize_type` empty), 8x subsampling.
+  Encoder ops all standard (Conv, MatMul, LayerNormalization, Softmax, Slice, Where, Pad, Split, Tile). Two passes like Google/Alexa and RealtimeSTT: the streaming pass shows words
+  live (wake word, "stopped mid-thought", early start) and Parakeet re-decodes the finished turn (it corrects "bulltrap" -> "Minecraft"). Reference: sherpa-onnx on CPU
+  (`_speech-research/sherpa_stream_bench.py`). Next: `StreamingTranscriber` in ILGPU.ML + harness vs onnxruntime/sherpa, WER + per-chunk latency on the 60 clips, then Vertex.
 - [ ] The slow terms are LLM first word (1.2-2.2 s) and Kokoro first audio (1.9 s warm), not STT (170 ms): profile and fix them in ILGPU.ML
 - [ ] Streaming recognition (cache-aware Nemotron streaming FastConformer): text while the person is still talking, to cut time to first word
 - [ ] TTS: evaluate Qwen3-TTS, Chatterbox-Turbo, Supertonic, CosyVoice2 against Kokoro (quality, time to first audio, licence), streaming output
