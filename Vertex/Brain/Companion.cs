@@ -161,6 +161,22 @@ public sealed class Companion : IAsyncDisposable
     /// </summary>
     private void Hear(SaidEvent e)
     {
+        // The person kept talking before the robot made a sound ("We're gonna play Minecraft today." ... "What's the best thing to build first?"): people do not
+        // take turns sentence by sentence. The answer being formed is dropped and both lines are answered together. (Once it is speaking, the ears are shut and
+        // this cannot happen; a "stop" or "wait" still cuts a turn short as before.)
+        if (Volatile.Read(ref _turn) is { ForPerson: true, Spoke: false, Said: { } earlier } thinking && thinking.Interruptible && e.Voice && earlier.Voice
+            && Environment.TickCount64 - thinking.StartedTick < 12_000 && IsAddressed(e) && !Stops(e.Text)
+            && (earlier.Speaker == e.Speaker || earlier.Speaker == UnidentifiedVoice || e.Speaker == UnidentifiedVoice))
+        {
+            Log?.Invoke($"  ({e.SpeakerName} kept talking before I answered: answering both lines together)");
+            thinking.Interrupted = true;
+            Mouth.Hush();
+            try { thinking.Cts.Cancel(); } catch (ObjectDisposedException) { }
+            // The identified voice wins (a bare "Vertex." was not identified, the sentence after it was).
+            var who = e.Speaker == UnidentifiedVoice ? earlier : e;
+            _events.Writer.TryWrite(e with { Speaker = who.Speaker, SpeakerName = who.SpeakerName, Text = earlier.Text + " " + e.Text });
+            return;
+        }
         if (Volatile.Read(ref _turn) is { } turn && turn.Interruptible && IsAddressed(e) && (!turn.ForPerson || Interrupts(e.Text)))
         {
             Log?.Invoke($"  (interrupted by {e.SpeakerName})");
@@ -172,11 +188,13 @@ public sealed class Companion : IAsyncDisposable
     }
 
     /// <summary>Called by name, or told to stop or wait: worth cutting a friend's turn short for.</summary>
-    private bool Interrupts(string text)
+    private bool Interrupts(string text) => NamesVertex(" " + text.ToLowerInvariant() + " ") || Stops(text);
+
+    /// <summary>Told to stop, wait or forget it.</summary>
+    private static bool Stops(string text)
     {
         var t = " " + text.ToLowerInvariant() + " ";
-        return NamesVertex(t)
-            || t.Contains(" stop") || t.Contains(" wait") || t.Contains(" never mind") || t.Contains(" nevermind");
+        return t.Contains(" stop") || t.Contains(" wait") || t.Contains(" never mind") || t.Contains(" nevermind");
     }
 
     /// <summary>
@@ -211,6 +229,12 @@ public sealed class Companion : IAsyncDisposable
         /// (on the robot, the room's first words cut it off - 2026-10-12).</summary>
         public bool Interruptible { get; } = interruptible;
         public volatile bool Interrupted;
+        /// <summary>The line this turn answers (null for a game event or the prefill).</summary>
+        public SaidEvent? Said { get; set; }
+        /// <summary>When the turn began (<see cref="Environment.TickCount64"/>).</summary>
+        public long StartedTick { get; } = Environment.TickCount64;
+        /// <summary>Some sound of the reply has started: from here the person is not interrupting a thought but a speaker.</summary>
+        public volatile bool Spoke;
     }
 
     private async Task LoopAsync(CancellationToken ct)
@@ -227,7 +251,7 @@ public sealed class Companion : IAsyncDisposable
             var forPerson = e is SaidEvent;
             using var cts = CancellationTokenSource.CreateLinkedTokenSource(ct);
             cts.CancelAfter(TurnTimeout);
-            var turn = new Turn(cts, forPerson, interruptible: e is not PrimeEvent);
+            var turn = new Turn(cts, forPerson, interruptible: e is not PrimeEvent) { Said = e as SaidEvent };
             var clock = e is SaidEvent heard ? new TurnClock(heard.HeardTick, heard.SttMs) : new TurnClock();
             Volatile.Write(ref _turn, turn);
             // Shown (the robot looks thoughtful) only for something Vertex will actually answer or do.
@@ -432,6 +456,7 @@ public sealed class Companion : IAsyncDisposable
         clock.FirstSentence();
         Mouth.Say(spoken, to, () =>
         {
+            if (Volatile.Read(ref _turn) is { } speaking) speaking.Spoke = true;
             if (clock.FirstSound() && clock.TakeReport()) Log?.Invoke("timing: " + clock.Describe());
         });
     }

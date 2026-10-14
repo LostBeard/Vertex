@@ -105,4 +105,44 @@ public class WakeCallTests
         Assert.That(mic.Shown, Is.Empty, "answered a line that was not said to it: " + string.Join(" | ", log));
         Assert.That(body.Acted, Is.Empty);
     }
+
+    /// <summary>
+    /// "We're gonna play Minecraft today." ... "What's the best thing to build first?" in a normal flow: two sentences, the first of which is complete and gets a turn of its
+    /// own. People do not take turns sentence by sentence, so when the second arrives before the robot has made a sound, the half-formed answer is dropped and ONE answer
+    /// covers both. (Live 2026-10-14: one answer to the first, and the second lost.)
+    /// </summary>
+    [Test]
+    public async Task TwoSentencesInANormalFlow_GetOneAnswer_ToBoth()
+    {
+        var (companion, mic, body, log) = await NewRoomAsync();
+        await using var _ = companion;
+
+        mic.Hear("voice:Todd", "Todd", "Vertex, we're gonna play Minecraft today.");
+        await Wait.UntilAsync(() => log.Any(l => l.StartsWith("> ")), TimeSpan.FromSeconds(20), () => "never started thinking; log: " + string.Join(" | ", log));
+        await Task.Delay(300);                       // the second sentence follows within a breath, while the answer to the first is still being formed
+        mic.Hear("voice:Todd", "Todd", "What's the best thing to build first?");
+
+        await Wait.UntilAsync(() => log.Count(l => l.StartsWith("timing: spoke")) >= 1 && !companion.IsThinking && !companion.Mouth.IsSpeaking, Timeout, () => "no answer; log: " + string.Join(" | ", log));
+        await Task.Delay(2500);
+        var asked = log.Where(l => l.StartsWith("> ")).ToList();
+        TestContext.Progress.WriteLine("[flow] questions put to the model: " + string.Join("  //  ", asked));
+        TestContext.Progress.WriteLine("[flow] answer: " + string.Join(" ", mic.Shown));
+        Assert.That(log.Any(l => l.Contains("kept talking before I answered")), Is.True, "the first answer was not dropped: " + string.Join(" | ", log));
+        Assert.That(log.Count(l => l.StartsWith("timing: spoke")), Is.EqualTo(1), "answered twice: " + string.Join(" | ", log));
+        Assert.That(asked.Last(), Does.Contain("Minecraft today").And.Contain("best thing to build first"), "the one answer must be to both lines");
+        Assert.That(string.Join(" ", mic.Shown).Count(char.IsLetter), Is.GreaterThan(15));
+    }
+
+    [Test]
+    public async Task AStopAfterASentence_IsNotMergedIntoIt()
+    {
+        var (companion, mic, body, log) = await NewRoomAsync();
+        await using var _ = companion;
+        mic.Hear("voice:Todd", "Todd", "Vertex, tell me a very long story about dragons.");
+        await Wait.UntilAsync(() => log.Any(l => l.StartsWith("> ")), TimeSpan.FromSeconds(20), () => "never started thinking");
+        await Task.Delay(300);
+        mic.Hear("voice:Todd", "Todd", "Actually stop.");
+        await Task.Delay(6000);
+        Assert.That(log.Any(l => l.Contains("kept talking before I answered")), Is.False, "a 'stop' was merged into the line it stops: " + string.Join(" | ", log));
+    }
 }
