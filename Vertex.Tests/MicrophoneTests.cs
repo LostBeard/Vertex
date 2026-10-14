@@ -188,4 +188,37 @@ public class MicrophoneTests
         await Settle();
         Assert.That(heard, Is.Empty, "a click was heard as words: " + string.Join(" | ", heard));
     }
+
+    /// <summary>
+    /// Live (2026-10-14): two sentences said in a row ("We're gonna play Minecraft today. What's the best thing to build first?"). The voice detector shares the GPU with
+    /// the language model, which is prefilling the answer to the first sentence and cannot yield, so the second sentence is only CLOSED after the robot has started talking and
+    /// its ears have shut. It was thrown away for that. What was recorded before the ears closed is heard, however late it is processed; what is recorded after, is not.
+    /// </summary>
+    [Test]
+    public async Task ASentenceSaidBeforeTheEarsClosed_IsStillHeard_WhenTheDetectorOnlyGetsToItLater()
+    {
+        await using var ai = TestAi.Create();
+        await ai.WarmUpAsync("kokoro:af_heart");
+        await using var ears = await MicrophoneEars.CreateAsync(ai);
+        ears.Log += m => TestContext.Out.WriteLine(m);
+        var heard = new ConcurrentQueue<string>();
+        ears.Heard += h => heard.Enqueue(h.Text);
+
+        var (before, _) = await ai.SpeakAsync("What is the best thing to build first?", "kokoro:am_michael");
+        var (after, _) = await ai.SpeakAsync("And what about the second thing?", "kokoro:am_michael");
+
+        // Hold the GPU lane, as a language model prefilling a reply does: nothing the microphone feeds can be processed until it is released.
+        var held = await ai.Lane.EnterAsync();
+        FeedLikeAMicrophone(ears, To16k(before));      // recorded while the ears are open
+        ears.Muted = true;                             // the robot starts talking: the ears close, with that sentence still unprocessed
+        FeedLikeAMicrophone(ears, To16k(after));       // recorded while the ears are closed: never reaches the detector
+        held.Dispose();
+
+        var until = DateTime.UtcNow.AddSeconds(30);
+        while (heard.IsEmpty && DateTime.UtcNow < until) await Task.Delay(100);
+        await Task.Delay(3000);
+        TestContext.Out.WriteLine("heard: " + string.Join(" | ", heard));
+        Assert.That(heard.Any(t => t.ToLowerInvariant().Contains("build")), Is.True, "a sentence said before the ears closed was thrown away: [" + string.Join(" | ", heard) + "]");
+        Assert.That(heard.Any(t => t.ToLowerInvariant().Contains("second")), Is.False, "a sentence recorded while the ears were closed was heard: [" + string.Join(" | ", heard) + "]");
+    }
 }

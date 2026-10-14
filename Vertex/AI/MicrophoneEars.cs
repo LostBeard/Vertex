@@ -33,17 +33,23 @@ public sealed class MicrophoneEars : IAsyncDisposable
     private int _pendingTranscriptions;
 
     private volatile bool _muted;
+    // The ears are judged by WHEN the audio was recorded, not when it was processed. The voice detector shares the GPU lane with the language model and cannot run
+    // while a reply is prefilled (about 1.5 s), so a sentence said before the robot started talking can be closed AFTER the mute began. Live (2026-10-14) the
+    // second of two sentences said in a row was thrown away that way. Samples fed so far, and the count at which the ears were last closed:
+    private long _fed;
+    private long _muteAt = long.MaxValue;
     private long _reopenedTick = long.MinValue / 2;   // when the ears last opened after Vertex finished speaking: a short answer to its question is real then
 
-    /// <summary>Ears closed (while Vertex talks): audio is dropped, not queued, and a turn being judged is forgotten.</summary>
+    /// <summary>Ears closed (while Vertex talks): audio from then on is dropped, not queued. What was said before they closed is still heard.</summary>
     public bool Muted
     {
         get => _muted;
         set
         {
             if (_muted && !value) _reopenedTick = Environment.TickCount64;
+            if (value && !_muted) Interlocked.Exchange(ref _muteAt, Interlocked.Read(ref _fed));
+            if (!value) Interlocked.Exchange(ref _muteAt, long.MaxValue);
             _muted = value;
-            if (value) _turns?.Clear();
         }
     }
 
@@ -101,7 +107,11 @@ public sealed class MicrophoneEars : IAsyncDisposable
     /// <summary>Hands over 16 kHz mono audio (any chunk size).</summary>
     public void Feed(short[] pcm16k)
     {
-        if (!Muted) _audio.Writer.TryWrite(pcm16k);
+        if (!Muted)
+        {
+            Interlocked.Add(ref _fed, pcm16k.Length);
+            _audio.Writer.TryWrite(pcm16k);
+        }
     }
 
     /// <summary>True while nothing is queued, being endpointed or being transcribed (tests wait on it).</summary>
@@ -127,7 +137,7 @@ public sealed class MicrophoneEars : IAsyncDisposable
 
     private void OnSegment(SpeechSegment segment)
     {
-        if (Muted) return;
+        if (EndedAfterTheMute(segment.StartSample + segment.Samples.Length)) return;
         if (_turns != null) _turns.Add(segment.Samples, segment.StartSample, Environment.TickCount64);
         else Process(segment.Samples, Environment.TickCount64, "silence", segment.StartSample);
     }
@@ -135,9 +145,13 @@ public sealed class MicrophoneEars : IAsyncDisposable
     private void OnTurn(CompletedTurn turn)
     {
         if (turn.Probability is { } p) Log?.Invoke($"turn over ({turn.Reason}, p={p:0.00}, {turn.Samples.Length / 16000.0:0.0} s)");
-        if (Muted) return;     // Vertex started talking while the turn was being judged: that is its own voice or a room it is not listening to
+        // A turn whose audio ended after the ears closed is Vertex's own voice (or a room it was not listening to); one that ended before is the person, however late it got here.
+        if (EndedAfterTheMute(turn.StartSample + turn.Samples.Length)) return;
         Process(turn.Samples, turn.EndedTick, turn.Reason, turn.StartSample);
     }
+
+    /// <summary>Whether audio ending at this position in the stream was recorded after the ears closed (the VAD's sample count is the count of samples fed).</summary>
+    private bool EndedAfterTheMute(long endSample) => endSample > Interlocked.Read(ref _muteAt);
 
     private void Process(float[] samples, long ended, string why, long startSample)
     {
@@ -176,7 +190,7 @@ public sealed class MicrophoneEars : IAsyncDisposable
                 }
                 // The end-of-turn model hears HOW something was said, not what: "what's the" can sound final. When the words stop partway (no closing
                 // punctuation) and nothing has already been waited for, hold the turn for a continuation instead of answering a fragment.
-                if (_turns != null && why is "complete" or "silence" && TurnText.LooksUnfinished(text) && !Muted)
+                if (_turns != null && why is "complete" or "silence" && TurnText.LooksUnfinished(text) && !EndedAfterTheMute(startSample + samples.Length))
                 {
                     Log?.Invoke($"holding: \"{text}\" stops partway");
                     _turns.Hold(samples, startSample, ended);
