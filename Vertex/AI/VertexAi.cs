@@ -18,6 +18,13 @@ public sealed class VertexAi : IAsyncDisposable
     private readonly SpawnDev.ILGPU.ML.Hub.IModelSource _models;
 
     public Accelerator Accelerator { get; }
+
+    private Accelerator? _cpu;
+    /// <summary>
+    /// A CPU accelerator of its own, for the small models that must never wait for the GPU lane: the voice detector has to hear the next sentence WHILE the language model
+    /// prefills the answer to the last one (about 1.5 s, GPU held), or a person who carries on cannot be told from one who stopped.
+    /// </summary>
+    public Accelerator CpuAccelerator => _cpu ??= _context.Devices.First(d => d.AcceleratorType == AcceleratorType.CPU).CreateAccelerator(_context);
     public ModelRegistry Registry { get; }
     public AiChatEngine Chat { get; }
     public AiSpeechEngine Speech { get; }

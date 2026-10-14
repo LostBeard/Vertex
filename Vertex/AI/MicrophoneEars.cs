@@ -15,7 +15,7 @@ public sealed record HeardUtterance(string Text, double Seconds, long EndedTick,
 
 /// <summary>
 /// An open microphone (the Reachy Mini's array, a PC microphone) turned into lines of text: 16 kHz audio in any chunk
-/// size, endpointed by Silero VAD, each finished utterance transcribed by Whisper. Everything runs in the GPU lane as
+/// size, endpointed by Silero VAD (on the CPU, never waiting for the GPU), each finished utterance transcribed. Transcription runs in the GPU lane as
 /// urgent work, so hearing never waits for a reply to finish generating.
 /// </summary>
 /// <remarks>
@@ -88,7 +88,7 @@ public sealed class MicrophoneEars : IAsyncDisposable
     public static readonly TimeSpan SmartTurnSilence = TimeSpan.FromMilliseconds(250);
 
     /// <summary>
-    /// Loads Silero VAD (embedded) on the AI's accelerator, inside the GPU lane.
+    /// Loads Silero VAD (embedded) on the CPU: it never waits for the GPU lane.
     /// </summary>
     /// <param name="smartTurn">
     /// Ask Smart Turn whether each pause is the end of a turn (see <see cref="TurnAssembler"/>) instead of always waiting half a second. The VAD then closes
@@ -96,12 +96,12 @@ public sealed class MicrophoneEars : IAsyncDisposable
     /// </param>
     public static async Task<MicrophoneEars> CreateAsync(VertexAi ai, VadOptions? options = null, bool smartTurn = true, CancellationToken ct = default)
     {
-        using (await ai.Lane.EnterAsync(ct: ct))
-        {
-            if (smartTurn && options == null) options = new VadOptions { MinSilenceDuration = SmartTurnSilence };
-            var vad = SileroVad.Create(ai.Accelerator, SileroModel());
-            return new MicrophoneEars(ai, new VoiceActivityDetector(vad, options, ownsVad: true), smartTurn);
-        }
+        // The detector runs on the CPU, not in the GPU lane. MEASURED: 3.4 ms per 32 ms frame (a tenth of a core), the same probabilities as CUDA. In the lane it could not
+        // run while the language model prefilled a reply (about 1.5 s, GPU held), so a person who carried on talking was not heard until the robot had started to answer.
+        if (smartTurn && options == null) options = new VadOptions { MinSilenceDuration = SmartTurnSilence };
+        var vad = SileroVad.Create(ai.CpuAccelerator, SileroModel());
+        await Task.CompletedTask;
+        return new MicrophoneEars(ai, new VoiceActivityDetector(vad, options, ownsVad: true), smartTurn);
     }
 
     /// <summary>Hands over 16 kHz mono audio (any chunk size).</summary>
@@ -126,8 +126,7 @@ public sealed class MicrophoneEars : IAsyncDisposable
             {
                 var samples = new float[pcm.Length];
                 for (var i = 0; i < pcm.Length; i++) samples[i] = pcm[i] / 32768f;
-                using (await _ai.Lane.EnterAsync(urgent: true, ct))
-                    await _vad.AcceptWaveformAsync(samples);
+                await _vad.AcceptWaveformAsync(samples);
                 _turns?.SetSpeaking(_vad.IsSpeechActive);
             }
         }
