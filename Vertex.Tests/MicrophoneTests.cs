@@ -127,4 +127,65 @@ public class MicrophoneTests
         var pcm16k = Audio.Downsample48To16(Audio.Upsample24To48(speech));
         Assert.That((await ai.TranscribeAsync(pcm16k)).ToLowerInvariant(), Does.Contain("house"));
     }
+
+    /// <summary>The speech without the silence the synthesiser puts round it: a spoken word as the voice detector would close it (75 ms of padding).</summary>
+    private static short[] TrimToSpeech(short[] pcm)
+    {
+        var loud = 600;       // about -35 dBFS
+        var first = Array.FindIndex(pcm, x => Math.Abs((int)x) > loud);
+        var last = Array.FindLastIndex(pcm, x => Math.Abs((int)x) > loud);
+        if (first < 0) return pcm;
+        first = Math.Max(0, first - 1200); last = Math.Min(pcm.Length - 1, last + 1200);
+        return pcm[first..(last + 1)];
+    }
+
+    /// <summary>16 kHz audio driven hard into clipping, the way a close, loud voice peaks: gain until the peak is at full scale, then a little more.</summary>
+    private static short[] Clipped(short[] pcm)
+    {
+        var peak = Math.Max(1, pcm.Max(x => Math.Abs((int)x)));
+        var gain = 32767.0 / peak * 1.3;
+        return pcm.Select(x => (short)Math.Clamp(x * gain, short.MinValue, short.MaxValue)).ToArray();
+    }
+
+    /// <summary>
+    /// Live (2026-10-14): TJ's loud, close "Vertex." (0.81 s) peaked at full scale and the noise gate threw it out as "a click", so the conversation never
+    /// opened. A sound the gate refuses that could be the name is now transcribed and kept when the words contain it - and only then.
+    /// </summary>
+    [Test]
+    public async Task ALoudCloseName_IsHeard_ButALoudYeahAndARealClick_AreNot()
+    {
+        await using var ai = TestAi.Create();
+        await ai.WarmUpAsync("kokoro:af_heart");
+        await using var ears = await MicrophoneEars.CreateAsync(ai);
+        ears.Log += m => TestContext.Out.WriteLine(m);
+        var heard = new ConcurrentQueue<string>();
+        ears.Heard += h => heard.Enqueue(h.Text);
+        async Task Settle() { var until = DateTime.UtcNow.AddSeconds(20); while (!ears.IsIdle && DateTime.UtcNow < until) await Task.Delay(50); await Task.Delay(1500); }
+
+        // 1. A loud, clipped "Vertex." (the gate calls it a click: peak at full scale, under a second).
+        var (name, _) = await ai.SpeakAsync("Vertex.", "kokoro:am_michael");
+        var loud = Clipped(TrimToSpeech(To16k(name)));
+        var measure = NoiseGate.Measure(loud.Select(x => x / 32768f).ToArray());
+        TestContext.Out.WriteLine($"[gate] the loud name: {measure.Seconds:0.00} s, {measure.RmsDb:0.0} dB rms, {measure.PeakDb:0.0} dB peak");
+        Assert.That(NoiseGate.Reject(measure, false), Is.Not.Null, "the premise: the gate does refuse this sound");
+        Assert.That(NoiseGate.MayBeTheName(measure), Is.True);
+        FeedLikeAMicrophone(ears, loud);
+        await Settle();
+        Assert.That(heard.Any(t => Vertex.Brain.WakeWord.Names(t, "Vertex")), Is.True, "the loud name was thrown away: heard [" + string.Join(" | ", heard) + "]");
+
+        // 2. The same loudness on a word that is not the name: transcribed to check, then dropped.
+        heard.Clear();
+        var (yeah, _) = await ai.SpeakAsync("Yeah.", "kokoro:am_michael");
+        FeedLikeAMicrophone(ears, Clipped(TrimToSpeech(To16k(yeah))));
+        await Settle();
+        Assert.That(heard, Is.Empty, "a loud 'Yeah.' reached the robot: " + string.Join(" | ", heard));
+
+        // 3. A real click (a 40 ms burst of full-scale noise) never reaches the recogniser's output.
+        heard.Clear();
+        var rnd = new Random(7);
+        var click = Enumerable.Range(0, 640).Select(_ => (short)(rnd.Next(2) == 0 ? 32767 : -32768)).Concat(new short[3000]).ToArray();
+        FeedLikeAMicrophone(ears, click);
+        await Settle();
+        Assert.That(heard, Is.Empty, "a click was heard as words: " + string.Join(" | ", heard));
+    }
 }

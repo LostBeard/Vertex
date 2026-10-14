@@ -57,6 +57,9 @@ public sealed class MicrophoneEars : IAsyncDisposable
     /// </summary>
     public string? SaveFolder { get; set; }
 
+    /// <summary>The name that calls Vertex, to recognise when the sound gate was unsure whether a sound was someone calling.</summary>
+    public string WakeName { get; set; } = "Vertex";
+
     /// <summary>A finished utterance, transcribed, and (when <see cref="IdentifySpeakers"/>) whose voice it was.</summary>
     public event Action<HeardUtterance>? Heard;
     public event Action<string>? Log;
@@ -142,10 +145,19 @@ public sealed class MicrophoneEars : IAsyncDisposable
         // A click, a thump, hiss or a half-second blip is not something said to the robot, and the recogniser writes the nearest word it knows for it
         // ("Yeah.", "Ha ha.", "No." in a silent room). Judged on the numbers, before any transcription is spent on it.
         var expectingAnswer = Environment.TickCount64 - _reopenedTick < 10_000;
-        if (NoiseGate.Reject(samples, expectingAnswer) is { } notVoice)
+        var measure = NoiseGate.Measure(samples);
+        string? unsure = null;
+        if (NoiseGate.Reject(measure, expectingAnswer) is { } notVoice)
         {
-            Log?.Invoke($"ignored {seconds:0.00} s of sound: {notVoice}");
-            return;
+            // A sound that could still be the name being called is not thrown away unheard (a loud, close "Vertex." peaks like a click): it is transcribed,
+            // and kept only when the words contain the name.
+            if (!NoiseGate.MayBeTheName(measure))
+            {
+                Log?.Invoke($"ignored {seconds:0.00} s of sound: {notVoice} ({measure.RmsDb:0} dB rms, {measure.PeakDb:0.0} dB peak, {measure.LowFraction:0%} rumble)");
+                SaveIgnored(samples, notVoice, measure, null);
+                return;
+            }
+            unsure = notVoice;
         }
         Interlocked.Increment(ref _pendingTranscriptions);
         _ = Task.Run(async () =>
@@ -156,6 +168,12 @@ public sealed class MicrophoneEars : IAsyncDisposable
                 var text = await _ai.TranscribeAsync(samples, _cts.Token);
                 stt.Stop();
                 if (string.IsNullOrWhiteSpace(text) || Ears.IsNoise(text)) return;
+                if (unsure != null && !WakeWord.Names(text, WakeName))
+                {
+                    Log?.Invoke($"ignored {seconds:0.00} s of sound: {unsure}, and \"{text}\" is not the name ({measure.RmsDb:0} dB rms, {measure.PeakDb:0.0} dB peak)");
+                    SaveIgnored(samples, unsure, measure, text);
+                    return;
+                }
                 // The end-of-turn model hears HOW something was said, not what: "what's the" can sound final. When the words stop partway (no closing
                 // punctuation) and nothing has already been waited for, hold the turn for a continuation instead of answering a fragment.
                 if (_turns != null && why is "complete" or "silence" && TurnText.LooksUnfinished(text) && !Muted)
@@ -179,6 +197,27 @@ public sealed class MicrophoneEars : IAsyncDisposable
             catch (OperationCanceledException) { }
             catch (Exception e) { Log?.Invoke("transcription failed: " + e.Message); }
             finally { Interlocked.Decrement(ref _pendingTranscriptions); }
+        });
+    }
+
+    /// <summary>With "keep what the robot hears" on, the sounds the gate refused are kept too (heard\ignored), with the numbers, to calibrate the gate on this room.</summary>
+    private void SaveIgnored(float[] samples, string reason, AudioMeasure m, string? text)
+    {
+        if (SaveFolder is not { Length: > 0 } folder) return;
+        var stamp = DateTime.Now.ToString("yyyyMMdd-HHmmss-fff");
+        _ = Task.Run(() =>
+        {
+            try
+            {
+                var dir = Path.Combine(folder, "ignored");
+                Directory.CreateDirectory(dir);
+                var pcm = new short[samples.Length];
+                for (var i = 0; i < pcm.Length; i++) pcm[i] = (short)Math.Clamp(samples[i] * 32767f, short.MinValue, short.MaxValue);
+                var path = Path.Combine(dir, stamp);
+                File.WriteAllBytes(path + ".wav", Reachy.ReachyChannel.BuildWav(pcm, 16000));
+                File.WriteAllText(path + ".json", System.Text.Json.JsonSerializer.Serialize(new { reason, m.Seconds, m.RmsDb, m.PeakDb, m.LowFraction, transcribedAnyway = text }));
+            }
+            catch (Exception e) { Log?.Invoke("could not keep an ignored sound: " + e.Message); }
         });
     }
 

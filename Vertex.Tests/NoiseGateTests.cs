@@ -18,9 +18,12 @@ public class NoiseGateTests
     [TestCase(0.40, -29.2, -20.0, 0.98, "Yeah.", TestName = "Phantom thump 'Yeah.' 98% rumble")]
     [TestCase(0.40, -26.2, -14.2, 1.00, "Mm-hmm.", TestName = "Phantom thump 'Mm-hmm.' 100% rumble")]
     [TestCase(0.85, -28.0, -12.0, 0.97, "a long bump", TestName = "A bump long enough to pass the length rule, 97% rumble")]
-    public void TheSoundsOfASilentRoom_AreNotTranscribed(double seconds, double rms, double peak, double low, string wrote)
+    [TestCase(0.65, -23.9, -8.0, 0.00, "Yeah.", 0.274, TestName = "Phantom 'Yeah.' 0.65 s, loud, flat spectrum 0.27")]
+    [TestCase(0.94, -25.1, -9.0, 0.00, "Yeah, yeah, but", 0.129, TestName = "Phantom 'Yeah, yeah, but' 0.94 s, flat spectrum 0.13")]
+    [TestCase(0.86, -26.0, -10.0, 0.20, "Okay.", 0.119, TestName = "Phantom 'Okay.' 0.86 s, flat spectrum 0.12")]
+    public void TheSoundsOfASilentRoom_AreNotTranscribed(double seconds, double rms, double peak, double low, string wrote, double flatness = 0)
     {
-        var why = NoiseGate.Reject(new AudioMeasure(seconds, rms, peak, low), expectingAnswer: false);
+        var why = NoiseGate.Reject(new AudioMeasure(seconds, rms, peak, low, flatness), expectingAnswer: false);
         Assert.That(why, Is.Not.Null, $"'{wrote}' would have been transcribed");
     }
 
@@ -33,8 +36,13 @@ public class NoiseGateTests
     [TestCase(0.88, -33.0, -15.0, 0.30, "Vertex.")]
     [TestCase(2.57, -23.6, -4.1, 0.40, "a loud, shouted sentence")]
     [TestCase(1.04, -29.2, -11.1, 0.60, "Yeah, love you.")]
-    public void RealSpeech_GoesThrough(double seconds, double rms, double peak, double low, string said) =>
-        Assert.That(NoiseGate.Reject(new AudioMeasure(seconds, rms, peak, low), expectingAnswer: false), Is.Null, said);
+    [TestCase(0.84, -22.5, -8.0, 0.20, "Vertex.", 0.005)]
+    [TestCase(0.88, -23.7, -9.0, 0.30, "Vertex.", 0.004)]
+    [TestCase(0.88, -26.5, -9.0, 0.14, "Vertex.", 0.028)]
+    [TestCase(0.68, -34.2, -14.9, 0.18, "Okay.", 0.016)]
+    [TestCase(0.49, -33.6, -19.6, 0.23, "Which you could.", 0.055)]
+    public void RealSpeech_GoesThrough(double seconds, double rms, double peak, double low, string said, double flatness = 0) =>
+        Assert.That(NoiseGate.Reject(new AudioMeasure(seconds, rms, peak, low, flatness), expectingAnswer: seconds < 0.65), Is.Null, said);
 
     [Test]
     public void AOneWordAnswer_IsRealWhileTheRobotIsWaitingForOne()
@@ -78,6 +86,24 @@ public class NoiseGateTests
             }
             var word = NoiseGate.Measure(pcm[best..(best + 8000)]);
             Assert.That(NoiseGate.Reject(word, true), Is.Null, $"{file} (loudest 0.5 s: {word.RmsDb:0.0} dB, {word.LowFraction:0.00} low)");
+        }
+    }
+
+    /// <summary>
+    /// DIAGNOSTIC, not part of the suite (it reads this PC's kept audio, which never leaves it): measures every clip in %APPDATA%\Vertex\heard with the gate and
+    /// prints what the gate would do. Run it to calibrate the gate on this room: dotnet test --filter "Name~MeasureTheHeardFolder".
+    /// </summary>
+    [Test, Explicit("reads the household's kept audio")]
+    public void MeasureTheHeardFolder()
+    {
+        var dir = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData), "Vertex", "heard");
+        if (!Directory.Exists(dir)) Assert.Ignore("no heard folder");
+        foreach (var wav in Directory.GetFiles(dir, "*.wav").OrderBy(f => f))
+        {
+            var pcm = SmartTurnTests.ReadWav16k(wav);
+            var m = NoiseGate.Measure(pcm);
+            var text = File.Exists(Path.ChangeExtension(wav, ".txt")) ? File.ReadAllText(Path.ChangeExtension(wav, ".txt")).Trim() : "";
+            TestContext.Progress.WriteLine($"[heard] {Path.GetFileNameWithoutExtension(wav)} {m.Seconds,5:0.00} s {m.RmsDb,6:0.0} dB {m.PeakDb,6:0.0} pk {m.LowFraction,4:0.00} low {m.Flatness,6:0.000} flat -> {NoiseGate.Reject(m, false) ?? "voice",-34} \"{text}\"");
         }
     }
 }

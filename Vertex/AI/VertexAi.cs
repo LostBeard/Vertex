@@ -81,6 +81,8 @@ public sealed class VertexAi : IAsyncDisposable
         Speakers = new AiSpeakerEngine(modelSource, Accelerator)
         {
             Registry = LoadVoices(VoicesFile, log),
+            // An embedding of under 2 s of speech is unreliable (the model card's own guidance); filing a "Guest" from household chatter at 1.5 s made four of them in an hour.
+            MinGuestSeconds = 2.0,
             OnLoadProgress = (stage, pct) => { if (pct % 50 == 0) Log?.Invoke($"speaker model {stage} {pct}%"); },
         };
         Turns = new AiTurnEngine(modelSource, Accelerator)
