@@ -30,6 +30,16 @@ public sealed class VertexSettings
     /// <summary>Answer everything said near the robot, not only when Vertex is called by name.</summary>
     public bool ReachyAnswersEverything { get; set; }
     /// <summary>
+    /// Tell the people who talk to the robot apart by their voice: the people Vertex has been introduced to are called by name,
+    /// a stranger is "Guest 1". Voices stay on this PC (voices.json in the data folder).
+    /// </summary>
+    public bool ReachyRecognizeVoices { get; set; } = true;
+    /// <summary>
+    /// Keep every utterance the robot hears (the audio, the words Vertex heard, who it sounded like) in the data folder's "heard"
+    /// folder, to measure and improve listening on this household's own voices. Off by default; never uploaded anywhere.
+    /// </summary>
+    public bool ReachySaveHeard { get; set; }
+    /// <summary>
     /// The server's modpack (a Modrinth .mrpack URL or file), for learning its modded blocks the way a player gets
     /// them. Empty: AubsCraft's pack on mc.spawndev.com, none elsewhere.
     /// </summary>
@@ -122,6 +132,37 @@ public sealed class VertexHost : IAsyncDisposable
         Settings = VertexSettings.Load(dataFolder);
         Characters = new CharacterStore(System.IO.Path.Combine(dataFolder ?? VertexSettings.DefaultFolder, "characters"));
     }
+    /// <summary>Where the robot's heard utterances are kept when <see cref="VertexSettings.ReachySaveHeard"/> is on.</summary>
+    public string HeardFolder => System.IO.Path.Combine(_dataFolder, "heard");
+
+    /// <summary>The voices Vertex knows (people it was introduced to, and provisional guests). Empty until the AI is up.</summary>
+    public IReadOnlyList<SpawnDev.AI.SpeakerProfile> Voices => _ai?.Speakers.Registry.Profiles ?? [];
+
+    /// <summary>"Add a person": the next new voice the robot hears, over their next few sentences, is learned as this name.</summary>
+    public string LearnVoice(string name)
+    {
+        if (_reachy == null) return "Wake the robot first: voices are learned through its microphone.";
+        var told = _reachy.IntroduceNextVoice(name);
+        Changed?.Invoke();
+        return told;
+    }
+
+    /// <summary>Names a provisional guest (or merges it into someone who has that name).</summary>
+    public void RenameVoice(string from, string to)
+    {
+        if (_ai == null || string.IsNullOrWhiteSpace(to)) return;
+        if (_ai.Speakers.Registry.Rename(from, to)) _ai.SaveVoices();
+        Changed?.Invoke();
+    }
+
+    /// <summary>Forgets a voice.</summary>
+    public void ForgetVoice(string name)
+    {
+        if (_ai == null) return;
+        if (_ai.Speakers.Registry.Forget(name)) _ai.SaveVoices();
+        Changed?.Invoke();
+    }
+
     public HostState State { get; private set; } = HostState.Idle;
 
     /// <summary>What Vertex is doing right now (the tray dot): off, starting, listening, thinking or speaking.</summary>
@@ -298,6 +339,8 @@ public sealed class VertexHost : IAsyncDisposable
             _reachy = await ReachyChannel.ConnectAsync(Settings.ReachyHost, _ai!);
             if (!string.IsNullOrWhiteSpace(Settings.ReachySpeaker)) _reachy.RoomSpeakerName = Settings.ReachySpeaker.Trim();
             _reachy.AnswersEverything = Settings.ReachyAnswersEverything;
+            _reachy.IdentifySpeakers = Settings.ReachyRecognizeVoices;
+            _reachy.SaveHeardFolder = Settings.ReachySaveHeard ? HeardFolder : null;
             _reachy.Log += m => Add(LineKind.System, "[reachy] " + m);
             _robot = new RobotBody(_reachy, _companion);
             _robot.Log += m => Add(LineKind.System, "[reachy] " + m);

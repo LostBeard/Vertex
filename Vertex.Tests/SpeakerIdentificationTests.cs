@@ -59,6 +59,54 @@ public class SpeakerIdentificationTests
         return r.Count(h.Contains) / (double)r.Length;
     }
 
+    /// <summary>
+    /// "Keep what the robot hears" writes each utterance as a WAV with the words and who it sounded like, so the household's own
+    /// voices become a test set (run tools/stt-bench on the folder after correcting the .txt files). Off unless a folder is set.
+    /// </summary>
+    [Test]
+    public async Task WhatIsHeard_IsKeptOnlyWhenAFolderIsSet_AsAudioWordsAndWho()
+    {
+        var dir = Path.Combine(AppContext.BaseDirectory, "Fixtures", "voices");
+        var manifest = JsonSerializer.Deserialize<List<Fixture>>(File.ReadAllText(Path.Combine(dir, "manifest.json")),
+            new JsonSerializerOptions { PropertyNameCaseInsensitive = true })!;
+        var clip = manifest.Single(f => f.File.StartsWith("a2-"));
+        var speech = ReadWav16k(Path.Combine(dir, clip.File));
+        var keep = Path.Combine(Path.GetTempPath(), "vertex-tests", Guid.NewGuid().ToString("N"), "heard");
+
+        await using var ai = TestAi.Create();
+        await ai.WarmUpAsync("kokoro:af_heart");
+        await using var ears = await MicrophoneEars.CreateAsync(ai);
+        var heard = new ConcurrentQueue<HeardUtterance>();
+        ears.Heard += heard.Enqueue;
+
+        async Task Say()
+        {
+            while (!ears.IsIdle) await Task.Delay(50);
+            heard.Clear();
+            FeedLikeAMicrophone(ears, speech);
+            var deadline = DateTime.UtcNow.AddSeconds(60);
+            while (heard.IsEmpty && DateTime.UtcNow < deadline) await Task.Delay(50);
+            Assert.That(heard, Is.Not.Empty, "never heard");
+            while (!ears.IsIdle) await Task.Delay(50);
+            await Task.Delay(500);      // the files are written off the listening path
+        }
+
+        await Say();                                                   // no folder set: nothing kept anywhere
+        Assert.That(Directory.Exists(keep), Is.False);
+
+        ears.SaveFolder = keep;
+        await Say();
+        var wavs = Directory.GetFiles(keep, "*.wav");
+        Assert.That(wavs, Has.Length.EqualTo(1));
+        var stem = Path.ChangeExtension(wavs[0], null);
+        var kept = ReadWav16k(wavs[0]);
+        Assert.That(kept.Length / 16000.0, Is.EqualTo(clip.Seconds).Within(1.5), "the kept audio is the utterance (plus the VAD's padding), not a fragment");
+        Assert.That(File.ReadAllText(stem + ".txt").Trim(), Is.EqualTo(heard.Last().Text), "the words are what Vertex heard");
+        using var meta = JsonDocument.Parse(File.ReadAllText(stem + ".json"));
+        Assert.That(meta.RootElement.GetProperty("seconds").GetDouble(), Is.GreaterThan(2));
+        Assert.That(meta.RootElement.GetProperty("speaker").GetString(), Does.StartWith("Guest"), "who it sounded like (a stranger here)");
+    }
+
     [Test]
     public async Task ThreeVoices_AreToldApart_IntroducedAndRecognisedOnNewSpeech()
     {

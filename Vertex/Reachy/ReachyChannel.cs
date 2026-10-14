@@ -48,6 +48,13 @@ public sealed class ReachyChannel : IVoiceChannel
         set { if (_ears != null) _ears.IdentifySpeakers = value; }
     }
 
+    /// <summary>Keep every heard utterance (audio, words, who) in this folder; null (the default) keeps nothing. See <see cref="MicrophoneEars.SaveFolder"/>.</summary>
+    public string? SaveHeardFolder
+    {
+        get => _ears?.SaveFolder;
+        set { if (_ears != null) _ears.SaveFolder = value; }
+    }
+
     /// <summary>The voice tracker: who is talking, introductions, the people Vertex knows.</summary>
     public SpeakerTracker Speakers => _speakers;
 

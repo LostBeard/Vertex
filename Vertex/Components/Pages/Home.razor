@@ -37,6 +37,8 @@
             <label>Who talks to it (blank: "someone in the room")</label>
             <input @bind="Host.Settings.ReachySpeaker" disabled="@Host.RobotConnected" placeholder="e.g. Aubri" />
             <label><input type="checkbox" style="width:auto" @bind="Host.Settings.ReachyAnswersEverything" disabled="@Host.RobotConnected" /> Answer everything said near the robot (off: say "Vertex" to start talking)</label>
+            <label><input type="checkbox" style="width:auto" @bind="Host.Settings.ReachyRecognizeVoices" disabled="@Host.RobotConnected" /> Tell people apart by their voice (people Vertex has been introduced to are called by name; strangers are "Guest 1", "Guest 2")</label>
+            <label><input type="checkbox" style="width:auto" @bind="Host.Settings.ReachySaveHeard" disabled="@Host.RobotConnected" /> Keep what the robot hears (audio, words, who) in <code>@Host.HeardFolder</code> to measure listening on this household's voices. Stays on this PC.</label>
             @if (Host.State == HostState.Playing)
             {
                 <div class="row" style="margin-top:12px">
@@ -50,6 +52,36 @@
                     }
                 </div>
             }
+        </section>
+
+        <section style="margin-top:16px">
+            <h2>Voices</h2>
+            <p class="hint">Vertex tells the people who talk to the robot apart by their voice. Voices stay on this PC.</p>
+            @if (Host.Voices.Count == 0)
+            {
+                <p class="hint">Nobody yet. Add a person below, or just introduce yourself out loud: "Vertex, I'm Nikki".</p>
+            }
+            @foreach (var voice in Host.Voices)
+            {
+                RenameTo.TryAdd(voice.Name, "");
+                <div class="row" style="margin-top:6px">
+                    <strong style="min-width:120px">@voice.Name</strong>
+                    <span class="hint">@(voice.IsGuest ? "a stranger Vertex has heard" : "introduced") - @voice.Embeddings.Count samples, @(Math.Round(voice.Seconds)) s of speech</span>
+                    @if (voice.IsGuest)
+                    {
+                        <input style="max-width:140px" placeholder="their name" @bind="RenameTo[voice.Name]" />
+                        <button class="secondary" @onclick="() => Host.RenameVoice(voice.Name, RenameTo[voice.Name])">Name them</button>
+                    }
+                    <button class="secondary" @onclick="() => Host.ForgetVoice(voice.Name)">Forget</button>
+                </div>
+            }
+            <label style="margin-top:12px">Add a person: their name</label>
+            <div class="row">
+                <input @bind="NewVoice" placeholder="e.g. Nikki" />
+                <button @onclick="LearnVoice" disabled="@(string.IsNullOrWhiteSpace(NewVoice))">Learn their voice</button>
+            </div>
+            <p class="hint">Then have them say a few sentences near the robot: the next new voice it hears is theirs.</p>
+            @if (VoiceMessage != "") { <p class="hint">@VoiceMessage</p> }
         </section>
 
         <section style="margin-top:16px">
@@ -155,6 +187,16 @@
     private Character? Editing;
     private IReadOnlyList<Character> Characters = [];
     private Timer? _timer;
+    private string NewVoice = "";
+    private string VoiceMessage = "";
+    /// <summary>The name typed for each guest, by guest name.</summary>
+    private Dictionary<string, string> RenameTo { get; } = new();
+
+    private void LearnVoice()
+    {
+        VoiceMessage = Host.LearnVoice(NewVoice.Trim());
+        NewVoice = "";
+    }
 
     private bool Busy => Host.State != HostState.Idle;
     private bool InGameOrBusy => Host.InGame || Host.State is HostState.Starting or HostState.Stopping;

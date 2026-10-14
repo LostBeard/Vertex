@@ -36,6 +36,13 @@ public sealed class MicrophoneEars : IAsyncDisposable
     /// <summary>Whether each utterance is also matched to a voice (Vertex's introduced people, else a provisional guest).</summary>
     public bool IdentifySpeakers { get; set; } = true;
 
+    /// <summary>
+    /// When set, every utterance is kept in this folder as a WAV (16 kHz mono) with the words Vertex heard (.txt) and who it sounded
+    /// like (.json): a real-voice test set. Off (null) by default and never uploaded anywhere; correct the .txt files by hand and run
+    /// the speech-to-text bench on the folder to measure listening on the household's own voices.
+    /// </summary>
+    public string? SaveFolder { get; set; }
+
     /// <summary>A finished utterance, transcribed, and (when <see cref="IdentifySpeakers"/>) whose voice it was.</summary>
     public event Action<HeardUtterance>? Heard;
     public event Action<string>? Log;
@@ -106,11 +113,37 @@ public sealed class MicrophoneEars : IAsyncDisposable
                     catch (Exception e) { Log?.Invoke("speaker identification failed: " + e.Message); }
                 }
                 Log?.Invoke($"heard{(speaker?.Name is { } who ? " (" + who + (speaker.Reliable ? "" : ", short") + ")" : "")}: \"{text}\" ({segment.DurationSeconds:0.0} s, text in {stt.ElapsedMilliseconds} ms{(speaker != null ? ", voice in " + speaker.EmbedMs.ToString("0") + " ms" : "")})");
+                if (SaveFolder is { Length: > 0 } folder) SaveHeard(folder, segment.Samples, text, segment.DurationSeconds, speaker, stt.Elapsed.TotalMilliseconds);
                 Heard?.Invoke(new HeardUtterance(text, segment.DurationSeconds, ended, stt.Elapsed.TotalMilliseconds, speaker));
             }
             catch (OperationCanceledException) { }
             catch (Exception e) { Log?.Invoke("transcription failed: " + e.Message); }
             finally { Interlocked.Decrement(ref _pendingTranscriptions); }
+        });
+    }
+
+    /// <summary>Writes one heard utterance beside the others, off the listening path (a slow disk never delays the answer).</summary>
+    private void SaveHeard(string folder, float[] samples, string text, double seconds, AiSpeakerResult? speaker, double sttMs)
+    {
+        var stamp = DateTime.Now.ToString("yyyyMMdd-HHmmss-fff");
+        _ = Task.Run(() =>
+        {
+            try
+            {
+                Directory.CreateDirectory(folder);
+                var pcm = new short[samples.Length];
+                for (var i = 0; i < pcm.Length; i++) pcm[i] = (short)Math.Clamp(samples[i] * 32767f, short.MinValue, short.MaxValue);
+                var path = Path.Combine(folder, stamp);
+                File.WriteAllBytes(path + ".wav", Reachy.ReachyChannel.BuildWav(pcm, 16000));
+                File.WriteAllText(path + ".txt", text + Environment.NewLine);
+                File.WriteAllText(path + ".json", System.Text.Json.JsonSerializer.Serialize(new
+                {
+                    seconds, sttMs,
+                    speaker = speaker?.Name, score = speaker?.Match.Score, known = speaker?.Match.Known,
+                    guest = speaker?.Guest?.Name, reliable = speaker?.Reliable,
+                }));
+            }
+            catch (Exception e) { Log?.Invoke("could not keep what was heard: " + e.Message); }
         });
     }
 
