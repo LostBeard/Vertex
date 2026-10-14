@@ -116,3 +116,24 @@ public static class TurnText
         return true;
     }
 }
+
+/// <summary>
+/// The language model carrying on the transcript. Every message to it is "{name} says (out loud): {words}", and an 8B model will sometimes finish its reply by
+/// writing the friend's NEXT line in that format. Live (2026-10-14): after "what's the best thing to build first?" it answered with
+/// "Todd says (out loud): Yeah, I'm not really sure... Can you build a house that's like, a castle?" - words nobody said, spoken by the robot and
+/// remembered as if heard.
+/// </summary>
+public static class SelfTalk
+{
+    private static readonly Regex FriendsLine = new(@"(?<![\p{L}'])[\p{L}][\p{L}' ]{0,30} says \((?:out loud|in chat)[^)]*\)\s*:", RegexOptions.Compiled | RegexOptions.CultureInvariant);
+
+    /// <summary>Where in <paramref name="text"/> a made-up friend's line begins, or null.</summary>
+    public static int? IndexOfFriendsLine(string text)
+    {
+        var m = FriendsLine.Match(text);
+        return m.Success ? m.Index : null;
+    }
+
+    /// <summary>The reply up to a made-up friend's line (all of it when there is none; nothing when it starts with one).</summary>
+    public static string CutFriendsLine(string reply) => IndexOfFriendsLine(reply) is { } at ? reply[..at].TrimEnd() : reply;
+}

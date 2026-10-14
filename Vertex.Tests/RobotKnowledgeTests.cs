@@ -112,4 +112,35 @@ public class RobotKnowledgeTests
         Assert.That(withRule.Right, Is.GreaterThanOrEqualTo(Questions.Length - 1), "ordinary questions must be answered");
         Assert.That(withRule.Right, Is.GreaterThan(withoutRule.Right).Or.EqualTo(Questions.Length), "the rule must not change nothing (or the A/B shows no effect)");
     }
+
+    /// <summary>
+    /// The live failure of 2026-10-14 on the same model with the shipped rules and code: "Vertex, what's the um best thing to build first?" was answered
+    /// "I'm on my way to helping you decide", which set off a retry, and the retry ended with a made-up line for the friend. Five fresh sessions, and every reply
+    /// is held to: an actual answer, no friend's line, nothing about being "on my way".
+    /// </summary>
+    [Test]
+    public async Task ABuildingQuestion_GetsAnAnswer_NotAnActionClaim_AndNeverAMadeUpFriendsLine()
+    {
+        var replies = new List<string>();
+        for (int run = 0; run < 5; run++)
+        {
+            var log = new ConcurrentQueue<string>();
+            var store = new CharacterStore(Path.Combine(Path.GetTempPath(), $"vertex-knowledge-{Guid.NewGuid():N}", "characters"));
+            await using var companion = new Companion(_ai, store, Character.BuiltIn[0], _model);
+            companion.Log += m => log.Enqueue(m);
+            var room = new RoomChannel();
+            companion.AddChannel(room);
+            companion.Attach(new PromptBody(RobotBody.RuleLines));
+            companion.Start();
+            await Wait.UntilAsync(() => log.Any(l => l.StartsWith("ready:")), Timeout, () => "never primed: " + string.Join(" | ", log));
+            room.Hear("Todd", "Vertex, what's the um best thing to build first?");
+            await Wait.UntilAsync(() => room.Shown.Count > 0 && !companion.IsThinking && !companion.Mouth.IsSpeaking, Timeout, () => "no answer; log: " + string.Join(" | ", log));
+            var said = string.Join(" ", room.Shown);
+            replies.Add(said);
+            TestContext.Progress.WriteLine($"[building] run {run}: {said}   [{string.Join(" | ", log.Where(l => l.Contains("asking again") || l.Contains("friend's next line")))}]");
+        }
+        Assert.That(replies.Where(r => r.Contains(" says (")), Is.Empty, "a made-up friend's line was spoken");
+        Assert.That(replies.Where(r => System.Text.RegularExpressions.Regex.IsMatch(r, "on my way", System.Text.RegularExpressions.RegexOptions.IgnoreCase)), Is.Empty, "an action claim for a plain question");
+        Assert.That(replies.Count(r => r.Count(char.IsLetter) > 15), Is.EqualTo(replies.Count), "every reply is a real answer");
+    }
 }

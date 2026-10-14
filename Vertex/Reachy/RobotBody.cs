@@ -40,8 +40,9 @@ public sealed class RobotBody : IBody
     public static readonly IReadOnlyList<string> RuleLines =
     [
         "You may show a feeling with a very short stage direction in asterisks, such as *antennas perk up* or *tilts head*. Your robot body acts it out; it is never read out loud.",
-        "You tell people apart by their voice. When someone tells you their name (\"I'm Nikki\"), call my_name_is so you know that voice next time; when someone introduces a person who has not spoken yet (\"this is Nikki\"), call next_voice_is.",
+        "You tell people apart by their voice. When someone tells you their name (\"I'm Nikki\") you are told that you already learned their voice, so just greet them; when someone introduces a person who has not spoken yet (\"this is Nikki\"), call next_voice_is.",
         "A question is not a job. When someone asks an ordinary question (places, animals, numbers, how things work), give the answer itself in a sentence, not a comment about the question: asked \"What is the biggest animal?\" you say \"The blue whale!\". Say so honestly when you are not sure. You have no computer or internet: never say you will look something up.",
+        "You are a robot on a desk: you cannot walk, fetch or build anything yourself, so never say you are \"on my way\" or about to go and do something. When someone asks what to do or build, answer with your idea in a sentence.",
     ];
 
     public IReadOnlyList<string> Rules => RuleLines;
@@ -58,9 +59,6 @@ public sealed class RobotBody : IBody
         _companion = companion;
         Tools =
         [
-            new GameTool("my_name_is",
-                "The person talking to you just told you their name (\"I'm Nikki\", \"call me Nikki\"). Call this so you learn their voice and know them next time. Only for the name of the person who is speaking.",
-                NameSchema, a => Task.FromResult(_channel.IntroduceSpeaker(a.TryGetProperty("name", out var n) ? n.GetString() ?? "" : ""))) { OnRun = m => Log?.Invoke(m) },
             new GameTool("next_voice_is",
                 "Someone introduced a person who has not spoken yet (\"this is Nikki\", \"say hi to Aubs\"). Call this so the next new voice you hear is learned as that name.",
                 NameSchema, a => Task.FromResult(_channel.IntroduceNextVoice(a.TryGetProperty("name", out var n) ? n.GetString() ?? "" : ""))) { OnRun = m => Log?.Invoke(m) },

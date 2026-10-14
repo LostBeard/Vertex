@@ -363,9 +363,11 @@ public sealed class Companion : IAsyncDisposable
         var runsBefore = Volatile.Read(ref _toolRuns);
         var spoken = new List<string>();
         var reply = await ChatOnceAsync(messages, allowTools, ct, clock, spoken, to);
+        // A question is answered, not acted on: "what's the best thing to build?" got "I'm on my way to helping you decide" and a retry that ordered a tool call.
+        var askedAQuestion = userMessage.TrimEnd().EndsWith('?');
         // An 8B model sometimes SAYS it is doing something ("I'm on my way") without calling a tool, and then nothing
         // happens (seen 2026-10-11 in BrainTests.ComeHere). Once, tell it so and let it call the tool.
-        if (allowTools && Volatile.Read(ref _toolRuns) == runsBefore && ClaimsAction(reply))
+        if (allowTools && !askedAQuestion && Volatile.Read(ref _toolRuns) == runsBefore && ClaimsAction(reply))
         {
             Log?.Invoke("  (said it would act but called no tool: asking again)");
             messages.Add(new AiChatMessage("assistant", reply));
@@ -456,11 +458,27 @@ public sealed class Companion : IAsyncDisposable
         var tools = Ai.Chat.Tools;
         if (!allowTools) Ai.Chat.Tools = null;
         var pending = new StringBuilder();
+        var generated = new StringBuilder();
+        var madeUpFriend = false;
         Task OnDelta(string delta)
         {
             clock.FirstToken();
             if (spoken == null) return Task.CompletedTask;
-            pending.Append(delta);
+            // The model sometimes carries on the transcript and writes the friend's next line ("Todd says (out loud): ... a castle?") in the format the
+            // prompt uses for them. Nothing from that point on is spoken, and it is cut from the reply (see SelfTalk).
+            if (madeUpFriend) return Task.CompletedTask;
+            generated.Append(delta);
+            if (SelfTalk.IndexOfFriendsLine(generated.ToString()) is { } at)
+            {
+                madeUpFriend = true;
+                var keep = generated.ToString(0, at);
+                var spokenSoFar = string.Concat(spoken);
+                pending.Clear();
+                var tail = keep.Length > spokenSoFar.Length ? Unspoken(keep, spoken) : "";
+                if (tail.Count(char.IsLetter) >= 2) pending.Append(tail + " ");
+                Log?.Invoke("  (the model wrote the friend's next line; cut)");
+            }
+            else pending.Append(delta);
             // A sentence is whole once its end mark is followed by a space; speak it while the rest is generated.
             var text = pending.ToString();
             var cut = -1;
@@ -502,7 +520,7 @@ public sealed class Companion : IAsyncDisposable
             Ai.Chat.Tools = tools;
             Ai.Chat.PerfLog = perf;
         }
-        var reply = AiChatEngine.StripToolCalls(AiChatEngine.StripThinking(result.TextWithoutToolCalls)).Trim();
+        var reply = SelfTalk.CutFriendsLine(AiChatEngine.StripToolCalls(AiChatEngine.StripThinking(result.TextWithoutToolCalls)).Trim());
         foreach (var call in result.ToolCalls) Log?.Invoke($"  tool {call.Name}({call.ArgumentsJson})");
         // An empty reply with no tool call: show what the model actually produced (and why it stopped).
         if (reply.Length == 0 && result.ToolCalls.Count == 0)
