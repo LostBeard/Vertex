@@ -60,4 +60,15 @@ public class WakeWordTests
     [TestCase("Okay, big way.", false)]
     [TestCase("", false)]
     public void TheTranscriptThatStopsPartway_IsSpotted(string text, bool unfinished) => Assert.That(TurnText.LooksUnfinished(text), Is.EqualTo(unfinished), text);
+
+    [TestCase("Vertex.", true)]
+    [TestCase("Hey Vertex", true)]
+    [TestCase("Hi, Vertex!", true)]
+    [TestCase("Rutax.", true)]                                   // a misheard name is still only the name
+    [TestCase("Vertex, what is the capital of France?", false)]
+    [TestCase("Vertex, hi, I'm Todd.", false)]
+    [TestCase("What is the capital of France?", false)]
+    [TestCase("Vertex please", false)]
+    [TestCase("", false)]
+    public void JustTheName_IsNotAQuestionYet(string said, bool onlyTheName) => Assert.That(WakeWord.IsOnlyTheName(said, "Vertex"), Is.EqualTo(onlyTheName), said);
 }

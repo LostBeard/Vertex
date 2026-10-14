@@ -122,6 +122,13 @@ public sealed class Companion : IAsyncDisposable
     }
 
     /// <summary>A Minecraft player's UUID as is; any other speaker key (the robot's room) as a stable id from its text.</summary>
+    /// <summary>
+    /// The key of a voice that could not be identified (a clip too short to tell: a bare "Vertex."). It continues a conversation with anyone, in either
+    /// direction: live, "Vertex." (unidentified) was followed by Todd's question (identified), the two keys differed, and the question was dropped as
+    /// "not said to me".
+    /// </summary>
+    public static readonly Guid UnidentifiedVoice = SpeakerId("room");
+
     public static Guid SpeakerId(string key) =>
         Guid.TryParse(key, out var g) ? g : new Guid(MD5.HashData(Encoding.UTF8.GetBytes(key)));
 
@@ -187,7 +194,8 @@ public sealed class Companion : IAsyncDisposable
     {
         if (e.Speaker == Guid.Empty) return true; // the operator's console and the control panel talk only to us
         if (NamesVertex(e.Text.ToLowerInvariant())) return true;
-        if (_lastPartner == e.Speaker && DateTime.UtcNow - _lastExchange < TimeSpan.FromSeconds(45)) return true;
+        if (_lastPartner is { } partner && DateTime.UtcNow - _lastExchange < TimeSpan.FromSeconds(45)
+            && (partner == e.Speaker || partner == UnidentifiedVoice || e.Speaker == UnidentifiedVoice)) return true;
         if (e.Channel?.AnswersEverything == true) return true;
         foreach (var body in Bodies)
             if (body.IsAddressed(e) == true) return true;
@@ -264,6 +272,14 @@ public sealed class Companion : IAsyncDisposable
                 CurrentChannel = s.Channel;
                 _lastPartner = s.Speaker;
                 _lastExchange = DateTime.UtcNow;
+                // Just the name ("Vertex."): the way a smart speaker does it - show at once that it is listening and wait for the rest, with no spoken answer.
+                // Answering took 3.6 s, landed on top of what the person said next, and the ears are shut while it talks.
+                if (s.Voice && s.Channel?.AnswersEverything == false && WakeWord.IsOnlyTheName(s.Text, Character.Name))
+                {
+                    Log?.Invoke($"  (called by name only: listening for the rest)");
+                    foreach (var body in Bodies) body.Act("antennas perk up");
+                    return;
+                }
                 foreach (var body in Bodies) body.OnFriendSpoke(s);
                 Mouth.Hush();
                 // Where it was said only matters once Vertex is in more than one place.

@@ -77,6 +77,15 @@ public static class WakeWord
     public static bool Names(string text, string name) =>
         text.Contains(name, StringComparison.OrdinalIgnoreCase) || Find(text, name) != null;
 
+    /// <summary>Whether the line is only the name, perhaps with a greeting ("Vertex.", "Hey Vertex"): nothing has been asked yet.</summary>
+    public static bool IsOnlyTheName(string text, string name)
+    {
+        var tokens = Words.Matches(Normalize(text, name)).Select(m => m.Value.ToLowerInvariant()).ToList();
+        if (tokens.Count == 0 || tokens.Count > 3) return false;
+        var target = name.ToLowerInvariant();
+        return tokens.Contains(target) && tokens.All(t => t == target || t is "hey" or "hi" or "hello" or "ok" or "okay" or "yo");
+    }
+
     /// <summary>The line with a misheard name put right ("Rutax, what's the" -> "Vertex, what's the"), so the language model never sees a stranger's name.</summary>
     public static string Normalize(string text, string name)
     {
