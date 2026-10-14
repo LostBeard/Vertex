@@ -115,6 +115,28 @@ public static class TurnText
     /// A line of at least two words with no closing punctuation ("Rutax, what's the") or ending on a comma, dash or ellipsis. MEASURED on the live
     /// session: every complete sentence came back with its full stop, the cut-off ones did not.
     /// </summary>
+    /// <summary>
+    /// Does this line leave the speaker with more to say? A question ends a turn; a statement ("We're gonna play Minecraft today.") is usually followed by what they actually
+    /// want. Said after the name and a greeting are set aside: "Vertex, what's the best thing to build?" is a question, "Vertex, we're going to play Minecraft." is not.
+    /// </summary>
+    public static bool ExpectsMore(string text, string name)
+    {
+        var t = text.Trim();
+        if (t.Length == 0 || t.EndsWith('?')) return false;
+        var words = System.Text.RegularExpressions.Regex.Matches(WakeWord.Normalize(t, name), @"[A-Za-z][A-Za-z']*").Select(m => m.Value.ToLowerInvariant()).ToList();
+        var skip = 0;
+        while (skip < words.Count && (words[skip] == name.ToLowerInvariant() || words[skip] is "hey" or "hi" or "hello" or "ok" or "okay" or "so" or "well" or "um" or "uh")) skip++;
+        if (skip >= words.Count) return false;                                     // only the name: handled before this
+        return !QuestionStarts.Contains(words[skip]);
+    }
+
+    /// <summary>The words a question or a request starts with: nothing further is expected after them.</summary>
+    private static readonly HashSet<string> QuestionStarts =
+    [
+        "what", "what's", "whats", "why", "how", "how's", "who", "who's", "where", "where's", "when", "which", "can", "could", "will", "would", "do", "does", "did", "is", "are", "was", "were",
+        "should", "shall", "may", "might", "have", "has", "tell", "show", "give", "please", "let's", "lets", "come", "go", "stop", "wait", "look", "help", "find", "build", "make", "get", "bring",
+    ];
+
     public static bool LooksUnfinished(string text)
     {
         var t = text.Trim();

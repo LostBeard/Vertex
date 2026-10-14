@@ -145,4 +145,37 @@ public class WakeCallTests
         await Task.Delay(6000);
         Assert.That(log.Any(l => l.Contains("kept talking before I answered")), Is.False, "a 'stop' was merged into the line it stops: " + string.Join(" | ", log));
     }
+
+    /// <summary>
+    /// A statement is not answered at once (TJ: "maybe wait a little longer when a question is not asked"): a second sentence that comes within the wait means the first
+    /// answer is never even begun, so nothing is wasted and nothing is cut off.
+    /// </summary>
+    [Test]
+    public async Task ASentenceThatIsNotAQuestion_WaitsForTheRest_BeforeThinking()
+    {
+        var (companion, mic, body, log) = await NewRoomAsync();
+        await using var _ = companion;
+
+        mic.Hear("voice:Todd", "Todd", "Vertex, we're gonna play Minecraft today.");
+        await Task.Delay(450);                        // inside the wait: the first line has not been put to the model
+        mic.Hear("voice:Todd", "Todd", "What's the best thing to build first?");
+
+        await Wait.UntilAsync(() => log.Count(l => l.StartsWith("timing: spoke")) >= 1 && !companion.IsThinking && !companion.Mouth.IsSpeaking, Timeout, () => "no answer; log: " + string.Join(" | ", log));
+        await Task.Delay(1500);
+        var asked = log.Where(l => l.StartsWith("> ")).ToList();
+        TestContext.Progress.WriteLine("[grace] put to the model: " + string.Join("  //  ", asked));
+        Assert.That(asked, Has.Count.EqualTo(1), "the statement was answered on its own first: " + string.Join(" | ", log));
+        Assert.That(asked[0], Does.Contain("Minecraft today").And.Contain("best thing to build first"));
+        Assert.That(log.Any(l => l.Contains("waiting 700 ms")), Is.True, "no wait for a statement");
+    }
+
+    [Test]
+    public async Task AQuestion_IsAnsweredAtOnce_WithNoWait()
+    {
+        var (companion, mic, body, log) = await NewRoomAsync();
+        await using var _ = companion;
+        mic.Hear("voice:Todd", "Todd", "Vertex, what is the capital of Italy?");
+        await Wait.UntilAsync(() => log.Any(l => l.StartsWith("> ")), TimeSpan.FromSeconds(5), () => "not started within 5 s: " + string.Join(" | ", log));
+        Assert.That(log.Any(l => l.Contains("a statement, not a question")), Is.False, "a question was made to wait");
+    }
 }

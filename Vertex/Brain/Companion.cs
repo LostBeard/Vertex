@@ -187,6 +187,9 @@ public sealed class Companion : IAsyncDisposable
         _events.Writer.TryWrite(e);
     }
 
+    /// <summary>How long a line that is not a question waits before it is answered, in case the person is still going.</summary>
+    public TimeSpan StatementGrace { get; set; } = TimeSpan.FromMilliseconds(700);
+
     /// <summary>Called by name, or told to stop or wait: worth cutting a friend's turn short for.</summary>
     private bool Interrupts(string text) => NamesVertex(" " + text.ToLowerInvariant() + " ") || Stops(text);
 
@@ -259,6 +262,17 @@ public sealed class Companion : IAsyncDisposable
             if (shows) Thinking?.Invoke(true);
             try
             {
+                // A statement is rarely all someone has to say ("We're gonna play Minecraft today." ... then what they actually want): wait a moment before starting on it,
+                // and if they carry on the answer is never begun (see Hear). A question is answered at once.
+                if (e is SaidEvent statement && statement.Voice && StatementGrace > TimeSpan.Zero && IsAddressed(statement)
+                    && !WakeWord.IsOnlyTheName(statement.Text, Character.Name) && TurnText.ExpectsMore(statement.Text, Character.Name))
+                {
+                    // The conversation is with this person from now on, so a continuation inside the wait is recognised as theirs.
+                    _lastPartner = statement.Speaker;
+                    _lastExchange = DateTime.UtcNow;
+                    Log?.Invoke($"  (a statement, not a question: waiting {StatementGrace.TotalMilliseconds:0} ms in case there is more)");
+                    await Task.Delay(StatementGrace, cts.Token);
+                }
                 await HandleAsync(e, clock, cts.Token);
             }
             catch (OperationCanceledException) when (ct.IsCancellationRequested) { return; }

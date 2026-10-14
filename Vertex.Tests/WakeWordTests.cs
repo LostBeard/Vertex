@@ -71,4 +71,17 @@ public class WakeWordTests
     [TestCase("Vertex please", false)]
     [TestCase("", false)]
     public void JustTheName_IsNotAQuestionYet(string said, bool onlyTheName) => Assert.That(WakeWord.IsOnlyTheName(said, "Vertex"), Is.EqualTo(onlyTheName), said);
+
+    [TestCase("We're gonna play Minecraft today.", true)]
+    [TestCase("Vertex, we're gonna play Minecraft today.", true)]
+    [TestCase("I built a house yesterday.", true)]
+    [TestCase("Hey Vertex, my dog pooped on the floor.", true)]
+    [TestCase("What's the best thing to build first?", false)]
+    [TestCase("Vertex, what's the best thing to build first?", false)]
+    [TestCase("Can you tell me what to build", false)]
+    [TestCase("Hi Vertex, tell me a story.", false)]
+    [TestCase("Come here.", false)]
+    [TestCase("Rutax, what is the capital of France", false)]
+    [TestCase("", false)]
+    public void AStatement_ExpectsMore_AQuestionOrARequest_DoesNot(string said, bool expectsMore) => Assert.That(TurnText.ExpectsMore(said, "Vertex"), Is.EqualTo(expectsMore), said);
 }
