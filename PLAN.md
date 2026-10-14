@@ -107,7 +107,7 @@ before it is a Vertex feature.
 - [x] Vertex on Parakeet (fp16 weights) + speaker model; Vertex GPU suite 35/35 on it. Open: speech-to-text time with the LLM generating (the 3.1 s Whisper
   figure was contention, not the model: measure Parakeet the same way)
 - [x] Vertex knows who is speaking on the robot's microphone: `SpeakerTracker` (guests, introductions as a learning window, never takes over a known voice,
-  continuity for clips too short to identify), tools `my_name_is` / `next_voice_is`, voices in %APPDATA%\Vertexoices.json. Tests: 7 tracker tests (each guard
+  continuity for clips too short to identify), tools `my_name_is` / `next_voice_is`, voices in %APPDATA%\Vertex\voices.json. Tests: 7 tracker tests (each guard
   red-checked) and a GPU test with 12 real clips of 3 speakers, all named correctly. Open: in-game proximity voice (Simple Voice Chat) identification, a live
   try on the robot with the family
 - [ ] A real bench: TJ's voice and the household through the robot's microphone, with reference text (WER) and labels (speaker ID)
