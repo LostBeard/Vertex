@@ -24,6 +24,8 @@ public sealed class VertexAi : IAsyncDisposable
     public AiVoiceEngine Voice { get; }
     /// <summary>Who is talking: voice embeddings and the voices Vertex has been introduced to.</summary>
     public AiSpeakerEngine Speakers { get; }
+    /// <summary>Has the speaker finished their turn: Smart Turn v3.2, which lets the microphone answer sooner on a finished sentence and wait on an unfinished one.</summary>
+    public AiTurnEngine Turns { get; }
     /// <summary>Where the introduced voices are kept between runs.</summary>
     public string VoicesFile { get; }
     public AiToolRegistry Tools { get; } = new();
@@ -81,6 +83,10 @@ public sealed class VertexAi : IAsyncDisposable
             Registry = LoadVoices(VoicesFile, log),
             OnLoadProgress = (stage, pct) => { if (pct % 50 == 0) Log?.Invoke($"speaker model {stage} {pct}%"); },
         };
+        Turns = new AiTurnEngine(modelSource, Accelerator)
+        {
+            OnLoadProgress = (stage, pct) => { if (pct % 50 == 0) Log?.Invoke($"turn model {stage} {pct}%"); },
+        };
     }
 
     private static SpeakerRegistry LoadVoices(string file, Action<string>? log)
@@ -129,6 +135,16 @@ public sealed class VertexAi : IAsyncDisposable
         return result;
     }
 
+    /// <summary>
+    /// P(the speaker has finished their turn) for the audio heard so far (16 kHz mono; the end is "now"), as urgent work on the GPU lane
+    /// like the transcription it gates.
+    /// </summary>
+    public async Task<float> PredictTurnEndAsync(float[] pcm16k, CancellationToken ct = default)
+    {
+        using (await Lane.EnterAsync(urgent: true, ct))
+            return await Turns.TurnCompleteAsync(pcm16k, 16000, ct);
+    }
+
     /// <summary>The fast command matcher (System One for speech), loaded on first use.</summary>
     public FastIntents? Intents { get; private set; }
 
@@ -152,6 +168,7 @@ public sealed class VertexAi : IAsyncDisposable
             var clock = System.Diagnostics.Stopwatch.StartNew();
             await Speech.EnsureReadyAsync(ct);
             await Speakers.EnsureReadyAsync(ct);
+            await Turns.EnsureReadyAsync(ct);
             var ears = clock.ElapsedMilliseconds;
             await Voice.SpeakWithVoiceAsync("Hello there.", voiceId, ct: ct);
             Log?.Invoke($"warmed up: speech to text {ears} ms, voice {clock.ElapsedMilliseconds - ears} ms");
@@ -213,6 +230,7 @@ public sealed class VertexAi : IAsyncDisposable
         Intents?.Dispose();
         Speech.Dispose();
         Speakers.Dispose();
+        Turns.Dispose();
         Voice.Dispose();
         await Registry.DisposeAsync();
         Accelerator.Dispose();

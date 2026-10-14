@@ -112,12 +112,14 @@ before it is a Vertex feature.
   red-checked) and a GPU test with 12 real clips of 3 speakers, all named correctly. Open: in-game proximity voice (Simple Voice Chat) identification, a live
   try on the robot with the family
 - [ ] A real bench: TJ's voice and the household through the robot's microphone, with reference text (WER) and labels (speaker ID)
-- [ ] End of turn: the VAD waits 500 ms of silence before anything is recognised (a fixed cost before STT starts). Smart Turn v3.2
-  (pipecat-ai/smart-turn-v3, open weights + data, 8M params, a Whisper-tiny encoder + classifier, ONNX, 12-70 ms on CPU) decides from the
-  audio whether the person is DONE: a short VAD pause (~200 ms) plus the model replaces the 500 ms wait. Measure turn-end -> reply start
-  VERIFIED 10-14: v3.2 is BSD-2; input `input_features [batch, 80, 800]` (Whisper log-mel of the LAST 8 s, 100 frames/s), output `logits [batch, 1]` (sigmoid =
-  turn complete); 210 nodes, every op (Conv, MatMul, LayerNormalization, Softmax, Erf, Gemm, Tanh) already in the engine. Missing piece: an 8 s variant of the GPU
-  log-mel (WhisperMelPreprocessor is fixed at 30 s / 3000 frames) - library work first. Files in D:/users/tj/Projects/_speech-research/smartturn
+- [x] End of turn (10-14): Smart Turn v3.2 (pipecat-ai, BSD-2) decides from the audio whether the speaker is DONE. Library: ILGPU.ML `SmartTurnPipeline` + the 8 s
+  mel (`WhisperMelPreprocessor(windowSamples, alignToEnd, normalizeWaveform)`; also fixed the Whisper mel's SYMMETRIC Hann window, periodic is the reference:
+  1.5e-7 vs 1.8e-2..4e-2 against the HF extractor, WER unchanged); AI `AiTurnEngine`; Vertex `TurnAssembler` (VAD closes a segment after 250 ms; the model
+  says finished -> out now, not finished -> held up to 1.2 s of SILENCE for the speaker to carry on, never losing speech if the model fails) wired into
+  `MicrophoneEars`, setting `ReachySmartTurn` (default on, a checkbox). MEASURED on an idle RTX 4070: model 6 ms median; last spoken sample -> transcript
+  median 490 ms (plain rule) vs 162 ms; a sentence with a 0.7 s pause stays ONE utterance (plain rule: two). Whole sentences judged finished 11/12, cut at
+  a pause judged unfinished 8/12 (12 LibriSpeech clips). 11 assembler tests (each guard red-checked). Open: the 1/12 misjudged whole sentence costs the full
+  1.2 s hold (a hold scaled by how unfinished the model thinks it is would cap that); calibrate threshold/hold on the household's real voices
 - [ ] The slow terms are LLM first word (1.2-2.2 s) and Kokoro first audio (1.9 s warm), not STT (170 ms): profile and fix them in ILGPU.ML
 - [ ] Streaming recognition (cache-aware Nemotron streaming FastConformer): text while the person is still talking, to cut time to first word
 - [ ] TTS: evaluate Qwen3-TTS, Chatterbox-Turbo, Supertonic, CosyVoice2 against Kokoro (quality, time to first audio, licence), streaming output

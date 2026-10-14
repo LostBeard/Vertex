@@ -69,6 +69,8 @@ public sealed class ReachyChannel : IVoiceChannel
 
     public ReachyMiniClient Robot => _robot;
 
+    private bool _smartTurn = true;
+
     private ReachyChannel(string host, VertexAi ai)
     {
         _robot = new ReachyMiniClient(host);
@@ -78,9 +80,10 @@ public sealed class ReachyChannel : IVoiceChannel
     }
 
     /// <summary>Connects the robot's microphone and loads the voice activity detector.</summary>
-    public static async Task<ReachyChannel> ConnectAsync(string host, VertexAi ai, CancellationToken ct = default)
+    /// <param name="smartTurn">Ask the end-of-turn model whether a pause is the end of what someone is saying (see <see cref="TurnAssembler"/>), instead of always waiting half a second.</param>
+    public static async Task<ReachyChannel> ConnectAsync(string host, VertexAi ai, bool smartTurn = true, CancellationToken ct = default)
     {
-        var channel = new ReachyChannel(host, ai);
+        var channel = new ReachyChannel(host, ai) { _smartTurn = smartTurn };
         try
         {
             await channel.StartAsync(ct);
@@ -95,7 +98,7 @@ public sealed class ReachyChannel : IVoiceChannel
 
     private async Task StartAsync(CancellationToken ct)
     {
-        _ears = await MicrophoneEars.CreateAsync(_ai, ct: ct);
+        _ears = await MicrophoneEars.CreateAsync(_ai, smartTurn: _smartTurn, ct: ct);
         _ears.Log += m => Log?.Invoke("[ears] " + m);
         _ears.Heard += h =>
         {

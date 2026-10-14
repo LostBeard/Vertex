@@ -35,6 +35,11 @@ public sealed class VertexSettings
     /// </summary>
     public bool ReachyRecognizeVoices { get; set; } = true;
     /// <summary>
+    /// Decide whether a pause is the end of someone's turn by listening to HOW they said it (Smart Turn), instead of always waiting half a second:
+    /// a finished sentence is answered sooner, "I would like... um" is waited on. Off: the plain half-second silence rule.
+    /// </summary>
+    public bool ReachySmartTurn { get; set; } = true;
+    /// <summary>
     /// Keep every utterance the robot hears (the audio, the words Vertex heard, who it sounded like) in the data folder's "heard"
     /// folder, to measure and improve listening on this household's own voices. Off by default; never uploaded anywhere.
     /// </summary>
@@ -336,7 +341,7 @@ public sealed class VertexHost : IAsyncDisposable
         SetStatus(HostState.Starting, $"Connecting to the robot ({Settings.ReachyHost})...");
         try
         {
-            _reachy = await ReachyChannel.ConnectAsync(Settings.ReachyHost, _ai!);
+            _reachy = await ReachyChannel.ConnectAsync(Settings.ReachyHost, _ai!, Settings.ReachySmartTurn);
             if (!string.IsNullOrWhiteSpace(Settings.ReachySpeaker)) _reachy.RoomSpeakerName = Settings.ReachySpeaker.Trim();
             _reachy.AnswersEverything = Settings.ReachyAnswersEverything;
             _reachy.IdentifySpeakers = Settings.ReachyRecognizeVoices;

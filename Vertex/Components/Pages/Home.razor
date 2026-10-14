@@ -38,6 +38,7 @@
             <input @bind="Host.Settings.ReachySpeaker" disabled="@Host.RobotConnected" placeholder="e.g. Aubri" />
             <label><input type="checkbox" style="width:auto" @bind="Host.Settings.ReachyAnswersEverything" disabled="@Host.RobotConnected" /> Answer everything said near the robot (off: say "Vertex" to start talking)</label>
             <label><input type="checkbox" style="width:auto" @bind="Host.Settings.ReachyRecognizeVoices" disabled="@Host.RobotConnected" /> Tell people apart by their voice (people Vertex has been introduced to are called by name; strangers are "Guest 1", "Guest 2")</label>
+            <label><input type="checkbox" style="width:auto" @bind="Host.Settings.ReachySmartTurn" disabled="@Host.RobotConnected" /> Know when I have finished talking (answers a finished sentence sooner and waits while I am still thinking; off: always waits half a second)</label>
             <label><input type="checkbox" style="width:auto" @bind="Host.Settings.ReachySaveHeard" disabled="@Host.RobotConnected" /> Keep what the robot hears (audio, words, who) in <code>@Host.HeardFolder</code> to measure listening on this household's voices. Stays on this PC.</label>
             @if (Host.State == HostState.Playing)
             {
