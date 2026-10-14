@@ -34,8 +34,9 @@ public sealed class VertexAi : IAsyncDisposable
     /// <summary>Speech to text: NVIDIA Parakeet TDT 0.6B v3 (the istupakov ONNX export, from the hub).</summary>
     /// <remarks>
     /// MEASURED on LibriSpeech test-clean (60 utterances, RTX 4070, idle): 3.75% word error rate at 168 ms median, against
-    /// Whisper tiny's 11.53% at 177 ms (which this replaced; Whisper tiny is what mangled names). fp16 weights: the same
-    /// 3.75% at 162 ms and half the memory, which matters here: the language model, Kokoro and the sentence encoder share
+    /// Whisper tiny's 11.53% at 177 ms (which this replaced; Whisper tiny is what mangled names). fp16-stored weights (needs
+    /// SpawnDev.ILGPU.ML 5.3.9-local.2: before it the opt-in silently did nothing for this model): the same 3.75% at 197 ms
+    /// against 163 ms, and 2,012 MiB loaded against 3,012 MiB - a GB back, which matters here: the language model, Kokoro and the sentence encoder share
     /// the card (a first live session spilled to system RAM and took 5.5 minutes to answer).
     /// </remarks>
     public const string SpeechRepo = "istupakov/parakeet-tdt-0.6b-v3-onnx";

@@ -98,7 +98,8 @@ before it is a Vertex feature.
 - [x] `SpeakerEmbeddingPipeline` (ReDimNet2-B6). MEASURED (40 speakers): closed-set 99.2%, EER 1.21%, open-set 98.9% recognised / 0.0% wrong name
 - [x] Parakeet and speaker pipelines: regression tests in PlaywrightMultiTest (ML 9133f6da: CUDA/OpenCL, real clips, onnxruntime reference). Open: the
   int8 Parakeet export crashes the encoder with a CUDA illegal memory access (Slice node 182, `encoder-model.int8.onnx`) - a library bug to fix; fp16
-  weights measured: the SAME 3.75% WER at 162 ms with half the memory (Vertex uses them). Browser feasibility (WebGPU, 1.2 GB fp16 / 652 MB int8) not yet measured
+  weights (honoured only since ML 5.3.9-local.2; before, the opt-in did nothing for external-data models): the SAME 3.75% WER, 197 ms vs 163 ms, 2,012 vs 3,012 MiB loaded (Vertex uses them).
+  int8 (ConvInteger fixed in ML): 3.75%, 222 ms, 3.6 GB loaded, but a 652 MB download vs 2.4 GB. Browser feasibility (WebGPU, 1.2 GB fp16 / 652 MB int8) not yet measured
 - [x] Speaker embedding speed and parity: 1,114 ms -> 64 ms (GroupNorm was 91%: two-pass kernel; a small-constant broadcast Add expanded on the host) and
   cosine 1.000000 vs onnxruntime (FusedAttention register path was wrong for head dim 48). Further: Conv is now 57% of the 71 ms
 - [ ] Parakeet speed: encoder + decode overheads (22 joint steps of ~3.4 ms each), int8 / fp16-weight variants measured for accuracy and speed
