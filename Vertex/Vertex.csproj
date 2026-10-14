@@ -8,10 +8,11 @@
 		<Description>Vertex: an AI that plays Minecraft with you.</Description>
 	</PropertyGroup>
 	<ItemGroup>
-		<!-- 1.1.2-local.1 (local feed, 2026-10-12): tool definitions without unicode escapes; on SpawnDev.ILGPU.ML
-		     5.3.7-local.5 (GPU memory reclaimed before the driver spills, outputs that do not leak, interrupted
-		     replies that do not poison the next one). nuget.org release pending TJ's sign-off. -->
-		<PackageReference Include="SpawnDev.AI.Server" Version="1.1.2" />
+		<!-- 1.2.0-local.2 (local feed, 2026-10-14): Parakeet TDT speech to text and speaker identification (AiSpeakerEngine,
+		     SpeakerRegistry), on SpawnDev.ILGPU.ML 5.3.9-local.1 (seven library fixes, ML 68104dbb / 9133f6da). Before that:
+		     1.1.2 on ML 5.3.7 (GPU memory reclaimed before the driver spills, outputs that do not leak, interrupted replies that
+		     do not poison the next one). nuget.org release pending TJ's sign-off. -->
+		<PackageReference Include="SpawnDev.AI.Server" Version="1.2.0-local.2" />
 		<!-- The Reachy Mini (Vertex's body out of the game): daemon REST API + WebRTC microphone. -->
 		<PackageReference Include="SpawnDev.Reachy" Version="0.1.0-preview.4" />
 	</ItemGroup>

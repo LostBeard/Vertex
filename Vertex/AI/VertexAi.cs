@@ -22,12 +22,25 @@ public sealed class VertexAi : IAsyncDisposable
     public AiChatEngine Chat { get; }
     public AiSpeechEngine Speech { get; }
     public AiVoiceEngine Voice { get; }
+    /// <summary>Who is talking: voice embeddings and the voices Vertex has been introduced to.</summary>
+    public AiSpeakerEngine Speakers { get; }
+    /// <summary>Where the introduced voices are kept between runs.</summary>
+    public string VoicesFile { get; }
     public AiToolRegistry Tools { get; } = new();
     public Action<string>? Log { get; set; }
     /// <summary>Every model call goes through here, one at a time (see <see cref="GpuLane"/>).</summary>
     public GpuLane Lane { get; } = new();
 
-    public VertexAi(Action<string>? log = null)
+    /// <summary>Speech to text: NVIDIA Parakeet TDT 0.6B v3 (the istupakov ONNX export, from the hub).</summary>
+    /// <remarks>
+    /// MEASURED on LibriSpeech test-clean (60 utterances, RTX 4070, idle): 3.75% word error rate at 168 ms median, against
+    /// Whisper tiny's 11.53% at 177 ms (which this replaced; Whisper tiny is what mangled names). fp16 weights: the same
+    /// 3.75% at 162 ms and half the memory, which matters here: the language model, Kokoro and the sentence encoder share
+    /// the card (a first live session spilled to system RAM and took 5.5 minutes to answer).
+    /// </remarks>
+    public const string SpeechRepo = "istupakov/parakeet-tdt-0.6b-v3-onnx";
+
+    public VertexAi(Action<string>? log = null, string? voicesFile = null)
     {
         Log = log;
         _context = SpawnDev.ILGPU.ML.MLContext.Create().ToContext();
@@ -51,12 +64,68 @@ public sealed class VertexAi : IAsyncDisposable
         };
         Speech = new AiSpeechEngine(modelSource, _http, Accelerator)
         {
+            ModelRepo = SpeechRepo,
+            ModelName = "parakeet-tdt-0.6b-v3",
+            Family = SpeechModelFamily.ParakeetTdt,
+            HalfWeights = true,
             OnLoadProgress = (stage, pct) => { if (pct % 50 == 0) Log?.Invoke($"speech model {stage} {pct}%"); },
         };
         Voice = new AiVoiceEngine(modelSource, _http, Accelerator)
         {
             OnLoadProgress = (stage, pct) => { if (pct % 50 == 0) Log?.Invoke($"voice model {stage} {pct}%"); },
         };
+        VoicesFile = voicesFile ?? Path.Combine(Vertex.Host.VertexSettings.DefaultFolder, "voices.json");
+        Speakers = new AiSpeakerEngine(modelSource, Accelerator)
+        {
+            Registry = LoadVoices(VoicesFile, log),
+            OnLoadProgress = (stage, pct) => { if (pct % 50 == 0) Log?.Invoke($"speaker model {stage} {pct}%"); },
+        };
+    }
+
+    private static SpeakerRegistry LoadVoices(string file, Action<string>? log)
+    {
+        try
+        {
+            if (File.Exists(file))
+            {
+                var registry = SpeakerRegistry.FromJson(File.ReadAllText(file));
+                log?.Invoke($"voices: {registry.Profiles.Count} known ({string.Join(", ", registry.Profiles.Select(p => p.Name))})");
+                return registry;
+            }
+        }
+        catch (Exception e) { log?.Invoke($"voices: could not read {file} ({e.Message}); starting with none"); }
+        return new SpeakerRegistry();
+    }
+
+    private readonly object _voicesLock = new();
+
+    /// <summary>Writes the introduced voices (a temp file, then a replace: a crash never leaves half a file).</summary>
+    public void SaveVoices()
+    {
+        lock (_voicesLock)
+        {
+            try
+            {
+                Directory.CreateDirectory(Path.GetDirectoryName(VoicesFile)!);
+                var tmp = VoicesFile + ".tmp";
+                File.WriteAllText(tmp, Speakers.Registry.ToJson());
+                File.Move(tmp, VoicesFile, overwrite: true);
+            }
+            catch (Exception e) { Log?.Invoke($"voices: could not save ({e.Message})"); }
+        }
+    }
+
+    /// <summary>
+    /// Who this speech sounds like (an enrolled person, else a provisional guest), on the GPU lane as urgent work like the
+    /// transcription it accompanies. Saves the voices when a guest was created or grew.
+    /// </summary>
+    public async Task<AiSpeakerResult> ObserveSpeakerAsync(float[] pcm16k, CancellationToken ct = default)
+    {
+        AiSpeakerResult result;
+        using (await Lane.EnterAsync(urgent: true, ct))
+            result = await Speakers.ObserveAsync(pcm16k, 16000, ct);
+        if (result.Guest != null) SaveVoices();
+        return result;
     }
 
     /// <summary>The fast command matcher (System One for speech), loaded on first use.</summary>
@@ -81,6 +150,7 @@ public sealed class VertexAi : IAsyncDisposable
         {
             var clock = System.Diagnostics.Stopwatch.StartNew();
             await Speech.EnsureReadyAsync(ct);
+            await Speakers.EnsureReadyAsync(ct);
             var ears = clock.ElapsedMilliseconds;
             await Voice.SpeakWithVoiceAsync("Hello there.", voiceId, ct: ct);
             Log?.Invoke($"warmed up: speech to text {ears} ms, voice {clock.ElapsedMilliseconds - ears} ms");
@@ -141,6 +211,7 @@ public sealed class VertexAi : IAsyncDisposable
     {
         Intents?.Dispose();
         Speech.Dispose();
+        Speakers.Dispose();
         Voice.Dispose();
         await Registry.DisposeAsync();
         Accelerator.Dispose();

@@ -23,7 +23,7 @@ public class SpeechTests
     private VertexAi _ai = null!;
 
     [OneTimeSetUp]
-    public void CreateAi() => _ai = new VertexAi(m => TestContext.Progress.WriteLine("[ai] " + m));
+    public void CreateAi() => _ai = TestAi.Create();
 
     [OneTimeTearDown]
     public async Task DisposeAi()

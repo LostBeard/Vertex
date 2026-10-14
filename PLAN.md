@@ -88,6 +88,37 @@ SpawnDev.ILGPU.ML), so that 1 s is the bar our libraries have to meet. Library d
   model several times faster on the same card)
 - [ ] Target: about 1 s from the end of a question to the start of the spoken answer (Rose's measured number)
 
+## M14 - Speech stack (TJ 10-14: shared with the SpawnDev.AI demo and future work; ranks above the game)
+Speech-to-speech quality, responsiveness, competency and SPEAKER IDENTIFICATION come first; Minecraft is second. Research and
+numbers: memory `proj-speech-stack-research-2026-10-14`. Everything here is a LIBRARY (ILGPU.ML pipeline, then SpawnDev.AI engine)
+before it is a Vertex feature.
+- [x] Research the 2026 state of the art online (ASR, speaker embeddings, full-duplex, TTS); Parakeet TDT and ReDimNet2 chosen to measure
+- [x] `ParakeetTdtPipeline` (ILGPU.ML; managed / TypedArray / device overloads; GPU resident; parity with onnxruntime). MEASURED on LibriSpeech
+  (60 utts): WER 3.75% vs Whisper tiny 11.53%, base.en 7.51%, small.en 7.51%; median 168 ms vs 177 / 260 / 633 ms on an idle GPU
+- [x] `SpeakerEmbeddingPipeline` (ReDimNet2-B6). MEASURED (40 speakers): closed-set 99.2%, EER 1.21%, open-set 98.9% recognised / 0.0% wrong name
+- [x] Parakeet and speaker pipelines: regression tests in PlaywrightMultiTest (ML 9133f6da: CUDA/OpenCL, real clips, onnxruntime reference). Open: the
+  int8 Parakeet export crashes the encoder with a CUDA illegal memory access (Slice node 182, `encoder-model.int8.onnx`) - a library bug to fix; fp16
+  weights measured: the SAME 3.75% WER at 162 ms with half the memory (Vertex uses them). Browser feasibility (WebGPU, 1.2 GB fp16 / 652 MB int8) not yet measured
+- [x] Speaker embedding speed and parity: 1,114 ms -> 64 ms (GroupNorm was 91%: two-pass kernel; a small-constant broadcast Add expanded on the host) and
+  cosine 1.000000 vs onnxruntime (FusedAttention register path was wrong for head dim 48). Further: Conv is now 57% of the 71 ms
+- [ ] Parakeet speed: encoder + decode overheads (22 joint steps of ~3.4 ms each), int8 / fp16-weight variants measured for accuracy and speed
+- [x] SpawnDev.AI 1.2.0-local.2: `AiSpeechEngine` model family (Parakeet), `AiSpeakerEngine`, `SpeakerRegistry` (5 tests on real embeddings). NOT released: the
+  chain ML -> AI -> Vertex needs TJ's sign-off, the full ML PMT, a CHANGELOG entry and a source push first
+- [x] Vertex on Parakeet (fp16 weights) + speaker model; Vertex GPU suite 35/35 on it. Open: speech-to-text time with the LLM generating (the 3.1 s Whisper
+  figure was contention, not the model: measure Parakeet the same way)
+- [x] Vertex knows who is speaking on the robot's microphone: `SpeakerTracker` (guests, introductions as a learning window, never takes over a known voice,
+  continuity for clips too short to identify), tools `my_name_is` / `next_voice_is`, voices in %APPDATA%\Vertexoices.json. Tests: 7 tracker tests (each guard
+  red-checked) and a GPU test with 12 real clips of 3 speakers, all named correctly. Open: in-game proximity voice (Simple Voice Chat) identification, a live
+  try on the robot with the family
+- [ ] A real bench: TJ's voice and the household through the robot's microphone, with reference text (WER) and labels (speaker ID)
+- [ ] End of turn: the VAD waits 500 ms of silence before anything is recognised (a fixed cost before STT starts). Smart Turn v3.2
+  (pipecat-ai/smart-turn-v3, open weights + data, 8M params, a Whisper-tiny encoder + classifier, ONNX, 12-70 ms on CPU) decides from the
+  audio whether the person is DONE: a short VAD pause (~200 ms) plus the model replaces the 500 ms wait. Measure turn-end -> reply start
+- [ ] The slow terms are LLM first word (1.2-2.2 s) and Kokoro first audio (1.9 s warm), not STT (170 ms): profile and fix them in ILGPU.ML
+- [ ] Streaming recognition (cache-aware Nemotron streaming FastConformer): text while the person is still talking, to cut time to first word
+- [ ] TTS: evaluate Qwen3-TTS, Chatterbox-Turbo, Supertonic, CosyVoice2 against Kokoro (quality, time to first audio, licence), streaming output
+- [ ] Barge-in and echo with a live robot (its own AEC alone is untested)
+
 ## M10 - Vertex without Minecraft
 - [x] Split the brain: a companion core (conversation, characters, memory, ears, mouth, per-person memory) that
   runs with no game; Minecraft becomes one world it can join, plugging in its tools, skills and reflexes while

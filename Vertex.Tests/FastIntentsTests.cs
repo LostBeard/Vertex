@@ -17,7 +17,7 @@ public class FastIntentsTests
     [OneTimeSetUp]
     public async Task Load()
     {
-        _ai = new VertexAi(m => TestContext.Progress.WriteLine("[ai] " + m));
+        _ai = TestAi.Create();
         _intents = await _ai.LoadIntentsAsync();
     }
 

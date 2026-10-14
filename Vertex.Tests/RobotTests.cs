@@ -24,7 +24,7 @@ public class RobotTests
     [Test]
     public async Task WakesSpeaksAndParks()
     {
-        await using var ai = new VertexAi(m => TestContext.Progress.WriteLine("[ai] " + m));
+        await using var ai = TestAi.Create();
         var models = await ai.ModelNamesAsync();
         var model = models.FirstOrDefault(m => m.StartsWith("llama3.1")) ?? throw new AssertionException("llama3.1 not in the Ollama cache");
         await ai.EnsureChatReadyAsync(model);

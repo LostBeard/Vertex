@@ -28,7 +28,7 @@ public class AiSessionTests
     [Test]
     public async Task ALongConversation_StaysInGpuMemory_AndLateTurnsAreAsFastAsEarlyOnes()
     {
-        await using var ai = new VertexAi(m => TestContext.Progress.WriteLine("[ai] " + m));
+        await using var ai = TestAi.Create();
         if (!ai.Accelerator.TryGetFreeMemory(out var freeAtStart))
             Assert.Ignore($"{ai.Accelerator.AcceleratorType} cannot report free device memory");
         var models = await ai.ModelNamesAsync();

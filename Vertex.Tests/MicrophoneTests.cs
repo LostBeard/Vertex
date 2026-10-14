@@ -30,12 +30,12 @@ public class MicrophoneTests
     [Test]
     public async Task AnOpenMicrophone_HearsWhereALineEnds_AndTranscribesIt()
     {
-        await using var ai = new VertexAi(m => TestContext.Progress.WriteLine("[ai] " + m));
+        await using var ai = TestAi.Create();
         await ai.WarmUpAsync("kokoro:af_heart");
         await using var ears = await MicrophoneEars.CreateAsync(ai);
         ears.Log += m => TestContext.Out.WriteLine(m);
         var heard = new ConcurrentQueue<(string Text, double SttMs)>();
-        ears.Heard += (text, seconds, ended, sttMs) => heard.Enqueue((text, sttMs));
+        ears.Heard += h => heard.Enqueue((h.Text, h.SttMs));
 
         var (speech, _) = await ai.SpeakAsync("Vertex, can you build us a house by the river?", "kokoro:am_michael");
         FeedLikeAMicrophone(ears, To16k(speech));
@@ -75,7 +75,7 @@ public class MicrophoneTests
     [Test]
     public async Task AllModelsUnderMemoryPressure_StayHealthy()
     {
-        await using var ai = new VertexAi(m => TestContext.Progress.WriteLine("[ai] " + m));
+        await using var ai = TestAi.Create();
         var models = await ai.ModelNamesAsync();
         var model = models.FirstOrDefault(m => m.StartsWith("llama3.1")) ?? throw new AssertionException("llama3.1 not in the Ollama cache");
         await ai.EnsureChatReadyAsync(model);
@@ -111,7 +111,7 @@ public class MicrophoneTests
     [Test]
     public async Task ClosingTheEarsMidTranscription_LeavesTheGpuHealthy()
     {
-        await using var ai = new VertexAi(m => TestContext.Progress.WriteLine("[ai] " + m));
+        await using var ai = TestAi.Create();
         await ai.WarmUpAsync("kokoro:af_heart");
         var (speech, _) = await ai.SpeakAsync("Vertex, can you build us a house by the river?", "kokoro:am_michael");
         for (var round = 0; round < 5; round++)

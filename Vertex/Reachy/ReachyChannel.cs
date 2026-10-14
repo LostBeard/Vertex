@@ -21,6 +21,7 @@ public sealed class ReachyChannel : IVoiceChannel
     private readonly ReachyMiniClient _robot;
     private readonly RoseAudioLink _link;
     private readonly VertexAi _ai;
+    private readonly SpeakerTracker _speakers;
     private MicrophoneEars? _ears;
     private int _clip;
 
@@ -37,8 +38,24 @@ public sealed class ReachyChannel : IVoiceChannel
     public event Action<bool>? Playing;
     /// <summary>Lift the head clear of the chest speaker before speaking (Rose's recipe).</summary>
     public bool LiftHeadToSpeak { get; set; } = true;
-    /// <summary>Who the room microphone is heard as, until speakers can be told apart.</summary>
+    /// <summary>Who a voice nobody has been introduced to is called ("someone in the room").</summary>
     public string RoomSpeakerName { get; set; } = "someone in the room";
+
+    /// <summary>Whether each utterance is matched to a voice. On by default: the voices Vertex has been introduced to are named.</summary>
+    public bool IdentifySpeakers
+    {
+        get => _ears?.IdentifySpeakers ?? true;
+        set { if (_ears != null) _ears.IdentifySpeakers = value; }
+    }
+
+    /// <summary>The voice tracker: who is talking, introductions, the people Vertex knows.</summary>
+    public SpeakerTracker Speakers => _speakers;
+
+    /// <summary>"I'm Nikki": the voice that just spoke is learned as that name from what it says next. Returns what to tell the model.</summary>
+    public string IntroduceSpeaker(string name) => _speakers.BeginIntroduction(name, forNextVoice: false, Environment.TickCount64);
+
+    /// <summary>"This is Nikki" about someone who has not spoken yet: the next voice nobody knows is learned as that name.</summary>
+    public string IntroduceNextVoice(string name) => _speakers.BeginIntroduction(name, forNextVoice: true, Environment.TickCount64);
 
     public event Action<HeardLine>? Heard;
     public event Action<string>? Log;
@@ -50,6 +67,7 @@ public sealed class ReachyChannel : IVoiceChannel
         _robot = new ReachyMiniClient(host);
         _link = new RoseAudioLink(host);
         _ai = ai;
+        _speakers = new SpeakerTracker(ai.Speakers.Registry, changed: ai.SaveVoices, log: m => Log?.Invoke("[voice] " + m));
     }
 
     /// <summary>Connects the robot's microphone and loads the voice activity detector.</summary>
@@ -72,8 +90,14 @@ public sealed class ReachyChannel : IVoiceChannel
     {
         _ears = await MicrophoneEars.CreateAsync(_ai, ct: ct);
         _ears.Log += m => Log?.Invoke("[ears] " + m);
-        _ears.Heard += (text, seconds, ended, sttMs) =>
-            Heard?.Invoke(new HeardLine(this, "room", RoomSpeakerName, text, true, ended, sttMs));
+        _ears.Heard += h =>
+        {
+            _speakers.Unknown = RoomSpeakerName;
+            // Who sounds like they said it: an introduced person, a provisional guest, or (for a clip too short to tell, and with
+            // nobody before it) the room. The key is stable per person, so what Vertex remembers about them follows them.
+            var who = _speakers.Resolve(h.Speaker, h.EndedTick);
+            Heard?.Invoke(new HeardLine(this, who.Key, who.Name, h.Text, true, h.EndedTick, h.SttMs));
+        };
         _link.Log += m => Log?.Invoke("[link] " + m);
         // Subscribed BEFORE connecting: RoseAudioLink only starts its PCM capture when OnMicAudio has a handler.
         _link.OnMicAudio += pcm => _ears.Feed(pcm);

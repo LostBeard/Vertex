@@ -26,7 +26,7 @@ public class BrainTests
         _server = await PaperServer.StartAsync("brain", Port, TimeSpan.FromMinutes(4), new Dictionary<string, string> { ["difficulty"] = "peaceful" });
         await _server.CommandAsync("gamerule doMobSpawning false");
         await _server.CommandAsync("time set day");
-        _ai = new VertexAi(m => TestContext.Progress.WriteLine("[ai] " + m));
+        _ai = TestAi.Create();
         var models = await _ai.ModelNamesAsync();
         var model = models.FirstOrDefault(m => m.StartsWith("llama3.1"));
         if (model == null) Assert.Fail("llama3.1 not in the Ollama cache: " + string.Join(", ", models));

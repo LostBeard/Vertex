@@ -191,7 +191,7 @@ public sealed class VertexHost : IAsyncDisposable
     public async Task EnsureAiAsync()
     {
         if (_ai != null) return;
-        _ai = new VertexAi(m => Add(LineKind.System, m));
+        _ai = new VertexAi(m => Add(LineKind.System, m), System.IO.Path.Combine(_dataFolder, "voices.json"));
         Models = await _ai.ModelNamesAsync();
         if (string.IsNullOrEmpty(Settings.Model) || !Models.Contains(Settings.Model))
             Settings.Model = Models.FirstOrDefault(m => m.StartsWith("llama3.1")) ?? Models.FirstOrDefault() ?? "";

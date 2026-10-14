@@ -1,7 +1,16 @@
 using System.Threading.Channels;
+using SpawnDev.AI.Server;
 using SpawnDev.ILGPU.ML.Pipelines;
 
 namespace Vertex.AI;
+
+/// <summary>An utterance heard on an open microphone: what was said and, when identification is on, who sounds like they said it.</summary>
+/// <param name="Text">The transcript.</param>
+/// <param name="Seconds">How much speech it was.</param>
+/// <param name="EndedTick">When it ended (<see cref="Environment.TickCount64"/>).</param>
+/// <param name="SttMs">Speech to text time.</param>
+/// <param name="Speaker">The voice, or null when identification is off or failed (the transcript never waits on it failing).</param>
+public sealed record HeardUtterance(string Text, double Seconds, long EndedTick, double SttMs, AiSpeakerResult? Speaker);
 
 /// <summary>
 /// An open microphone (the Reachy Mini's array, a PC microphone) turned into lines of text: 16 kHz audio in any chunk
@@ -24,8 +33,11 @@ public sealed class MicrophoneEars : IAsyncDisposable
     /// <summary>Ears closed (while Vertex talks): audio is dropped, not queued.</summary>
     public bool Muted { get; set; }
 
-    /// <summary>A finished utterance, transcribed: (text, seconds of speech, end tick, speech to text ms).</summary>
-    public event Action<string, double, long, double>? Heard;
+    /// <summary>Whether each utterance is also matched to a voice (Vertex's introduced people, else a provisional guest).</summary>
+    public bool IdentifySpeakers { get; set; } = true;
+
+    /// <summary>A finished utterance, transcribed, and (when <see cref="IdentifySpeakers"/>) whose voice it was.</summary>
+    public event Action<HeardUtterance>? Heard;
     public event Action<string>? Log;
 
     private MicrophoneEars(VertexAi ai, VoiceActivityDetector vad)
@@ -85,8 +97,16 @@ public sealed class MicrophoneEars : IAsyncDisposable
                 var text = await _ai.TranscribeAsync(segment.Samples, _cts.Token);
                 stt.Stop();
                 if (string.IsNullOrWhiteSpace(text) || Ears.IsNoise(text)) return;
-                Log?.Invoke($"heard: \"{text}\" ({segment.DurationSeconds:0.0} s, text in {stt.ElapsedMilliseconds} ms)");
-                Heard?.Invoke(text, segment.DurationSeconds, ended, stt.Elapsed.TotalMilliseconds);
+                AiSpeakerResult? speaker = null;
+                if (IdentifySpeakers)
+                {
+                    // A voice that cannot be identified is not a reason to lose the words: the transcript goes out either way.
+                    try { speaker = await _ai.ObserveSpeakerAsync(segment.Samples, _cts.Token); }
+                    catch (OperationCanceledException) { throw; }
+                    catch (Exception e) { Log?.Invoke("speaker identification failed: " + e.Message); }
+                }
+                Log?.Invoke($"heard{(speaker?.Name is { } who ? " (" + who + (speaker.Reliable ? "" : ", short") + ")" : "")}: \"{text}\" ({segment.DurationSeconds:0.0} s, text in {stt.ElapsedMilliseconds} ms{(speaker != null ? ", voice in " + speaker.EmbedMs.ToString("0") + " ms" : "")})");
+                Heard?.Invoke(new HeardUtterance(text, segment.DurationSeconds, ended, stt.Elapsed.TotalMilliseconds, speaker));
             }
             catch (OperationCanceledException) { }
             catch (Exception e) { Log?.Invoke("transcription failed: " + e.Message); }

@@ -32,9 +32,12 @@ public sealed class RobotBody : IBody
     public IReadOnlyList<string> Rules { get; } =
     [
         "You may show a feeling with a very short stage direction in asterisks, such as *antennas perk up* or *tilts head*. Your robot body acts it out; it is never read out loud.",
+        "You tell people apart by their voice. When someone tells you their name (\"I'm Nikki\"), call my_name_is so you know that voice next time; when someone introduces a person who has not spoken yet (\"this is Nikki\"), call next_voice_is.",
     ];
 
-    public IReadOnlyList<IAiTool> Tools { get; } = [];
+    private const string NameSchema = "{\"type\":\"object\",\"properties\":{\"name\":{\"type\":\"string\",\"description\":\"the person's first name\"}},\"required\":[\"name\"]}";
+
+    public IReadOnlyList<IAiTool> Tools { get; }
 
     public event Action<string>? Log;
 
@@ -42,6 +45,15 @@ public sealed class RobotBody : IBody
     {
         _channel = channel;
         _companion = companion;
+        Tools =
+        [
+            new GameTool("my_name_is",
+                "The person talking to you just told you their name (\"I'm Nikki\", \"call me Nikki\"). Call this so you learn their voice and know them next time. Only for the name of the person who is speaking.",
+                NameSchema, a => Task.FromResult(_channel.IntroduceSpeaker(a.TryGetProperty("name", out var n) ? n.GetString() ?? "" : ""))) { OnRun = m => Log?.Invoke(m) },
+            new GameTool("next_voice_is",
+                "Someone introduced a person who has not spoken yet (\"this is Nikki\", \"say hi to Aubs\"). Call this so the next new voice you hear is learned as that name.",
+                NameSchema, a => Task.FromResult(_channel.IntroduceNextVoice(a.TryGetProperty("name", out var n) ? n.GetString() ?? "" : ""))) { OnRun = m => Log?.Invoke(m) },
+        ];
         _body = new ReachyBody(channel.Robot);
         _body.Log += m => Log?.Invoke("[body] " + m);
         _presence = new ReachyPresence(_body, _style);

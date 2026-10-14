@@ -71,7 +71,7 @@ public class CompanionTests
     [OneTimeSetUp]
     public async Task Start()
     {
-        _ai = new VertexAi(m => TestContext.Progress.WriteLine("[ai] " + m));
+        _ai = TestAi.Create();
         var models = await _ai.ModelNamesAsync();
         var model = models.FirstOrDefault(m => m.StartsWith("llama3.1"));
         if (model == null) Assert.Fail("llama3.1 not in the Ollama cache: " + string.Join(", ", models));
