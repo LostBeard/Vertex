@@ -30,6 +30,7 @@ public sealed class MicrophoneEars : IAsyncDisposable
     private readonly VoiceActivityDetector _vad;
     private readonly TurnAssembler? _turns;
     private readonly Task _pump;
+    private LiveWords? _live;
     private int _pendingTranscriptions;
 
     private volatile bool _muted;
@@ -47,7 +48,7 @@ public sealed class MicrophoneEars : IAsyncDisposable
         set
         {
             if (_muted && !value) _reopenedTick = Environment.TickCount64;
-            if (value && !_muted) Interlocked.Exchange(ref _muteAt, Interlocked.Read(ref _fed));
+            if (value && !_muted) { Interlocked.Exchange(ref _muteAt, Interlocked.Read(ref _fed)); _live?.EndTurn(); }
             if (!value) Interlocked.Exchange(ref _muteAt, long.MaxValue);
             _muted = value;
         }
@@ -65,6 +66,12 @@ public sealed class MicrophoneEars : IAsyncDisposable
 
     /// <summary>The name that calls Vertex, to recognise when the sound gate was unsure whether a sound was someone calling.</summary>
     public string WakeName { get; set; } = "Vertex";
+
+    /// <summary>
+    /// The words of the utterance in progress, as they are said (text so far, and whether the utterance is over): streaming speech to text, only when the ears were
+    /// created with live words. The finished utterance's text still comes from <see cref="Heard"/> (a more accurate recogniser).
+    /// </summary>
+    public event Action<string, bool>? Hearing;
 
     /// <summary>A finished utterance, transcribed, and (when <see cref="IdentifySpeakers"/>) whose voice it was.</summary>
     public event Action<HeardUtterance>? Heard;
@@ -94,14 +101,21 @@ public sealed class MicrophoneEars : IAsyncDisposable
     /// Ask Smart Turn whether each pause is the end of a turn (see <see cref="TurnAssembler"/>) instead of always waiting half a second. The VAD then closes
     /// segments after <see cref="SmartTurnSilence"/> unless <paramref name="options"/> says otherwise.
     /// </param>
-    public static async Task<MicrophoneEars> CreateAsync(VertexAi ai, VadOptions? options = null, bool smartTurn = true, CancellationToken ct = default)
+    public static async Task<MicrophoneEars> CreateAsync(VertexAi ai, VadOptions? options = null, bool smartTurn = true, bool liveWords = false, CancellationToken ct = default)
     {
         // The detector runs on the CPU, not in the GPU lane. MEASURED: 3.4 ms per 32 ms frame (a tenth of a core), the same probabilities as CUDA. In the lane it could not
         // run while the language model prefilled a reply (about 1.5 s, GPU held), so a person who carried on talking was not heard until the robot had started to answer.
         if (smartTurn && options == null) options = new VadOptions { MinSilenceDuration = SmartTurnSilence };
         var vad = SileroVad.Create(ai.CpuAccelerator, SileroModel());
-        await Task.CompletedTask;
-        return new MicrophoneEars(ai, new VoiceActivityDetector(vad, options, ownsVad: true), smartTurn);
+        if (liveWords) await ai.WarmLiveWordsAsync(ct);
+        var ears = new MicrophoneEars(ai, new VoiceActivityDetector(vad, options, ownsVad: true), smartTurn);
+        if (liveWords)
+        {
+            ears._live = new LiveWords(ai);
+            ears._live.Words += (text, final) => ears.Hearing?.Invoke(text, final);
+            ears._live.Log += m => ears.Log?.Invoke(m);
+        }
+        return ears;
     }
 
     /// <summary>Hands over 16 kHz mono audio (any chunk size).</summary>
@@ -115,7 +129,7 @@ public sealed class MicrophoneEars : IAsyncDisposable
     }
 
     /// <summary>True while nothing is queued, being endpointed or being transcribed (tests wait on it).</summary>
-    public bool IsIdle => _audio.Reader.Count == 0 && Volatile.Read(ref _pendingTranscriptions) == 0 && !_vad.IsSpeechActive && _turns?.HasPending != true;
+    public bool IsIdle => _audio.Reader.Count == 0 && Volatile.Read(ref _pendingTranscriptions) == 0 && !_vad.IsSpeechActive && _turns?.HasPending != true && _live?.IsBusy != true;
 
     private async Task PumpAsync()
     {
@@ -128,6 +142,7 @@ public sealed class MicrophoneEars : IAsyncDisposable
                 for (var i = 0; i < pcm.Length; i++) samples[i] = pcm[i] / 32768f;
                 await _vad.AcceptWaveformAsync(samples);
                 _turns?.SetSpeaking(_vad.IsSpeechActive);
+                _live?.Feed(samples, _vad.IsSpeechActive || _turns?.HasPending == true);
             }
         }
         catch (OperationCanceledException) { }
@@ -136,6 +151,7 @@ public sealed class MicrophoneEars : IAsyncDisposable
 
     private void OnSegment(SpeechSegment segment)
     {
+        if (_turns == null) _live?.EndTurn();
         if (EndedAfterTheMute(segment.StartSample + segment.Samples.Length)) return;
         if (_turns != null) _turns.Add(segment.Samples, segment.StartSample, Environment.TickCount64);
         else Process(segment.Samples, Environment.TickCount64, "silence", segment.StartSample);
@@ -143,6 +159,7 @@ public sealed class MicrophoneEars : IAsyncDisposable
 
     private void OnTurn(CompletedTurn turn)
     {
+        _live?.EndTurn();
         if (turn.Probability is { } p) Log?.Invoke($"turn over ({turn.Reason}, p={p:0.00}, {turn.Samples.Length / 16000.0:0.0} s)");
         // A turn whose audio ended after the ears closed is Vertex's own voice (or a room it was not listening to); one that ended before is the person, however late it got here.
         if (EndedAfterTheMute(turn.StartSample + turn.Samples.Length)) return;
@@ -275,6 +292,7 @@ public sealed class MicrophoneEars : IAsyncDisposable
         _audio.Writer.TryComplete();
         try { await _pump; } catch { }
         _turns?.Dispose();
+        if (_live != null) await _live.DisposeAsync();
         _vad.Dispose();
         _cts.Dispose();
     }

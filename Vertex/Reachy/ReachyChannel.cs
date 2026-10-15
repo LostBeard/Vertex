@@ -66,10 +66,13 @@ public sealed class ReachyChannel : IVoiceChannel
 
     public event Action<HeardLine>? Heard;
     public event Action<string>? Log;
+    /// <summary>The words of what is being said right now, as they are said (text so far; true when the utterance is over). Only with live words on.</summary>
+    public event Action<string, bool>? Hearing;
 
     public ReachyMiniClient Robot => _robot;
 
     private bool _smartTurn = true;
+    private bool _liveWords;
 
     private ReachyChannel(string host, VertexAi ai)
     {
@@ -81,9 +84,10 @@ public sealed class ReachyChannel : IVoiceChannel
 
     /// <summary>Connects the robot's microphone and loads the voice activity detector.</summary>
     /// <param name="smartTurn">Ask the end-of-turn model whether a pause is the end of what someone is saying (see <see cref="TurnAssembler"/>), instead of always waiting half a second.</param>
-    public static async Task<ReachyChannel> ConnectAsync(string host, VertexAi ai, bool smartTurn = true, CancellationToken ct = default)
+    /// <param name="liveWords">Also recognise the words WHILE they are spoken (streaming speech to text), reported through <see cref="Hearing"/>.</param>
+    public static async Task<ReachyChannel> ConnectAsync(string host, VertexAi ai, bool smartTurn = true, bool liveWords = false, CancellationToken ct = default)
     {
-        var channel = new ReachyChannel(host, ai) { _smartTurn = smartTurn };
+        var channel = new ReachyChannel(host, ai) { _smartTurn = smartTurn, _liveWords = liveWords };
         try
         {
             await channel.StartAsync(ct);
@@ -98,8 +102,9 @@ public sealed class ReachyChannel : IVoiceChannel
 
     private async Task StartAsync(CancellationToken ct)
     {
-        _ears = await MicrophoneEars.CreateAsync(_ai, smartTurn: _smartTurn, ct: ct);
+        _ears = await MicrophoneEars.CreateAsync(_ai, smartTurn: _smartTurn, liveWords: _liveWords, ct: ct);
         _ears.Log += m => Log?.Invoke("[ears] " + m);
+        _ears.Hearing += (text, final) => Hearing?.Invoke(text, final);
         _ears.Heard += h =>
         {
             _speakers.Unknown = RoomSpeakerName;

@@ -38,6 +38,7 @@
             <input @bind="Host.Settings.ReachySpeaker" disabled="@Host.RobotConnected" placeholder="e.g. Aubri" />
             <label><input type="checkbox" style="width:auto" @bind="Host.Settings.ReachyAnswersEverything" disabled="@Host.RobotConnected" /> Answer everything said near the robot (off: say "Vertex" to start talking)</label>
             <label><input type="checkbox" style="width:auto" @bind="Host.Settings.ReachyRecognizeVoices" disabled="@Host.RobotConnected" /> Tell people apart by their voice (people Vertex has been introduced to are called by name; strangers are "Guest 1", "Guest 2")</label>
+            <label><input type="checkbox" style="width:auto" @bind="Host.Settings.ReachyLiveWords" disabled="@Host.RobotConnected" /> Show my words as I say them (a streaming recogniser types along while I talk; the finished sentence is still transcribed by the more accurate one; uses about 1.2 GB of GPU memory)</label>
             <label><input type="checkbox" style="width:auto" @bind="Host.Settings.ReachySmartTurn" disabled="@Host.RobotConnected" /> Know when I have finished talking (answers a finished sentence sooner and waits while I am still thinking; off: always waits half a second)</label>
             <label><input type="checkbox" style="width:auto" @bind="Host.Settings.ReachySaveHeard" disabled="@Host.RobotConnected" /> Keep what the robot hears (audio, words, who) in <code>@Host.HeardFolder</code> to measure listening on this household's voices. Stays on this PC.</label>
             @if (Host.State == HostState.Playing)
@@ -171,6 +172,10 @@
                 <input @bind="Message" @bind:event="oninput" @onkeydown="OnKey" placeholder="Tell Vertex something, e.g. hi Vertex, how are you?" disabled="@(Host.State != HostState.Playing)" />
                 <button style="flex:0" @onclick="Send" disabled="@(Host.State != HostState.Playing)">Say</button>
             </div>
+            @if (Host.LiveCaption.Length > 0)
+            {
+                <div class="Heard" style="margin-bottom:8px"><span class="t">hearing</span>@Host.LiveCaption …</div>
+            }
             <div class="log">
                 @foreach (var line in Host.Lines.AsEnumerable().Reverse())
                 {

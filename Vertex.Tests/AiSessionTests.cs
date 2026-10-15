@@ -36,6 +36,7 @@ public class AiSessionTests
         await ai.EnsureChatReadyAsync(model);
         await ai.LoadIntentsAsync();
         await ai.WarmUpAsync("kokoro:af_heart");
+        await ai.WarmLiveWordsAsync();   // the robot's ears keep the live-words model resident too: the budget has to hold with it
         var headroom = MemoryPressure.GetHeadroomBytes(ai.Accelerator);
         TestContext.Out.WriteLine($"free at start {freeAtStart / 1048576} MiB, headroom {headroom / 1048576} MiB");
 
@@ -67,7 +68,10 @@ public class AiSessionTests
                 // Say the first sentence, hear it back, match a command: every model runs every turn.
                 var line = Mouth.Sentences(result.TextWithoutToolCalls).FirstOrDefault() ?? "Hello.";
                 var (samples, _) = await ai.SpeakAsync(line, "kokoro:af_heart");
-                var heard = await ai.TranscribeAsync(Audio.Downsample48To16(Audio.Upsample24To48(samples)));
+                var pcm16k = Audio.Downsample48To16(Audio.Upsample24To48(samples));
+                var heard = await ai.TranscribeAsync(pcm16k);
+                await using (var live = await ai.Streaming.BeginAsync())
+                    for (var at = 0; at < pcm16k.Length; at += 1600) await ai.LiveAcceptAsync(live, pcm16k[at..Math.Min(pcm16k.Length, at + 1600)]);
                 await ai.Intents!.MatchAsync("Vertex, follow me", "Vertex");
 
                 ai.Accelerator.TryGetFreeMemory(out var free);

@@ -40,6 +40,11 @@ public sealed class VertexSettings
     /// </summary>
     public bool ReachySmartTurn { get; set; } = true;
     /// <summary>
+    /// Show (and let Vertex react to) the words WHILE they are being said, like voice typing on a phone: a streaming recogniser runs over the sentence in progress,
+    /// and the finished sentence is still transcribed by the more accurate one. Costs about 1.2 GB of GPU memory.
+    /// </summary>
+    public bool ReachyLiveWords { get; set; } = true;
+    /// <summary>
     /// Keep every utterance the robot hears (the audio, the words Vertex heard, who it sounded like) in the data folder's "heard"
     /// folder, to measure and improve listening on this household's own voices. Off by default; never uploaded anywhere.
     /// </summary>
@@ -192,6 +197,9 @@ public sealed class VertexHost : IAsyncDisposable
     /// <summary>The Reachy Mini is connected and awake.</summary>
     public bool RobotConnected => _robot != null;
 
+    /// <summary>What is being said right now, as the live recogniser hears it (empty when nobody is talking or live words are off).</summary>
+    public string LiveCaption { get; private set; } = "";
+
     public event Action? Changed;
 
     public IReadOnlyList<LogLine> Lines { get { lock (_lines) return _lines.ToList(); } }
@@ -341,7 +349,8 @@ public sealed class VertexHost : IAsyncDisposable
         SetStatus(HostState.Starting, $"Connecting to the robot ({Settings.ReachyHost})...");
         try
         {
-            _reachy = await ReachyChannel.ConnectAsync(Settings.ReachyHost, _ai!, Settings.ReachySmartTurn);
+            _reachy = await ReachyChannel.ConnectAsync(Settings.ReachyHost, _ai!, Settings.ReachySmartTurn, Settings.ReachyLiveWords);
+            _reachy.Hearing += (text, final) => { LiveCaption = final ? "" : text; Changed?.Invoke(); };
             if (!string.IsNullOrWhiteSpace(Settings.ReachySpeaker)) _reachy.RoomSpeakerName = Settings.ReachySpeaker.Trim();
             _reachy.AnswersEverything = Settings.ReachyAnswersEverything;
             _reachy.IdentifySpeakers = Settings.ReachyRecognizeVoices;

@@ -33,6 +33,11 @@ public sealed class VertexAi : IAsyncDisposable
     public AiSpeakerEngine Speakers { get; }
     /// <summary>Has the speaker finished their turn: Smart Turn v3.2, which lets the microphone answer sooner on a finished sentence and wait on an unfinished one.</summary>
     public AiTurnEngine Turns { get; }
+    /// <summary>
+    /// Speech to text that keeps up with the speaker (Nemotron Speech Streaming): the words appear while they are being said. The fast pass for reacting early;
+    /// <see cref="Speech"/> still gives the final, more accurate text.
+    /// </summary>
+    public AiStreamingSpeechEngine Streaming { get; }
     /// <summary>Where the introduced voices are kept between runs.</summary>
     public string VoicesFile { get; }
     public AiToolRegistry Tools { get; } = new();
@@ -96,6 +101,10 @@ public sealed class VertexAi : IAsyncDisposable
         {
             OnLoadProgress = (stage, pct) => { if (pct % 50 == 0) Log?.Invoke($"turn model {stage} {pct}%"); },
         };
+        Streaming = new AiStreamingSpeechEngine(modelSource, Accelerator)
+        {
+            OnLoadProgress = (stage, pct) => { if (pct % 50 == 0) Log?.Invoke($"live words model {stage} {pct}%"); },
+        };
     }
 
     private static SpeakerRegistry LoadVoices(string file, Action<string>? log)
@@ -152,6 +161,24 @@ public sealed class VertexAi : IAsyncDisposable
     {
         using (await Lane.EnterAsync(urgent: true, ct))
             return await Turns.TurnCompleteAsync(pcm16k, 16000, ct);
+    }
+
+    /// <summary>Loads and warms the live-words model (see <see cref="Streaming"/>): kernels compile on first execution, and the first sentence should not pay for it.</summary>
+    public async Task WarmLiveWordsAsync(CancellationToken ct = default)
+    {
+        using (await Lane.EnterAsync(ct: ct))
+        {
+            var clock = System.Diagnostics.Stopwatch.StartNew();
+            await Streaming.EnsureReadyAsync(ct);
+            Log?.Invoke($"warmed up: live words {clock.ElapsedMilliseconds} ms");
+        }
+    }
+
+    /// <summary>One piece of audio into a live-words stream, as urgent work on the GPU lane (a chunk is ~67 ms; hearing never waits for a reply to finish).</summary>
+    public async Task<SpawnDev.ILGPU.ML.Pipelines.StreamingUpdate> LiveAcceptAsync(AiSpeechStream stream, float[] pcm16k, CancellationToken ct = default)
+    {
+        using (await Lane.EnterAsync(urgent: true, ct))
+            return await stream.AcceptAsync(pcm16k);
     }
 
     /// <summary>The fast command matcher (System One for speech), loaded on first use.</summary>
@@ -240,6 +267,7 @@ public sealed class VertexAi : IAsyncDisposable
         Speech.Dispose();
         Speakers.Dispose();
         Turns.Dispose();
+        Streaming.Dispose();
         Voice.Dispose();
         await Registry.DisposeAsync();
         Accelerator.Dispose();
