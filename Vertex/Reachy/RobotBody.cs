@@ -175,34 +175,10 @@ public sealed class RobotBody : IBody
         _parked = true;
         await _presence.DisposeAsync();
         _body.Idle = false;
-        var robot = _channel.Robot;
-        try
-        {
-            await robot.GoHomeAsync(duration: 1.0);
-            await WaitForHeadStillAsync(TimeSpan.FromSeconds(2));
-            await robot.GotoSleepAsync();
-            await WaitForHeadStillAsync(TimeSpan.FromSeconds(4));
-        }
-        catch (Exception e) { Log?.Invoke("parking moves failed: " + e.Message); /* release the motors regardless */ }
-        try { await robot.SetMotorModeAsync(MotorMode.Disabled); }
-        catch (Exception e) { Log?.Invoke("motors off failed: " + e.Message); }
+        // The SDK's recipe waits for each MOVE to finish (the daemon says when) before the next step and before the motors go off; the motors are released even when a move fails.
+        try { await _channel.Robot.ParkAsync(); }
+        catch (Exception e) { Log?.Invoke("parking failed: " + e.Message); }
         Log?.Invoke("parked");
-    }
-
-    /// <summary>Waits until the head stops moving (or the timeout), by watching its pose.</summary>
-    private async Task WaitForHeadStillAsync(TimeSpan timeout)
-    {
-        var clock = System.Diagnostics.Stopwatch.StartNew();
-        XyzRpyPose? last = null;
-        while (clock.Elapsed < timeout)
-        {
-            XyzRpyPose? now;
-            try { now = await _channel.Robot.GetHeadPoseAsync(); }
-            catch { return; } // cannot read: do not stall the parking
-            if (now != null && last != null && Math.Abs(now.Z - last.Z) + Math.Abs(now.Pitch - last.Pitch) + Math.Abs(now.Roll - last.Roll) < 0.003) return;
-            last = now;
-            await Task.Delay(150);
-        }
     }
 
     private void OnThinking(bool thinking)
