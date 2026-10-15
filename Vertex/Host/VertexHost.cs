@@ -200,6 +200,12 @@ public sealed class VertexHost : IAsyncDisposable
     /// <summary>What is being said right now, as the live recogniser hears it (empty when nobody is talking or live words are off).</summary>
     public string LiveCaption { get; private set; } = "";
 
+    /// <summary>Where the voice the robot just heard came from ("left, about 10:30 o'clock"), or empty when it has been quiet for a few seconds or the robot is not connected.</summary>
+    public string VoiceFrom => _reachy?.Voice.Current(Environment.TickCount64)?.ToString() ?? "";
+
+    /// <summary>Whether someone is talking right now (the microphone array hears speech).</summary>
+    public bool VoiceSpeakingNow => _reachy?.Voice.Speaking(Environment.TickCount64) ?? false;
+
     public event Action? Changed;
 
     public IReadOnlyList<LogLine> Lines { get { lock (_lines) return _lines.ToList(); } }

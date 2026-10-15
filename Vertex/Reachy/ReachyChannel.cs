@@ -23,6 +23,8 @@ public sealed class ReachyChannel : IVoiceChannel
     private readonly VertexAi _ai;
     private readonly SpeakerTracker _speakers;
     private MicrophoneEars? _ears;
+    private readonly CancellationTokenSource _voiceCts = new();
+    private Task? _voicePoll;
     private int _clip;
 
     public string Name => "Reachy";
@@ -71,6 +73,9 @@ public sealed class ReachyChannel : IVoiceChannel
 
     public ReachyMiniClient Robot => _robot;
 
+    /// <summary>Where the voice the robot is hearing comes from (the microphone array's direction of arrival, smoothed).</summary>
+    public VoiceDirection Voice { get; } = new();
+
     private bool _smartTurn = true;
     private bool _liveWords;
 
@@ -117,6 +122,30 @@ public sealed class ReachyChannel : IVoiceChannel
         // Subscribed BEFORE connecting: RoseAudioLink only starts its PCM capture when OnMicAudio has a handler.
         _link.OnMicAudio += pcm => _ears.Feed(pcm);
         await _link.ConnectAsync(ct);
+        _voicePoll = Task.Run(() => PollVoiceDirectionAsync(_voiceCts.Token));
+    }
+
+    /// <summary>
+    /// The daemon reads the direction lazily: its first answer is null and values only come to a client that keeps asking, so this asks five times a second for as long
+    /// as the robot is connected. Reads are a few bytes over the same network as the audio; a failed one is simply skipped.
+    /// </summary>
+    private async Task PollVoiceDirectionAsync(CancellationToken ct)
+    {
+        var failures = 0;
+        while (!ct.IsCancellationRequested)
+        {
+            try
+            {
+                if (await _robot.GetDoaAsync(ct) is { } doa) Voice.Add(doa.Angle, doa.SpeechDetected, Environment.TickCount64);
+                failures = 0;
+            }
+            catch (OperationCanceledException) { return; }
+            catch (Exception e)
+            {
+                if (++failures == 5) Log?.Invoke("[voice direction] unavailable: " + e.Message);
+            }
+            try { await Task.Delay(failures >= 5 ? 2000 : 200, ct); } catch (OperationCanceledException) { return; }
+        }
     }
 
     /// <summary>Ears closed while Vertex talks here (with the robot's own echo cancellation on top).</summary>
@@ -203,6 +232,8 @@ public sealed class ReachyChannel : IVoiceChannel
     public async ValueTask DisposeAsync()
     {
         await _link.DisposeAsync();
+        _voiceCts.Cancel();
+        if (_voicePoll != null) { try { await _voicePoll; } catch { } }
         if (_ears != null) await _ears.DisposeAsync();
         _robot.Dispose();
     }

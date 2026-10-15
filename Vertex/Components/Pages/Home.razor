@@ -172,6 +172,10 @@
                 <input @bind="Message" @bind:event="oninput" @onkeydown="OnKey" placeholder="Tell Vertex something, e.g. hi Vertex, how are you?" disabled="@(Host.State != HostState.Playing)" />
                 <button style="flex:0" @onclick="Send" disabled="@(Host.State != HostState.Playing)">Say</button>
             </div>
+            @if (Host.VoiceFrom.Length > 0)
+            {
+                <div class="System" style="margin-bottom:6px"><span class="t">voice</span>@(Host.VoiceSpeakingNow ? "from" : "was from") the robot's @Host.VoiceFrom</div>
+            }
             @if (Host.LiveCaption.Length > 0)
             {
                 <div class="Heard" style="margin-bottom:8px"><span class="t">hearing</span>@Host.LiveCaption …</div>
