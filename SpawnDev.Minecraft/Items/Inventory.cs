@@ -107,6 +107,14 @@ public sealed class ContainerWindow
     public int StateId { get; internal set; }
     public ItemStack[] Slots { get; internal set; } = [];
 
+    /// <summary>The trades on offer when this is a merchant's window (empty otherwise, and until the server sends them).</summary>
+    public IReadOnlyList<Trade> Trades { get; internal set; } = [];
+
+    /// <summary>A merchant's level (1 novice to 5 master) and the experience it has toward the next one.</summary>
+    public int MerchantLevel { get; internal set; }
+    public int MerchantXp { get; internal set; }
+    public bool MerchantCanRestock { get; internal set; }
+
     /// <summary>Slots that belong to the container itself (the rest are the player's 36 inventory slots).</summary>
     public int ContainerSlotCount => Math.Max(0, Slots.Length - 36);
 

@@ -577,6 +577,20 @@ public sealed partial class MinecraftClient
                 WindowOpened?.Invoke(OpenWindow);
                 return;
             }
+            case CB.Play.Clientbound.MerchantOffers:
+            {
+                // A villager's (or wandering trader's) trades, sent right after its window opens, and again when it levels up.
+                var id = r.ReadVarInt();
+                var offers = Trade.Read(ref r, World.Data.Item);
+                if (OpenWindow?.Id == id)
+                {
+                    OpenWindow.Trades = offers.Trades;
+                    OpenWindow.MerchantLevel = offers.VillagerLevel;
+                    OpenWindow.MerchantXp = offers.VillagerXp;
+                    OpenWindow.MerchantCanRestock = offers.CanRestock;
+                }
+                return;
+            }
             case CB.Play.Clientbound.ContainerClose:
             {
                 var id = r.ReadVarInt();

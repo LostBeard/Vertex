@@ -64,6 +64,28 @@ SpawnDev.ILGPU.ML), so that 1 s is the bar our libraries have to meet. Library d
   control panel in a console; `play`/`join` open their own console window (they read typed lines); `login`,
   `logout`, `ping` print to the terminal they are run from.
 
+## M15 - Minecraft capabilities (TJ 2026-10-15: "building skills, farming, companion skills, trading with villagers, fighting"; Geordi's AubsCraft to help test)
+The companion and the robot are in good shape (speech, faces, the link); Minecraft is next. Every item gets a test against a REAL Paper server (the Live tests), red-checked, before it is
+called done; nothing here is claimed from a model run alone. Players are children too (Aubs): a skill must be safe to say wrong ("don't dig under my house", no griefing, no lava).
+
+Order (chosen for what each unlocks, and how deterministically it can be tested):
+1. **Villager trading** (new subsystem). Find a villager; interact (open_window merchant + merchant_offers); read the offers (buy A/B, sell, uses, max uses, price multiplier, demand, XP); select a
+   trade and take the result (container clicks); policies: "sell my wheat for emeralds", "buy bread", "what does the librarian sell?", "get the best price", restock waiting. Test: /summon a
+   villager with fixed Offers NBT (deterministic), plus level-up and out-of-stock cases.
+2. **Custom building** (the LLM writes a construction script, not coordinates). A small plan language (fill / hollow box / line / ring / floor / roof gable+flat / door / window / stairs / fence / torch),
+   validated and bounded (size, height, materials owned, not on a player's build), executed by the builder: bottom-up order so every block has something to click against, orientation states (stairs,
+   doors, torches), gather-or-ask for materials, resume after an interruption. The existing house / wall / tower / bridge become scripts. Test: builds compared block for block against the plan on Paper.
+3. **Farming, the whole cycle**: till and plant a new field (hoe, seeds, water source / irrigation, fence), bone meal, more crops (sugar cane, melon, pumpkin, nether wart), animals (breed with the
+   right food, shear, milk, eggs, slaughter for meat), put the harvest in a chest. Today it only harvests ripe crops and replants.
+4. **Companion skills**: stay / wait here / come / heel; branch and strip mining with torches and ore-vein following; light up an area (torches in the dark so nothing spawns); keep a chest tidy;
+   collect drops after we mine; carry and hand over; avoid lava, drops and cobwebs on the way; danger awareness at night and underground.
+5. **Fighting**: ranged (bow, crossbow, charge and release), shield (block while the enemy swings), kiting skeletons, creeper-first target order, healing (golden apple, potion), fire and lava, fighting
+   from a pillar. The learned fight/flee policy (ReflexPolicy) stays the first decision; new situations get new training rows.
+
+With Geordi (AubsCraft, VoxelEngine, GameUI): his live viewer is the best way to SEE what Vertex builds (a screenshot of the server's world against the plan), and his plugin can be the ground truth
+for assertions (blocks and entities as the SERVER has them, not as Vertex believes). To agree with him: a dev or test world on the AubsCraft server stack (never production without TJ's say), whether
+Vertex's position and goal can be a marker in the viewer, and a way to ask the plugin "what is at x y z".
+
 ## M9 - Responsive (the gate for everything below)
 - [ ] Per-turn timeline, logged and shown on the control panel: end of speech -> transcript -> first token ->
   first sentence -> first audio -> playback start, plus per-model GPU memory. Every number below is measured
