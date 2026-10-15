@@ -56,7 +56,7 @@ public sealed class VertexSettings
     /// Send the robot's speech as a live stream over the WebRTC connection instead of uploading each sentence to it first. No wait for an upload (3 to 4 s per sentence over Wi-Fi, measured), the
     /// speech starts at once; the sound is Opus (the WebRTC speech codec) rather than the uploaded WAV. Off: upload and play, the way it worked before.
     /// </summary>
-    public bool ReachyStreamSpeech { get; set; } = true;
+    public bool ReachyStreamSpeech { get; set; }
     /// <summary>Keep looking at the person who is talking to the robot as they move around (a small correction after each look at the camera). Needs faces on.</summary>
     public bool ReachyFollowFaces { get; set; } = true;
     /// <summary>

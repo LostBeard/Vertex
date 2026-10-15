@@ -209,6 +209,9 @@ public sealed class ReachyChannel : IPreparingVoiceChannel
         await PlayPreparedAsync(await PrepareAsync(pcm24k, ct), ct);
     }
 
+    /// <summary>A clip uploaded to the robot over its data channel (the way Pollen's SDK and the SpawnDev.AI demo send speech) and ready to play.</summary>
+    private sealed record DataPrepared(string UploadId, int Samples);
+
     /// <summary>A clip ready to be streamed: loudened, at the stream's 48 kHz.</summary>
     private sealed record StreamClip(short[] Pcm48k);
 
@@ -218,6 +221,23 @@ public sealed class ReachyChannel : IPreparingVoiceChannel
         if (pcm24k.Length == 0) return new Prepared("", 0);
         var pcm = Loudify(pcm24k);
         if (_link.Speech != null) return new StreamClip(Upsample2x(pcm));
+        // The robot's data channel first: the same upload the SDK and the Hugging Face demo use, with no multipart parsing on the robot (the REST upload measured 50 KB/s on this robot). The sound is the
+        // same WAV played by the same daemon call; only the transfer differs. REST stays as the fallback.
+        if (_link.Data is { IsOpen: true } data)
+        {
+            var timer = System.Diagnostics.Stopwatch.StartNew();
+            try
+            {
+                var wavBytes = BuildWav(pcm, 24000);
+                var id = await data.UploadAudioAsync(wavBytes, ct: ct);
+                Log?.Invoke($"uploaded {id} over the data channel ({wavBytes.Length / 1024} KB) in {timer.ElapsedMilliseconds} ms");
+                return new DataPrepared(id, pcm.Length);
+            }
+            catch (Exception e) when (e is not OperationCanceledException)
+            {
+                Log?.Invoke($"data channel upload failed ({e.Message}); using the REST upload");
+            }
+        }
         var name = $"vertex_{Interlocked.Increment(ref _clip) % 64}.wav"; // a small ring of names: the robot keeps every upload
         var clock = System.Diagnostics.Stopwatch.StartNew();
         using (var wav = new MemoryStream(BuildWav(pcm, 24000)))
@@ -230,6 +250,7 @@ public sealed class ReachyChannel : IPreparingVoiceChannel
     public async Task PlayPreparedAsync(object prepared, CancellationToken ct)
     {
         if (prepared is StreamClip stream) { await StreamAsync(stream.Pcm48k, ct); return; }
+        if (prepared is DataPrepared uploaded) { await PlayUploadedAsync(uploaded, ct); return; }
         var (name, samples) = (Prepared)prepared;
         if (samples == 0) return;
         if (LiftHeadToSpeak)
@@ -251,6 +272,32 @@ public sealed class ReachyChannel : IPreparingVoiceChannel
         {
             // Start and end of every clip, so non-overlap can be checked from the log, not only by ear (Reachy CLAUDE.md).
             Log?.Invoke($"played {name} ({samples / 24000.0:0.00} s) in {sw.Elapsed.TotalSeconds:0.00} s");
+            Playing?.Invoke(false);
+        }
+    }
+
+    /// <summary>Plays a clip uploaded over the data channel: head up, the daemon plays it, and the wait is the clip's own length (there is no "finished" event for standalone audio).</summary>
+    private async Task PlayUploadedAsync(DataPrepared clip, CancellationToken ct)
+    {
+        var data = _link.Data!;
+        if (LiftHeadToSpeak)
+            try { await _robot.GotoAsync(headPose: new XyzRpyPose(Z: ReachyBody.HeadLiftMax, Pitch: -0.05), duration: 0.4, interpolation: Interpolation.EaseInOut, ct: ct); }
+            catch (Exception e) when (e is not OperationCanceledException) { /* posture never blocks speech */ }
+        Playing?.Invoke(true);
+        var sw = System.Diagnostics.Stopwatch.StartNew();
+        try
+        {
+            await data.PlayUploadedAudioAsync(clip.UploadId, ct: ct);
+            await Task.Delay(TimeSpan.FromSeconds(clip.Samples / 24000.0) + TimeSpan.FromMilliseconds(250), ct);
+        }
+        catch (OperationCanceledException)
+        {
+            data.CancelAudio(clip.UploadId);
+            throw;
+        }
+        finally
+        {
+            Log?.Invoke($"played {clip.UploadId} ({clip.Samples / 24000.0:0.00} s) in {sw.Elapsed.TotalSeconds:0.00} s");
             Playing?.Invoke(false);
         }
     }
