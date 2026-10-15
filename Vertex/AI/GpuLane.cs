@@ -29,6 +29,9 @@ public sealed class GpuLane
     private int _urgentWaiting;
     private volatile Hold? _holder;
 
+    /// <summary>Who holds the lane right now (null when nobody does): for a caller to say who it waited for.</summary>
+    public string? CurrentHolder => _holder is { } h && h.IsHeld ? h.Who : null;
+
     /// <summary>Told when a caller has waited a long time for the lane, and by whom it is held (a model call that never ends shows here instead of as silence).</summary>
     public Action<string>? Log { get; set; }
 
@@ -78,6 +81,8 @@ public sealed class GpuLane
 
         /// <summary>Who took the GPU.</summary>
         public string Who { get; }
+
+        internal bool IsHeld => Volatile.Read(ref _state) != Done;
 
         /// <summary>How long it has been held.</summary>
         public TimeSpan Age => TimeSpan.FromMilliseconds(Environment.TickCount64 - _since);

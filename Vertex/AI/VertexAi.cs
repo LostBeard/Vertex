@@ -360,9 +360,16 @@ public sealed class VertexAi : IAsyncDisposable
     /// <summary>Kokoro (built-in voices, "kokoro:af_heart" etc.): text in, 24 kHz mono float PCM out.</summary>
     public async Task<(float[] Samples, int SampleRate)> SpeakAsync(string text, string voiceId, CancellationToken ct = default)
     {
+        var clock = System.Diagnostics.Stopwatch.StartNew();
+        var heldBy = Lane.CurrentHolder;
         using (await Lane.EnterAsync(ct: ct))
         {
+            var waited = clock.ElapsedMilliseconds;
             var speech = await Voice.SpeakWithVoiceAsync(text, voiceId, ct: ct);
+            var total = clock.ElapsedMilliseconds;
+            // Every sentence says where its time went: the wait for the GPU (and who had it) or the synthesis itself. A pause between two sentences of a reply is one of these two.
+            Log?.Invoke($"[voice] \"{(text.Length > 28 ? text[..28] + "..." : text)}\": {speech.Samples.Length / (double)speech.SampleRate:0.0} s of speech in {total - waited} ms" +
+                        (waited > 400 ? $", after waiting {waited} ms for the GPU (held by {heldBy ?? "?"})" : ""));
             return (speech.Samples, speech.SampleRate);
         }
     }
