@@ -20,8 +20,8 @@ public class RobotSpeechStreamerTests
         public void PushPcm(AudioPcmFrame frame)
         {
             Assert.That(frame.SampleRate, Is.EqualTo(48000));
-            Assert.That(frame.Channels, Is.EqualTo(1));
-            Assert.That(frame.Pcm.Length, Is.EqualTo(960), "a frame is 20 ms");
+            Assert.That(frame.Channels, Is.EqualTo(2), "WebRTC's Opus is stereo");
+            Assert.That(frame.Pcm.Length, Is.EqualTo(960 * 2), "a frame is 20 ms of two interleaved channels");
             Frames.Enqueue((_clock.ElapsedMilliseconds, frame.Pcm.Any(s => s != 0), frame.Pcm[0]));
         }
         public void Dispose() { }
@@ -32,6 +32,38 @@ public class RobotSpeechStreamerTests
         var pcm = new short[48 * ms];
         for (var i = 0; i < pcm.Length; i++) pcm[i] = (short)(marker + (i % 50));      // never zero
         return pcm;
+    }
+
+    /// <summary>The real Opus encoder behind the sender, as the connection has it: every frame it makes says how much time it holds.</summary>
+    private sealed class EncodingSender : IRTCAudioSender
+    {
+        private readonly SpawnDev.RTC.Desktop.MultiMediaAudioSource _source = new();
+        public long RtpUnits; public int Frames;
+        public EncodingSender()
+        {
+            _source.OnAudioSourceEncodedSample += (duration, sample) => { Interlocked.Add(ref RtpUnits, duration); Interlocked.Increment(ref Frames); };
+        }
+        public IRTCMediaStreamTrack Track => throw new NotSupportedException();
+        public void PushPcm(AudioPcmFrame frame) => _source.PushPcm(frame.Pcm);
+        public void Dispose() => _source.Dispose();
+    }
+
+    /// <summary>
+    /// The chipmunk (live 2026-10-15): the negotiated Opus format is 48 kHz STEREO and the encoder takes exactly 20 ms x 2 channels per frame, so mono frames made it hold only half as much
+    /// time per frame and the robot played everything at twice the speed, an octave up. With the REAL encoder: the time the encoded frames hold must equal the real time that passed.
+    /// </summary>
+    [Test]
+    public async Task TheEncodedStreamHoldsAsMuchTimeAsPassed_SoSpeechIsNotSpedUp()
+    {
+        using var sender = new EncodingSender();
+        using var streamer = new RobotSpeechStreamer(sender) { PlayoutLatency = TimeSpan.Zero };
+        var clock = Stopwatch.StartNew();
+        await streamer.SpeakAsync(Tone(1000, 1000));
+        await Task.Delay(100);
+        var elapsedSeconds = clock.Elapsed.TotalSeconds;
+        var heldSeconds = Interlocked.Read(ref sender.RtpUnits) / 48000.0;
+        Assert.That(heldSeconds, Is.EqualTo(elapsedSeconds).Within(elapsedSeconds * 0.12), $"{sender.Frames} encoded frames hold {heldSeconds:0.00} s but {elapsedSeconds:0.00} s passed: not 2x");
+        Assert.That(sender.Frames, Is.InRange((int)(elapsedSeconds * 50 * 0.88), (int)(elapsedSeconds * 50 * 1.12) + 1), "50 frames of 20 ms a second");
     }
 
     [Test]
