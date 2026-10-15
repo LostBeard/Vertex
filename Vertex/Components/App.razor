@@ -13,7 +13,7 @@
         header { display: flex; align-items: center; gap: 12px; padding: 14px 20px; border-bottom: 1px solid var(--line); }
         header h1 { margin: 0; font-size: 22px; letter-spacing: .5px; }
         header .status { color: var(--muted); }
-        main { display: grid; grid-template-columns: 340px 1fr; gap: 16px; padding: 16px 20px; }
+        main { display: grid; grid-template-columns: 430px 1fr; gap: 16px; padding: 16px 20px; }
         @@media (max-width: 860px) { main { grid-template-columns: 1fr; } }
         section { background: var(--panel); border: 1px solid var(--line); border-radius: 10px; padding: 14px; }
         h2 { font-size: 15px; margin: 0 0 10px; color: var(--muted); text-transform: uppercase; letter-spacing: .8px; }
@@ -35,6 +35,18 @@
         .Heard { color: var(--text); } .Said { color: var(--said); } .Tool { color: var(--accent); } .Error { color: var(--bad); } .System { color: var(--muted); } .Chat { color: #d7c8ff; }
         .code { font-size: 26px; font-weight: 700; letter-spacing: 3px; color: var(--warn); }
         .hint { font-size: 12px; color: var(--muted); }
+        .tabs { display: flex; flex-wrap: wrap; gap: 6px; margin-bottom: 12px; }
+        .tab { background: transparent; color: var(--muted); border: 1px solid var(--line); border-radius: 999px; padding: 6px 14px; font-weight: 600; }
+        .tab:hover { color: var(--text); border-color: var(--muted); }
+        .tab.on { background: var(--accent); color: #0d1912; border-color: var(--accent); }
+        h3 { font-size: 12px; margin: 20px 0 2px; padding-top: 12px; border-top: 1px solid var(--line); color: var(--accent); text-transform: uppercase; letter-spacing: .8px; }
+        .check { display: flex; gap: 10px; align-items: flex-start; margin: 10px 0; font-size: 14px; color: var(--text); cursor: pointer; }
+        .check input { width: auto; flex: none; margin-top: 3px; }
+        .check b { display: block; font-weight: 600; }
+        .check small { display: block; color: var(--muted); font-size: 12px; line-height: 1.4; margin-top: 2px; font-weight: 400; }
+        .person { padding: 8px 0; border-bottom: 1px solid #222838; }
+        .person strong { flex: 1; }
+        .person .hint { display: block; margin-top: 3px; }
     </style>
     <HeadOutlet @rendermode="InteractiveServer" />
 </head>
