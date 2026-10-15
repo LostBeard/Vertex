@@ -39,7 +39,7 @@ public class LiveTradingTests
         "{buy:{id:\"minecraft:coal\",count:15},sell:{id:\"minecraft:emerald\",count:1},maxUses:16,uses:0,rewardExp:1b,xp:2,demand:5,priceMultiplier:0.05f}" +
         "]}";
 
-    private async Task<(MinecraftClient Client, Entity Villager)> JoinWithVillagerAsync(string name, string villagerNbt)
+    private async Task<(MinecraftClient Client, Entity Villager)> JoinWithVillagerAsync(string name, string villagerNbt, double distance = 2.5)
     {
         var client = new MinecraftClient(GameProfile.Offline(name), new ClientOptions { Log = m => TestContext.Out.WriteLine($"[{name}] {m}") });
         using var cts = new CancellationTokenSource(Timeout);
@@ -52,7 +52,7 @@ public class LiveTradingTests
         await _server.CommandAsync("kill @e[type=!minecraft:player]");
         await Task.Delay(1500);
         await _server.CommandAsync($"tp {name} {ax + 0.5} 200 {az + 0.5} -90 0");
-        await _server.CommandAsync($"summon minecraft:villager {ax + 2.5} 200 {az + 0.5} {{NoAI:1b,Silent:1b,PersistenceRequired:1b,{villagerNbt}}}");
+        await _server.CommandAsync($"summon minecraft:villager {ax + distance} 200 {az + 0.5} {{NoAI:1b,Silent:1b,PersistenceRequired:1b,{villagerNbt}}}");
         await Wait.UntilAsync(() => Math.Abs(client.Position.Y - 200) < 1e-9 && client.OnGround, Timeout, () => $"{client.Position}");
         await Wait.UntilAsync(() => client.World.IsLoaded(ax - 6, az - 6) && client.World.IsLoaded(ax + 6, az + 6)
             && client.World.IsLoaded(ax - 6, az + 6) && client.World.IsLoaded(ax + 6, az - 6), Timeout, () => "arena chunks");
@@ -141,5 +141,94 @@ public class LiveTradingTests
         await using var _ = client;
         Assert.That(await client.OpenTradesAsync(villager), Is.Null, "a nitwit shakes its head: no screen");
         Assert.That(client.TradingScreenOpen, Is.False);
+    }
+
+    // ---- the skill: what the language model calls ("sell my wheat", "buy 12 bread", "what does it sell?")
+
+    private const string Farmer = "VillagerData:{profession:\"minecraft:farmer\",level:2,type:\"minecraft:plains\"},Xp:10,";
+
+    [Test]
+    public async Task Skill_SellsAllOfSomething_WalkingToTheVillagerFirst()
+    {
+        const string name = "VertexSell";
+        var (client, _) = await JoinWithVillagerAsync(name, Farmer + Offers, distance: 5.5);
+        await using var _ = client;
+        await GiveAsync(client, name, "minecraft:wheat", 45);
+        var skills = new Vertex.Brain.Skills(client);
+
+        var (ok, text) = await skills.TradeWithVillagerAsync(null, "wheat", 0, CancellationToken.None);
+        TestContext.Out.WriteLine(text);
+        Assert.That(ok, Is.True, text);
+        Assert.That(text, Does.Contain("40 wheat").And.Contain("2 emerald").And.Contain("2 trades"));
+        Assert.That(client.Inventory.Count("emerald"), Is.EqualTo(2));
+        Assert.That(client.Inventory.Count("wheat"), Is.EqualTo(5), "only whole trades: the last 5 are kept");
+        Assert.That(client.OpenWindow, Is.Null, "the screen is closed afterwards");
+    }
+
+    [Test]
+    public async Task Skill_BuysAQuantity_AndSaysWhenItCannotPay_OrTheVillagerIsSoldOut()
+    {
+        const string name = "VertexBuy";
+        var (client, _) = await JoinWithVillagerAsync(name, Farmer + Offers);
+        await using var _ = client;
+        var skills = new Vertex.Brain.Skills(client);
+
+        var (poor, poorText) = await skills.TradeWithVillagerAsync("bread", null, 12, CancellationToken.None);
+        Assert.That(poor, Is.False);
+        Assert.That(poorText, Does.Contain("can't pay").And.Contain("1 emerald").And.Contain("I have 0"));
+
+        await GiveAsync(client, name, "minecraft:emerald", 5);
+        var (ok, text) = await skills.TradeWithVillagerAsync("bread", null, 12, CancellationToken.None);
+        TestContext.Out.WriteLine(text);
+        Assert.That(ok, Is.True, text);
+        Assert.That(client.Inventory.Count("bread"), Is.EqualTo(12), "12 bread is two trades of 6");
+        Assert.That(client.Inventory.Count("emerald"), Is.EqualTo(3));
+
+        await GiveAsync(client, name, "minecraft:iron_ingot", 2);
+        var (soldOut, soldText) = await skills.TradeWithVillagerAsync("diamond", null, 1, CancellationToken.None);
+        Assert.That(soldOut, Is.False);
+        Assert.That(soldText, Does.Contain("sold out"));
+        Assert.That(client.Inventory.Count("emerald"), Is.EqualTo(3), "nothing was spent");
+    }
+
+    [Test]
+    public async Task Skill_PaysTheDemandRaisedPriceTheServerCharges_AndListsOffers()
+    {
+        const string name = "VertexDemand";
+        var (client, _) = await JoinWithVillagerAsync(name, Farmer + Offers);
+        await using var _ = client;
+        await GiveAsync(client, name, "minecraft:coal", 40);
+        var skills = new Vertex.Brain.Skills(client);
+
+        var (listed, list) = await skills.VillagerOffersAsync(CancellationToken.None);
+        TestContext.Out.WriteLine(list);
+        Assert.That(listed, Is.True);
+        Assert.That(list, Does.Contain("apprentice villager").And.Contain("20 wheat for 1 emerald").And.Contain("18 coal for 1 emerald").And.Contain("(sold out)"));
+        Assert.That(client.OpenWindow, Is.Null, "looking buys nothing and closes the screen");
+
+        var (ok, text) = await skills.TradeWithVillagerAsync("emerald", "coal", 2, CancellationToken.None);
+        TestContext.Out.WriteLine(text);
+        Assert.That(ok, Is.True, text);
+        Assert.That(client.Inventory.Count("emerald"), Is.EqualTo(2));
+        Assert.That(client.Inventory.Count("coal"), Is.EqualTo(40 - 36), "two trades at the raised price of 18, not the base 15");
+    }
+
+    [Test]
+    public async Task Skill_SaysSoWhenThereIsNoVillager_OrItHasNothingToDoWithIt()
+    {
+        const string name = "VertexNobody";
+        var (client, villager) = await JoinWithVillagerAsync(name, Farmer + Offers);
+        await using var _ = client;
+        var skills = new Vertex.Brain.Skills(client);
+
+        var (ok, text) = await skills.TradeWithVillagerAsync("netherite ingot", null, 1, CancellationToken.None);
+        Assert.That(ok, Is.False);
+        Assert.That(text, Does.Contain("doesn't sell netherite ingot").And.Contain("It offers:"), "it says what it does offer");
+
+        await _server.CommandAsync("kill @e[type=minecraft:villager]");
+        await Wait.UntilAsync(() => !client.Entities.Values.Any(e => e.Name == "minecraft:villager"), Timeout, () => "the villager is still there");
+        var (none, noneText) = await skills.TradeWithVillagerAsync("emerald", "wheat", 1, CancellationToken.None);
+        Assert.That(none, Is.False);
+        Assert.That(noneText, Does.Contain("don't see a villager"));
     }
 }

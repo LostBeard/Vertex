@@ -886,6 +886,102 @@ public sealed class Skills(MinecraftClient client)
         return (learned > 0 || doors > 0, string.Join(" ", parts));
     }
 
+    // ---------------------------------------------------------------- trading with villagers
+
+    /// <summary>The nearest villager or wandering trader we know of (within 48 blocks).</summary>
+    public Entity? FindMerchant()
+    {
+        var (x, y, z) = client.Position;
+        return client.Entities.Values.Where(e => e.Name is "minecraft:villager" or "minecraft:wandering_trader" && e.DistanceTo(x, y, z) < 48)
+            .OrderBy(e => e.DistanceTo(x, y, z)).FirstOrDefault();
+    }
+
+    /// <summary>Walks up to the nearest merchant and opens its trades (null window and a reason when that is not possible).</summary>
+    private async Task<(ContainerWindow? Window, Entity? Merchant, string Why)> OpenNearestMerchantAsync(CancellationToken ct)
+    {
+        var merchant = FindMerchant();
+        if (merchant == null) return (null, null, "I don't see a villager or trader anywhere near.");
+        await client.GoToAsync(Goal.Near(merchant.X, merchant.Y, merchant.Z, 2.0), null, ct);
+        merchant = client.Entities.TryGetValue(merchant.Id, out var now) ? now : merchant;
+        var window = await client.OpenTradesAsync(merchant, ct);
+        return window == null
+            ? (null, merchant, $"That {merchant.Name.Bare().Replace('_', ' ')} won't trade: it may have no job yet (a nitwit or unemployed villager), be a baby, or be asleep.")
+            : (window, merchant, "");
+    }
+
+    private static string LevelName(int level) => level switch { 1 => "novice", 2 => "apprentice", 3 => "journeyman", 4 => "expert", 5 => "master", _ => "villager" };
+
+    private static string Plain(string itemName) => itemName.Bare().Replace('_', ' ');
+
+    private static string Price(Trade t) => $"{t.PriceA} {Plain(t.CostA.Name)}" + (t.CostB != null ? $" and {t.PriceB} {Plain(t.CostB.Name)}" : "");
+
+    /// <summary>Says what the nearest villager or trader offers (walks up to it and looks; buys nothing).</summary>
+    public async Task<(bool, string)> VillagerOffersAsync(CancellationToken ct)
+    {
+        var (window, merchant, why) = await OpenNearestMerchantAsync(ct);
+        if (window == null) return (false, why);
+        try
+        {
+            var lines = window.Trades.Select(t => $"{Price(t)} for {t.Result.Count} {Plain(t.Result.Name)}" + (t.OutOfStock || t.UsesLeft == 0 ? " (sold out)" : ""));
+            return (true, $"This {LevelName(window.MerchantLevel)} {Plain(merchant!.Name)} trades: {string.Join("; ", lines)}.");
+        }
+        finally { await client.CloseWindowAsync(ct); }
+    }
+
+    /// <summary>
+    /// Trades with the nearest villager or trader. `want` is what to GET ("emerald", "bread"), `give` is what to hand over ("wheat"); either or both. With only `want`, buys about `count`
+    /// of it; with only `give`, sells about `count` of it (0 = all we have); with both, uses the trade that gives `want` for `give`.
+    /// </summary>
+    public async Task<(bool, string)> TradeWithVillagerAsync(string? want, string? give, int count, CancellationToken ct)
+    {
+        want = string.IsNullOrWhiteSpace(want) ? null : want.Trim().ToLowerInvariant();
+        give = string.IsNullOrWhiteSpace(give) ? null : give.Trim().ToLowerInvariant();
+        if (want == null && give == null) return (false, "Trade what? Tell me what to buy or what to sell.");
+        var (window, merchant, why) = await OpenNearestMerchantAsync(ct);
+        if (window == null) return (false, why);
+        try
+        {
+            var matching = window.Trades.Where(t => (want == null || t.Gives(want)) && (give == null || t.Wants(give))).ToList();
+            if (matching.Count == 0)
+                return (false, $"It doesn't {(want != null && give != null ? $"give {want} for {give}" : want != null ? $"sell {want}" : $"buy {give}")}. " + OffersSummary(window));
+            // The best trade we can actually do: in stock, ingredients in hand, the most for what we have.
+            var plan = matching.Where(t => t.UsesLeft > 0).Select(t => (Trade: t, Times: MaxTimes(t))).Where(x => x.Times > 0)
+                .OrderByDescending(x => x.Trade.Result.Count * x.Times).ThenBy(x => x.Trade.PriceA).FirstOrDefault();
+            if (plan.Trade == null)
+            {
+                var t = matching[0];
+                return (false, t.UsesLeft == 0
+                    ? $"The {Plain(merchant!.Name)} is sold out of that for now: {t}."
+                    : $"I can't pay for that yet: it costs {Price(t)} and I have {client.Inventory.Count(t.CostA.Name)} {Plain(t.CostA.Name)}.");
+            }
+            var trade = plan.Trade;
+            // How many trades: to get `count` of the result, or to sell `count` of the ingredient (all of it when 0), never more than the stock or our ingredients allow.
+            var times = want != null
+                ? Math.Max(1, (int)Math.Ceiling(Math.Max(count, 1) / (double)trade.Result.Count))
+                : count <= 0 ? int.MaxValue : Math.Max(1, count / Math.Max(1, trade.PriceA));
+            times = Math.Min(times, plan.Times);
+            var costBefore = client.Inventory.Count(trade.CostA.Name);
+            var gotBefore = client.Inventory.Count(trade.Result.Name);
+            var done = await client.TradeAsync(trade.Index, times, ct);
+            var paid = costBefore - client.Inventory.Count(trade.CostA.Name);
+            var got = client.Inventory.Count(trade.Result.Name) - gotBefore;
+            if (done == 0) return (false, "The trade didn't go through.");
+            return (true, $"I traded {paid} {Plain(trade.CostA.Name)}" + (trade.CostB != null ? $" and {done * trade.PriceB} {Plain(trade.CostB.Name)}" : "")
+                + $" for {got} {Plain(trade.Result.Name)} ({done} trade{(done == 1 ? "" : "s")}).");
+        }
+        finally { if (client.OpenWindow != null) await client.CloseWindowAsync(ct); }
+
+        int MaxTimes(Trade t)
+        {
+            var byA = client.Inventory.Count(t.CostA.Name) / Math.Max(1, t.PriceA);
+            var byB = t.CostB == null ? int.MaxValue : client.Inventory.Count(t.CostB.Name) / Math.Max(1, t.PriceB);
+            return Math.Min(Math.Min(byA, byB), t.UsesLeft);
+        }
+    }
+
+    private static string OffersSummary(ContainerWindow window) =>
+        "It offers: " + string.Join("; ", window.Trades.Select(t => $"{Price(t)} for {t.Result.Count} {Plain(t.Result.Name)}")) + ".";
+
     // ---------------------------------------------------------------- farming
 
     /// <summary>Crops: the block, its ripe age, and the item that replants it.</summary>

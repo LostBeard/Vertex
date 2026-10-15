@@ -272,6 +272,27 @@ public static class GameTools
                 return Task.FromResult("OK: I started harvesting the ripe crops. I will replant as I go.");
             });
 
+        yield return new GameTool("villager_trades",
+            "Walk to the nearest villager or wandering trader and look at what it trades (does not buy anything). Use when asked what a villager sells or buys.",
+            NoArgs,
+            _ =>
+            {
+                tasks.Start("looking at a villager's trades", ct => skills.VillagerOffersAsync(ct));
+                return Task.FromResult("OK: I started walking over to the nearest villager to see its trades. I will say what they are.");
+            });
+
+        yield return new GameTool("trade",
+            "Trade with the nearest villager or wandering trader: buy something with emeralds or other items, or sell things for emeralds. 'want' is what to get (emerald, bread, diamond), 'give' is what to hand over (wheat, coal).",
+            """{"type":"object","properties":{"want":{"type":"string","description":"what to get from the villager, e.g. emerald, bread"},"give":{"type":"string","description":"what to hand over, e.g. wheat, emerald"},"count":{"type":"integer","description":"how many of the wanted item to get (or of the given item to sell); 0 = sell all"}}}""",
+            a =>
+            {
+                var want = Str(a, "want");
+                var give = Str(a, "give");
+                var count = Math.Clamp(Int(a, "count", 0), 0, 640);
+                tasks.Start($"trading with a villager ({give ?? "?"} for {want ?? "?"})", ct => skills.TradeWithVillagerAsync(want, give, want != null && count <= 0 ? 1 : count, ct));
+                return Task.FromResult("OK: I started walking over to the nearest villager to trade. It takes a few seconds - I have NOT traded yet.");
+            });
+
         yield return new GameTool("smelt",
             "Smelt or cook in a furnace: iron_ingot from raw iron, glass from sand, cooked_beef from beef, charcoal from logs. Builds a furnace from cobblestone if none is near. Takes 10 seconds per item.",
             """{"type":"object","properties":{"result":{"type":"string","description":"what to make, e.g. iron_ingot, glass, cooked_porkchop"},"count":{"type":"integer"}},"required":["result"]}""",
