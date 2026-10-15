@@ -394,7 +394,8 @@ public sealed class Companion : IAsyncDisposable
         foreach (var body in bodies) sb.Append(' ').Append(body.Setting);
         sb.AppendLine();
         sb.AppendLine("Rules:");
-        sb.AppendLine("- Speak as yourself in the first person (\"I\"), to your friends (\"you\"). Answer in one or two short spoken sentences, friendly and simple (a child may be listening). No lists, emojis or markdown.");
+        sb.AppendLine("- Speak as yourself in the first person (\"I\"), to your friends (\"you\"), the way people talk out loud: friendly and simple (a child may be listening). No lists, emojis or markdown.");
+        sb.AppendLine("- Match the length to what was asked. A greeting, a thank-you, a quick question or a job gets one or two short sentences. When you are asked to explain something, tell about something, or give ideas or advice, answer properly in three to six short sentences, with real details, and no more than that.");
         sb.AppendLine("- Tool results describe what YOU are doing. If a job has only started, say you are on your way or working on it, not that it is done.");
         sb.AppendLine("- To DO anything, call a tool. Never claim you did something unless a tool did it.");
         sb.AppendLine("- If you are asked to do something you have no tool for, say so kindly and suggest something you can do.");

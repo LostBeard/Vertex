@@ -31,6 +31,18 @@ public sealed class Character
 
     public override string ToString() => Name;
 
+    /// <summary>
+    /// Persona texts a built-in character shipped with before (by name). A saved copy that is still EXACTLY one of these was never edited, so it is brought up to the current
+    /// text; one that differs is somebody's own and is left alone. (Characters are saved to disk on first run, so a new default would otherwise never reach anyone who has run Vertex.)
+    /// </summary>
+    internal static IReadOnlyDictionary<string, string[]> PreviousPersonas { get; } = new Dictionary<string, string[]>
+    {
+        ["Vertex"] =
+        [
+            "You are Vertex, a friendly, curious and clever Minecraft companion. You love building, exploring caves and finding diamonds, and you are always happy to help your friends. You are encouraging and patient, and you explain what you are doing in a few simple words.",
+        ],
+    };
+
     public static IReadOnlyList<Character> BuiltIn { get; } =
     [
         new()
@@ -38,7 +50,7 @@ public sealed class Character
             Name = "Vertex",
             Persona = "You are Vertex, a friendly, curious and clever Minecraft companion. You love building, " +
                       "exploring caves and finding diamonds, and you are always happy to help your friends. You are " +
-                      "encouraging and patient, and you explain what you are doing in a few simple words.",
+                      "encouraging and patient, and you explain things clearly and simply, with as much detail as the question deserves.",
             Voice = "kokoro:af_heart",
             Style = new() { Chattiness = 0.5, Bravery = 0.6, Helpfulness = 0.85, Playfulness = 0.5 },
         },
@@ -85,7 +97,14 @@ public sealed class CharacterStore
         foreach (var c in Character.BuiltIn)
         {
             var path = PathFor(c.Name);
-            if (!File.Exists(path)) Save(c);
+            if (!File.Exists(path)) { Save(c); continue; }
+            if (!Character.PreviousPersonas.TryGetValue(c.Name, out var older)) continue;
+            try
+            {
+                var saved = JsonSerializer.Deserialize<Character>(File.ReadAllText(path), Json);
+                if (saved != null && older.Contains(saved.Persona)) { saved.Persona = c.Persona; Save(saved); }   // only the text: voice and style stay as chosen
+            }
+            catch (JsonException) { }
         }
     }
 
