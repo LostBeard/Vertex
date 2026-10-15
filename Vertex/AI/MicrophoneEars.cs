@@ -220,7 +220,7 @@ public sealed class MicrophoneEars : IAsyncDisposable
                     catch (OperationCanceledException) { throw; }
                     catch (Exception e) { Log?.Invoke("speaker identification failed: " + e.Message); }
                 }
-                Log?.Invoke($"heard{(speaker?.Name is { } who ? " (" + who + (speaker.Reliable ? "" : ", short") + ")" : "")}: \"{text}\" ({seconds:0.0} s, text in {stt.ElapsedMilliseconds} ms{(speaker != null ? ", voice in " + speaker.EmbedMs.ToString("0") + " ms" : "")}, turn ended: {why})");
+                Log?.Invoke($"heard{(speaker?.Name is { } who ? " (" + who + (speaker.Reliable ? "" : ", short") + ")" : "")}: \"{text}\" ({seconds:0.0} s, {measure.RmsDb:0} dB rms, {measure.PeakDb:0.0} dB peak, text in {stt.ElapsedMilliseconds} ms{(speaker != null ? ", voice in " + speaker.EmbedMs.ToString("0") + " ms" : "")}, turn ended: {why})");
                 if (SaveFolder is { Length: > 0 } folder) SaveHeard(folder, samples, text, seconds, speaker, stt.Elapsed.TotalMilliseconds);
                 Heard?.Invoke(new HeardUtterance(text, seconds, ended, stt.Elapsed.TotalMilliseconds, speaker));
             }
