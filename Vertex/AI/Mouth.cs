@@ -31,7 +31,7 @@ public sealed class Mouth : IAsyncDisposable
     private int _openReplies, _rendering, _playing;
 
     private sealed record Line(string Text, IReadOnlyList<IVoiceChannel> To, Action? OnStarted, int Epoch);
-    private sealed record Clip(float[] Pcm, IReadOnlyList<IVoiceChannel> To, Action? OnStarted, int Epoch);
+    private sealed record Clip(float[] Pcm, IReadOnlyList<IVoiceChannel> To, Action? OnStarted, int Epoch, IReadOnlyDictionary<IVoiceChannel, Task<object>>? Prepared = null);
 
     /// <summary>The Kokoro voice ("kokoro:af_heart"...).</summary>
     public string VoiceId { get; set; } = "kokoro:af_heart";
@@ -119,7 +119,11 @@ public sealed class Mouth : IAsyncDisposable
                     var (samples, rate) = await _tts(sentence, VoiceId, ct);
                     if (rate != 24000) throw new InvalidOperationException($"unexpected TTS rate {rate}");
                     if (Stale(line.Epoch)) break;
-                    await _clips.Writer.WriteAsync(new Clip(samples, line.To, first ? line.OnStarted : null, line.Epoch), ct);
+                    // A channel that needs time to get a clip ready (the robot uploads it) starts on it NOW, while the clip before is still playing.
+                    Dictionary<IVoiceChannel, Task<object>>? prepared = null;
+                    foreach (var channel in line.To.Where(c => c.CanSpeak).OfType<IPreparingVoiceChannel>())
+                        (prepared ??= [])[channel] = channel.PrepareAsync(samples, ct);
+                    await _clips.Writer.WriteAsync(new Clip(samples, line.To, first ? line.OnStarted : null, line.Epoch, prepared), ct);
                     first = false;
                 }
             }
@@ -146,7 +150,7 @@ public sealed class Mouth : IAsyncDisposable
             try
             {
                 clip.OnStarted?.Invoke();
-                await Task.WhenAll(speakers.Select(s => PlayOnAsync(s, clip.Pcm, cts.Token)));
+                await Task.WhenAll(speakers.Select(s => PlayOnAsync(s, clip.Pcm, clip.Prepared?.GetValueOrDefault(s), cts.Token)));
             }
             catch (OperationCanceledException) when (_cts.IsCancellationRequested) { return; }
             catch (OperationCanceledException) { Log?.Invoke("stopped talking (interrupted)"); }
@@ -159,9 +163,13 @@ public sealed class Mouth : IAsyncDisposable
     }
 
 
-    private async Task PlayOnAsync(IVoiceChannel channel, float[] pcm, CancellationToken ct)
+    private async Task PlayOnAsync(IVoiceChannel channel, float[] pcm, Task<object>? prepared, CancellationToken ct)
     {
-        try { await channel.PlayAsync(pcm, ct); }
+        try
+        {
+            if (prepared != null && channel is IPreparingVoiceChannel preparing) await preparing.PlayPreparedAsync(await prepared, ct);
+            else await channel.PlayAsync(pcm, ct);
+        }
         catch (Exception e) when (e is not OperationCanceledException) { Log?.Invoke($"playing on {channel.Name} failed: {e.Message}"); }
     }
 

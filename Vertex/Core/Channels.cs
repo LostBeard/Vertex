@@ -38,6 +38,19 @@ public interface IVoiceChannel : IAsyncDisposable
     string HeardThrough => "through " + Name;
 }
 
+/// <summary>
+/// A channel whose clips take time to get ready for playing (the robot: every clip is uploaded over Wi-Fi to its daemon first). The mouth prepares the NEXT sentence while the
+/// current one plays, so the gap between two sentences is not an upload. Measured live 2026-10-15: clips of 4 to 6 s of speech left 3 to 4 s of silence between them, all of it upload.
+/// </summary>
+public interface IPreparingVoiceChannel : IVoiceChannel
+{
+    /// <summary>Gets a clip ready to play (upload it). Called as soon as a sentence has been made, possibly while another clip is playing; the result goes to <see cref="PlayPreparedAsync"/>.</summary>
+    Task<object> PrepareAsync(float[] pcm24k, CancellationToken ct);
+
+    /// <summary>Plays a clip made ready by <see cref="PrepareAsync"/> and returns when it has been heard.</summary>
+    Task PlayPreparedAsync(object prepared, CancellationToken ct);
+}
+
 /// <summary>A line heard on a channel.</summary>
 /// <param name="Channel">Where it was heard (the answer goes back there).</param>
 /// <param name="SpeakerKey">Who, as the channel knows them (a Minecraft UUID; "room" for the robot's microphone).</param>

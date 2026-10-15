@@ -16,7 +16,7 @@ namespace Vertex.Reachy;
 /// length plus 250 ms - <c>play_sound</c> only QUEUES, and the next clip started early cuts this one off.
 /// The head lifts clear of the chest speaker before each line (it muffles the sound otherwise).
 /// </remarks>
-public sealed class ReachyChannel : IVoiceChannel
+public sealed class ReachyChannel : IPreparingVoiceChannel
 {
     private readonly ReachyMiniClient _robot;
     private readonly RoseAudioLink _link;
@@ -197,13 +197,33 @@ public sealed class ReachyChannel : IVoiceChannel
         set { if (_ears != null) _ears.Muted = value; }
     }
 
+    /// <summary>A clip uploaded to the robot and ready to play.</summary>
+    private sealed record Prepared(string Name, int Samples);
+
     public async Task PlayAsync(float[] pcm24k, CancellationToken ct)
     {
         if (pcm24k.Length == 0) return;
+        await PlayPreparedAsync(await PrepareAsync(pcm24k, ct), ct);
+    }
+
+    /// <summary>Loudens the clip and uploads it to the robot (a few seconds of Wi-Fi for a long sentence), so playing it later is only a command.</summary>
+    public async Task<object> PrepareAsync(float[] pcm24k, CancellationToken ct)
+    {
+        if (pcm24k.Length == 0) return new Prepared("", 0);
         var pcm = Loudify(pcm24k);
         var name = $"vertex_{Interlocked.Increment(ref _clip) % 64}.wav"; // a small ring of names: the robot keeps every upload
+        var clock = System.Diagnostics.Stopwatch.StartNew();
         using (var wav = new MemoryStream(BuildWav(pcm, 24000)))
             await _robot.UploadSoundAsync(name, wav, ct);
+        Log?.Invoke($"uploaded {name} ({pcm.Length * 2 / 1024} KB) in {clock.ElapsedMilliseconds} ms");
+        return new Prepared(name, pcm.Length);
+    }
+
+    /// <summary>Plays a clip made ready by <see cref="PrepareAsync"/>.</summary>
+    public async Task PlayPreparedAsync(object prepared, CancellationToken ct)
+    {
+        var (name, samples) = (Prepared)prepared;
+        if (samples == 0) return;
         if (LiftHeadToSpeak)
             try { await _robot.GotoAsync(headPose: new XyzRpyPose(Z: ReachyBody.HeadLiftMax, Pitch: -0.05), duration: 0.4, interpolation: Interpolation.EaseInOut, ct: ct); }
             catch (Exception e) when (e is not OperationCanceledException) { /* posture never blocks speech */ }
@@ -212,7 +232,7 @@ public sealed class ReachyChannel : IVoiceChannel
         try
         {
             await _robot.PlaySoundAsync(name, ct);
-            await Task.Delay(TimeSpan.FromSeconds(pcm.Length / 24000.0) + TimeSpan.FromMilliseconds(250), ct);
+            await Task.Delay(TimeSpan.FromSeconds(samples / 24000.0) + TimeSpan.FromMilliseconds(250), ct);
         }
         catch (OperationCanceledException)
         {
@@ -222,7 +242,7 @@ public sealed class ReachyChannel : IVoiceChannel
         finally
         {
             // Start and end of every clip, so non-overlap can be checked from the log, not only by ear (Reachy CLAUDE.md).
-            Log?.Invoke($"played {name} ({pcm.Length / 24000.0:0.00} s) in {sw.Elapsed.TotalSeconds:0.00} s");
+            Log?.Invoke($"played {name} ({samples / 24000.0:0.00} s) in {sw.Elapsed.TotalSeconds:0.00} s");
             Playing?.Invoke(false);
         }
     }
