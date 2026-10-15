@@ -198,6 +198,58 @@ public class PeopleTests
         Assert.That(faces.Profiles.Select(p => p.Name).OrderBy(n => n), Is.EqualTo(new[] { "Aubri", "Todd" }));
     }
 
+    [Test]
+    public void ANamedPersonOutranksANearDuplicateGuest_SoTheyAreNotCalledAVisitor()
+    {
+        // Seen live: the same face was filed as a guest, later enrolled under a name, and the two profiles then scored almost alike - "not sure" - so the person stayed a visitor.
+        var faces = NewFaces();
+        faces.Observe(Person(41, 1), 1, out var guest);                 // a stranger: filed as a visitor
+        faces.Enroll("Todd", Person(41, 2), 1);                         // the same person, enrolled from another look
+        var look = Person(41, 3);
+        // The precondition that makes this the live case: guest and named score within the margin of each other, so the OLD rule (best vs runner-up over everyone) said "not sure".
+        var scores = faces.Profiles.Select(p => SpeakerRegistry.Cosine(look, p.Centroid!)).OrderByDescending(x => x).ToArray();
+        Assert.That(scores[0] - scores[1], Is.LessThan(faces.MinMargin), "the guest and the named profile are too close for the margin rule");
+        Assert.That(scores[0], Is.GreaterThan(faces.AcceptThreshold));
+        var match = faces.Identify(look);
+        Assert.That(match.Known, Is.True, "the named profile wins over the guest that looks the same");
+        Assert.That(match.Name, Is.EqualTo("Todd"));
+        Assert.That(guest!.IsGuest, Is.True);
+    }
+
+    [Test]
+    public void ADuplicateGuestIsMergedIntoTheNamedPerson_AnUnrelatedGuestIsNot()
+    {
+        var faces = NewFaces();
+        faces.Observe(Person(41, 1), 1, out var duplicate);
+        faces.Enroll("Todd", Person(41, 2), 1);
+        faces.Observe(Person(77, 1), 1, out var stranger);
+        var merged = faces.AbsorbDuplicateGuests();
+        Assert.That(merged, Is.EqualTo(new[] { duplicate!.Name }));
+        Assert.That(faces.Profiles.Select(p => p.Name).OrderBy(n => n), Is.EqualTo(new[] { "Todd", stranger!.Name }.OrderBy(n => n)));
+        Assert.That(faces.Profiles.Single(p => p.Name == "Todd").Embeddings.Count, Is.EqualTo(2), "the guest's look joined Todd's face");
+    }
+
+    [Test]
+    public void AConfidentNewLookRefinesTheNamedFace_ACopyOfWhatIsHeldDoesNot()
+    {
+        var faces = NewFaces();
+        Enrolled(faces, "Todd", 51, Now.AddMinutes(-1));
+        var watcher = new FaceWatcher(faces);
+        var before = faces.Profiles.Single().Embeddings.Count;
+        // The very same embedding as one already held: nothing new to learn.
+        watcher.Observe([Look(faces, Person(51, 1))], Seen(faces), 1000, Now);
+        Assert.That(faces.Profiles.Single().Embeddings.Count, Is.EqualTo(before), "an exact copy is not added");
+        // The same person from a noticeably different angle (a larger variation of the same face): worth keeping.
+        var different = Person(51);
+        var rnd = new Random(5);
+        for (var i = 0; i < Dim; i++) different[i] += (float)(rnd.NextDouble() * 2 - 1) * 0.12f;
+        var norm = MathF.Sqrt(different.Sum(x => x * x)); for (var i = 0; i < Dim; i++) different[i] /= norm;
+        var result = Look(faces, different);
+        Assert.That(result.Match!.Known, Is.True);
+        watcher.Observe([result], Seen(faces), 5000, Now.AddSeconds(4));
+        Assert.That(faces.Profiles.Single().Embeddings.Count, Is.GreaterThan(before), "a confident look from another angle joins the face");
+    }
+
     // ── the people list ──
 
     private static (SpeakerRegistry Voices, SpeakerRegistry Faces, PeopleDirectory People, List<string> Saves) Directory()

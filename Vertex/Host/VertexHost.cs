@@ -320,6 +320,10 @@ public sealed class VertexHost : IAsyncDisposable
             // Started once its bodies are attached: the prompt and every body's tools are prefilled once, not again per
             // body (each Attach to a running companion prefills again).
             _companion.Start();
+            // The first prefill of the system prompt and tools takes most of a minute in a new process (kernels compile on first use) and holds the GPU: speak only after it, or the
+            // greeting stops after its first word and finishes a minute later.
+            SetStatus(HostState.Starting, "Getting the language model ready (the first time takes about a minute)...");
+            await Task.WhenAny(_companion.WhenPrimed, Task.Delay(TimeSpan.FromMinutes(6)));
             SetStatus(HostState.Playing, OnStatus());
             if (_robot != null && _brain == null) _companion.Say($"Hi! It's {character.Name}. I'm here.");
         }

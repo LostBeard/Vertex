@@ -78,6 +78,19 @@ public sealed class FaceWatcher
     /// <summary>A face being learned must still look this much like the face learned so far (cosine to its centre).</summary>
     public float LearnSameFaceScore { get; set; } = 0.30f;
 
+    /// <summary>A named person is only refined by a match at least this good (cosine to the profile): a poor match must not rewrite who someone is.</summary>
+    public float RefineMinScore { get; set; } = 0.5f;
+
+    /// <summary>...and only by a look that is not nearly a copy of what the profile already holds (cosine to its centre below this): the same frame sixteen times would push every other angle out.</summary>
+    public float RefineMaxSimilarity { get; set; } = 0.88f;
+
+    /// <summary>Least time between two refinements of the same person.</summary>
+    public TimeSpan RefineSpacing { get; set; } = TimeSpan.FromSeconds(2);
+
+    private readonly Dictionary<string, long> _refinedTick = new(StringComparer.OrdinalIgnoreCase);
+    private long _savedTick;
+    private int _looks;
+
     /// <summary>Raised when a named person has come back after <see cref="Absence"/>.</summary>
     public event Action<Arrival>? Arrived;
 
@@ -146,6 +159,26 @@ public sealed class FaceWatcher
             }
             foreach (var key in _streak.Keys.ToList()) if (!seenNow.Contains(key)) _streak[key] = 0;
             _visible = visible;
+
+            // A person is seen from many angles in many lights: a confident, NEW-looking match adds to their face, so the next look from that angle is them too.
+            foreach (var r in results)
+            {
+                if (r.Embedding == null || r.Match is not { Known: true } m || r.Match.Name == null || IsGuest(m.Name!) || m.Score < RefineMinScore || r.Face.Width < 60) continue;
+                if (_refinedTick.TryGetValue(m.Name!, out var last) && nowTick - last < RefineSpacing.TotalMilliseconds) continue;
+                var profile = _faces.Profiles.FirstOrDefault(p => string.Equals(p.Name, m.Name, StringComparison.OrdinalIgnoreCase));
+                if (profile?.Centroid == null || SpeakerRegistry.Cosine(r.Embedding, profile.Centroid) > RefineMaxSimilarity) continue;
+                _faces.Refine(m.Name!, r.Embedding, 1);
+                _refinedTick[m.Name!] = nowTick;
+                if (nowTick - _savedTick > 20_000) { _savedTick = nowTick; changed = true; }
+            }
+
+            // Guests that are plainly a named person under another name (an angle that failed the threshold once and was filed on its own) are merged into them.
+            if (++_looks % 10 == 0)
+                foreach (var gone in _faces.AbsorbDuplicateGuests())
+                {
+                    _log?.Invoke($"{gone} was the same person as someone already known: merged");
+                    changed = true;
+                }
         }
         if (changed) _changed?.Invoke();
         foreach (var a in arrivals) Arrived?.Invoke(a);

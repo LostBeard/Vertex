@@ -137,6 +137,14 @@ public sealed class Companion : IAsyncDisposable
     public static Guid SpeakerId(string key) =>
         Guid.TryParse(key, out var g) ? g : new Guid(MD5.HashData(Encoding.UTF8.GetBytes(key)));
 
+    private readonly TaskCompletionSource _primed = new(TaskCreationOptions.RunContinuationsAsynchronously);
+
+    /// <summary>
+    /// Completes when the system prompt and tools have been prefilled once (or the attempt ended). Measured live 2026-10-15 that first prefill takes 43 s (the language model's kernels for a
+    /// prompt that long compile on first use), and everything that needs the GPU waits behind it: the robot said "Hi!" and then nothing for a minute. A host awaits this BEFORE it speaks.
+    /// </summary>
+    public Task WhenPrimed => _primed.Task;
+
     public void Start()
     {
         _events.Writer.TryWrite(new PrimeEvent());
@@ -259,7 +267,7 @@ public sealed class Companion : IAsyncDisposable
             var forPerson = e is SaidEvent;
             if (!forPerson) Log?.Invoke($"  (turn: {e.GetType().Name})");
             using var cts = CancellationTokenSource.CreateLinkedTokenSource(ct);
-            cts.CancelAfter(TurnTimeout);
+            cts.CancelAfter(e is PrimeEvent ? TimeSpan.FromMinutes(5) : TurnTimeout);   // the first prefill of a new process is slow: not a lost train of thought
             var turn = new Turn(cts, forPerson, interruptible: e is not PrimeEvent) { Said = e as SaidEvent };
             var clock = e is SaidEvent heard ? new TurnClock(heard.HeardTick, heard.SttMs) : new TurnClock();
             Volatile.Write(ref _turn, turn);
@@ -309,7 +317,8 @@ public sealed class Companion : IAsyncDisposable
         switch (e)
         {
             case PrimeEvent:
-                await PrimeAsync(ct);
+                try { await PrimeAsync(ct); }
+                finally { _primed.TrySetResult(); }
                 return;
             case SaidEvent s when IsAddressed(s):
                 CurrentSpeaker = s.SpeakerName;
