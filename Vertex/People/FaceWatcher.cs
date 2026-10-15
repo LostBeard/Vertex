@@ -13,7 +13,8 @@ public sealed record Arrival(string Name, TimeSpan Absence);
 /// <param name="IsGuest">True for a stranger nobody named.</param>
 /// <param name="Left">Box left edge in the picture (pixels), so a caller can tell who is on which side.</param>
 /// <param name="Width">Box width.</param>
-public sealed record VisiblePerson(string? Name, bool IsGuest, float Left, float Width, long LastSeenTick);
+/// <param name="FrameWidth">Width of the picture the box is in (pixels), so the box's place can be turned into an angle.</param>
+public sealed record VisiblePerson(string? Name, bool IsGuest, float Left, float Width, long LastSeenTick, int FrameWidth = 0);
 
 /// <summary>
 /// What the camera shows, turned into events a companion can use: who is in view, who has just walked in after a long absence (so the robot can say hi), and
@@ -113,7 +114,7 @@ public sealed class FaceWatcher
     /// One look at the camera. <paramref name="previousLastSeen"/> is, for each named person, when they were last seen BEFORE this look (UTC ticks; the registry has already
     /// been updated by it), so the absence is measured against the true previous sighting.
     /// </summary>
-    public void Observe(IReadOnlyList<AiFaceResult> results, IReadOnlyDictionary<string, long> previousLastSeen, long nowTick, DateTime? utcNow = null)
+    public void Observe(IReadOnlyList<AiFaceResult> results, IReadOnlyDictionary<string, long> previousLastSeen, long nowTick, DateTime? utcNow = null, int frameWidth = 0)
     {
         var arrivals = new List<Arrival>();
         var changed = false;
@@ -129,7 +130,7 @@ public sealed class FaceWatcher
             foreach (var r in results)
             {
                 var name = r.Name;
-                visible.Add(new VisiblePerson(name, name != null && IsGuest(name), r.Face.X, r.Face.Width, nowTick));
+                visible.Add(new VisiblePerson(name, name != null && IsGuest(name), r.Face.X, r.Face.Width, nowTick, frameWidth));
                 if (name == null || IsGuest(name)) continue;
                 seenNow.Add(name);
                 var streak = _streak.GetValueOrDefault(name);

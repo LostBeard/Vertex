@@ -154,7 +154,7 @@ public sealed class ReachyChannel : IVoiceChannel
             try
             {
                 var look = await _ai.LookAsync(frame.Bgra, frame.Width, frame.Height, _voiceCts.Token);
-                _watcher.Observe(look.Results, look.PreviousLastSeen, Environment.TickCount64);
+                _watcher.Observe(look.Results, look.PreviousLastSeen, Environment.TickCount64, frameWidth: frame.Width);
             }
             catch (OperationCanceledException) { }
             catch (Exception e) { Log?.Invoke("[faces] look failed: " + e.Message); }

@@ -73,6 +73,37 @@ public sealed class RobotBody : IBody
 
     public string DescribeNow() => "";
 
+    /// <summary>Turn to face whoever talks to the robot (from the voice's direction and the faces in the camera). Off: it keeps looking where it was.</summary>
+    public bool FaceSpeaker { get; set; } = true;
+
+    private CancellationTokenSource? _recentre;
+
+    /// <summary>
+    /// A friend started talking to the robot: turn to face them, then, once it has been quiet for a minute and a half, turn back to the front. A voice from straight ahead, a face already
+    /// centred, or no direction at all makes no turn (see <see cref="Vertex.People.SpeakerGaze"/>).
+    /// </summary>
+    public void OnFriendSpoke(SaidEvent e)
+    {
+        if (_parked || !FaceSpeaker) return;
+        if (e.Channel != null && !ReferenceEquals(e.Channel, _channel)) return;
+        var target = Vertex.People.SpeakerGaze.Choose(_channel.Voice.Current(Environment.TickCount64), _channel.InView);
+        if (target == null) return;
+        Log?.Invoke($"facing {(target.Name ?? "the voice")}: {target.YawLeft * 180 / Math.PI:+0;-0;0} degrees ({(target.FromFace ? "a face matched the voice" : "from the voice direction")})");
+        _ = _body.TurnTowardAsync(target.YawLeft, _style);
+        // Back to the front after a quiet spell; each new turn restarts the wait.
+        var cts = new CancellationTokenSource();
+        Interlocked.Exchange(ref _recentre, cts)?.Cancel();
+        _ = Task.Run(async () =>
+        {
+            try
+            {
+                await Task.Delay(TimeSpan.FromSeconds(90), cts.Token);
+                if (!_parked) await _body.RecentreAsync(_style, ct: cts.Token);
+            }
+            catch (OperationCanceledException) { }
+        });
+    }
+
     /// <summary>
     /// "I'm Nikki", "my name is Nikki", "call me Nikki": the first name of someone introducing themselves, or null. The name must be capitalised (the
     /// speech recogniser capitalises names, not "I'm tired"), and "I'm Todd's friend" is not an introduction.
