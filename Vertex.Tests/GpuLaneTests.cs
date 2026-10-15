@@ -135,4 +135,32 @@ public class GpuLaneTests
         }
         await waiter;     // it gets the lane once the holder lets go
     }
+
+    /// <summary>The usage report says who held the GPU and for how long, and does not count the time a holder stepped aside for someone else.</summary>
+    [Test]
+    public async Task UsageSaysWhoHeldTheGpu_AndStepAsideTimeIsNotTheHoldersOwn()
+    {
+        var lane = new GpuLane();
+        long mark = Environment.TickCount64 - 1000;
+        var urgentIn = new TaskCompletionSource();
+        using (var chat = await lane.EnterAsync(who: "Chat"))
+        {
+            await Task.Delay(300);                                         // Chat works for 300 ms
+            var urgent = Task.Run(async () =>
+            {
+                using (await lane.EnterAsync(urgent: true, who: "Stt")) { urgentIn.TrySetResult(); await Task.Delay(400); }   // Stt works for 400 ms
+            });
+            await Task.Delay(50);                                           // let the urgent caller start waiting
+            await chat.YieldAsync();                                        // Chat steps aside for it, then continues
+            await urgent;
+            await Task.Delay(100);                                          // Chat works for another 100 ms
+        }
+        var text = lane.DescribeUsage(ref mark);
+        TestContext.Out.WriteLine(text);
+        Assert.That(text, Does.Contain("Chat 0.").And.Contain("(1x)"));
+        double Seconds(string who) => double.Parse(System.Text.RegularExpressions.Regex.Match(text, who + @" (\d+\.\d) s").Groups[1].Value, System.Globalization.CultureInfo.InvariantCulture);
+        Assert.That(Seconds("Chat"), Is.InRange(0.3, 0.6), "300 + 100 ms of its own work (+ the 50 ms wait), not the 400 ms it stood aside");
+        Assert.That(Seconds("Stt"), Is.InRange(0.3, 0.6));
+        Assert.That(lane.DescribeUsage(ref mark), Does.Contain("idle"), "the report starts a new window");
+    }
 }

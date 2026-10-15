@@ -28,6 +28,33 @@ public sealed class GpuLane
     private readonly SemaphoreSlim _gate = new(1, 1);
     private int _urgentWaiting;
     private volatile Hold? _holder;
+    private readonly object _usageLock = new();
+    private readonly Dictionary<string, (long Ms, int Count)> _usage = new();
+
+    /// <summary>
+    /// What each caller has HELD the GPU for since <paramref name="since"/> was last reset (the time a holder stepped aside for someone else is not counted): the
+    /// answer to "where did the time of this reply go". Names are the calling methods. Calls (not milliseconds) are counted once, when they start.
+    /// </summary>
+    public string DescribeUsage(ref long since)
+    {
+        Dictionary<string, (long Ms, int Count)> copy;
+        lock (_usageLock) { copy = new(_usage); _usage.Clear(); }
+        var now = Environment.TickCount64;
+        var window = Math.Max(1, now - since);
+        since = now;
+        var parts = copy.OrderByDescending(kv => kv.Value.Ms).Select(kv => $"{kv.Key} {kv.Value.Ms / 1000.0:0.0} s ({kv.Value.Count}x)");
+        var busy = copy.Values.Sum(v => v.Ms);
+        return $"GPU lane over {window / 1000.0:0.0} s: busy {Math.Min(100, busy * 100 / window)}%: " + (copy.Count == 0 ? "idle" : string.Join(", ", parts));
+    }
+
+    private void Account(string who, long ms, bool newCall)
+    {
+        lock (_usageLock)
+        {
+            _usage.TryGetValue(who, out var u);
+            _usage[who] = (u.Ms + ms, u.Count + (newCall ? 1 : 0));
+        }
+    }
 
     /// <summary>Who holds the lane right now (null when nobody does): for a caller to say who it waited for.</summary>
     public string? CurrentHolder => _holder is { } h && h.IsHeld ? h.Who : null;
@@ -59,6 +86,7 @@ public sealed class GpuLane
         }
         var hold = new Hold(this, who);
         _holder = hold;
+        Account(who, 0, newCall: true);
         return hold;
     }
 
@@ -76,6 +104,7 @@ public sealed class GpuLane
         private readonly GpuLane _lane;
         private int _state = Held;
         private readonly long _since = Environment.TickCount64;
+        private long _heldFrom = Environment.TickCount64;       // when this hold last took the GPU (at the start, and after each yield)
 
         internal Hold(GpuLane lane, string who) { _lane = lane; Who = who; }
 
@@ -96,12 +125,14 @@ public sealed class GpuLane
         {
             if (Volatile.Read(ref _lane._urgentWaiting) == 0) return;
             if (Interlocked.CompareExchange(ref _state, Yielded, Held) != Held) return;
+            _lane.Account(Who, Environment.TickCount64 - _heldFrom, newCall: false);
             _lane._gate.Release();
             // Give the waiter the first chance at the gate before taking it back.
             while (Volatile.Read(ref _lane._urgentWaiting) > 0 && _lane._gate.CurrentCount > 0)
                 await Task.Yield();
             await _lane._gate.WaitAsync().ConfigureAwait(false);
             _lane._holder = this;
+            _heldFrom = Environment.TickCount64;
             // Disposed while it waited (it cannot be, from its own thread, but a cancellation path may): hand the gate straight on.
             if (Interlocked.CompareExchange(ref _state, Held, Yielded) != Yielded) _lane._gate.Release();
             ct.ThrowIfCancellationRequested();
@@ -110,7 +141,11 @@ public sealed class GpuLane
         public void Dispose()
         {
             // Held: release it. Yielded: the GPU is not ours, nothing to release (a yield that finishes later sees Done and hands it back). Done: already released.
-            if (Interlocked.Exchange(ref _state, Done) == Held) _lane._gate.Release();
+            if (Interlocked.Exchange(ref _state, Done) == Held)
+            {
+                _lane.Account(Who, Environment.TickCount64 - _heldFrom, newCall: false);
+                _lane._gate.Release();
+            }
         }
     }
 }

@@ -149,6 +149,7 @@ public sealed class Companion : IAsyncDisposable
     {
         _events.Writer.TryWrite(new PrimeEvent());
         _loop = Task.Run(() => LoopAsync(_cts.Token));
+        _ = Task.Run(() => LaneReportLoopAsync(_cts.Token));
     }
 
     /// <summary>A tool did something (counted to catch a reply that claims an action no tool took).</summary>
@@ -652,6 +653,28 @@ public sealed class Companion : IAsyncDisposable
     }
 
     private int _disposed;
+
+    /// <summary>
+    /// While Vertex is thinking or talking, says every 10 s who held the GPU and for how long (the models share one lane, so a slow reply or a gap between sentences is time some
+    /// other call held it). Quiet when nothing is going on.
+    /// </summary>
+    private async Task LaneReportLoopAsync(CancellationToken ct)
+    {
+        var mark = Environment.TickCount64;
+        var wasActive = false;
+        using var timer = new PeriodicTimer(TimeSpan.FromSeconds(10));
+        try
+        {
+            while (await timer.WaitForNextTickAsync(ct).ConfigureAwait(false))
+            {
+                var active = IsThinking || Mouth.IsSpeaking;
+                var text = Ai.Lane.DescribeUsage(ref mark);
+                if (active || wasActive) Log?.Invoke(text);
+                wasActive = active;
+            }
+        }
+        catch (OperationCanceledException) { }
+    }
 
     public async ValueTask DisposeAsync()
     {
