@@ -52,6 +52,11 @@ public sealed class VertexSettings
     public bool ReachyFaces { get; set; } = true;
     /// <summary>Turn the robot to face whoever is talking to it: the way the voice came from, and the face that matches it. It turns back to the front after a minute and a half of quiet.</summary>
     public bool ReachyFaceSpeaker { get; set; } = true;
+    /// <summary>
+    /// Send the robot's speech as a live stream over the WebRTC connection instead of uploading each sentence to it first. No wait for an upload (3 to 4 s per sentence over Wi-Fi, measured), the
+    /// speech starts at once; the sound is Opus (the WebRTC speech codec) rather than the uploaded WAV. Off: upload and play, the way it worked before.
+    /// </summary>
+    public bool ReachyStreamSpeech { get; set; } = true;
     /// <summary>Keep looking at the person who is talking to the robot as they move around (a small correction after each look at the camera). Needs faces on.</summary>
     public bool ReachyFollowFaces { get; set; } = true;
     /// <summary>
@@ -392,7 +397,7 @@ public sealed class VertexHost : IAsyncDisposable
         SetStatus(HostState.Starting, $"Connecting to the robot ({Settings.ReachyHost})...");
         try
         {
-            _reachy = await ReachyChannel.ConnectAsync(Settings.ReachyHost, _ai!, Settings.ReachySmartTurn, Settings.ReachyLiveWords, Settings.ReachyFaces);
+            _reachy = await ReachyChannel.ConnectAsync(Settings.ReachyHost, _ai!, Settings.ReachySmartTurn, Settings.ReachyLiveWords, Settings.ReachyFaces, Settings.ReachyStreamSpeech);
             _reachy.Arrived += a => { if (_companion?.TryGreet(a.Name, a.Absence, _reachy) == true) Changed?.Invoke(); };
             _reachy.Hearing += (text, final) => { LiveCaption = final ? "" : text; Changed?.Invoke(); };
             if (!string.IsNullOrWhiteSpace(Settings.ReachySpeaker)) _reachy.RoomSpeakerName = Settings.ReachySpeaker.Trim();

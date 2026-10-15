@@ -24,6 +24,7 @@ public sealed class ReachyChannel : IPreparingVoiceChannel
     private readonly SpeakerTracker _speakers;
     private MicrophoneEars? _ears;
     private bool _faces;
+    private bool _streamSpeech;
     private Vertex.People.FaceWatcher? _watcher;
     private int _looking;
     private readonly CancellationTokenSource _voiceCts = new();
@@ -103,9 +104,10 @@ public sealed class ReachyChannel : IPreparingVoiceChannel
     /// <param name="smartTurn">Ask the end-of-turn model whether a pause is the end of what someone is saying (see <see cref="TurnAssembler"/>), instead of always waiting half a second.</param>
     /// <param name="liveWords">Also recognise the words WHILE they are spoken (streaming speech to text), reported through <see cref="Hearing"/>.</param>
     /// <param name="faces">Look at the camera: who is in view, learn the faces of people who are introduced, notice someone coming back after a long absence.</param>
-    public static async Task<ReachyChannel> ConnectAsync(string host, VertexAi ai, bool smartTurn = true, bool liveWords = false, bool faces = false, CancellationToken ct = default)
+    /// <param name="streamSpeech">Send speech to the robot as a live stream over WebRTC (no upload wait; Opus) instead of uploading each sentence as a WAV.</param>
+    public static async Task<ReachyChannel> ConnectAsync(string host, VertexAi ai, bool smartTurn = true, bool liveWords = false, bool faces = false, bool streamSpeech = false, CancellationToken ct = default)
     {
-        var channel = new ReachyChannel(host, ai) { _smartTurn = smartTurn, _liveWords = liveWords, _faces = faces };
+        var channel = new ReachyChannel(host, ai) { _smartTurn = smartTurn, _liveWords = liveWords, _faces = faces, _streamSpeech = streamSpeech };
         try
         {
             await channel.StartAsync(ct);
@@ -134,6 +136,7 @@ public sealed class ReachyChannel : IPreparingVoiceChannel
         _link.Log += m => Log?.Invoke("[link] " + m);
         // Subscribed BEFORE connecting: RoseAudioLink only starts its PCM capture when OnMicAudio has a handler.
         _link.OnMicAudio += pcm => _ears.Feed(pcm);
+        _link.StreamSpeech = _streamSpeech;
         if (_faces)
         {
             await _ai.WarmFacesAsync(ct);
@@ -206,11 +209,15 @@ public sealed class ReachyChannel : IPreparingVoiceChannel
         await PlayPreparedAsync(await PrepareAsync(pcm24k, ct), ct);
     }
 
-    /// <summary>Loudens the clip and uploads it to the robot (a few seconds of Wi-Fi for a long sentence), so playing it later is only a command.</summary>
+    /// <summary>A clip ready to be streamed: loudened, at the stream's 48 kHz.</summary>
+    private sealed record StreamClip(short[] Pcm48k);
+
+    /// <summary>Loudens the clip and uploads it to the robot (a few seconds of Wi-Fi for a long sentence), so playing it later is only a command. When speech is streamed there is nothing to upload.</summary>
     public async Task<object> PrepareAsync(float[] pcm24k, CancellationToken ct)
     {
         if (pcm24k.Length == 0) return new Prepared("", 0);
         var pcm = Loudify(pcm24k);
+        if (_link.Speech != null) return new StreamClip(Upsample2x(pcm));
         var name = $"vertex_{Interlocked.Increment(ref _clip) % 64}.wav"; // a small ring of names: the robot keeps every upload
         var clock = System.Diagnostics.Stopwatch.StartNew();
         using (var wav = new MemoryStream(BuildWav(pcm, 24000)))
@@ -222,6 +229,7 @@ public sealed class ReachyChannel : IPreparingVoiceChannel
     /// <summary>Plays a clip made ready by <see cref="PrepareAsync"/>.</summary>
     public async Task PlayPreparedAsync(object prepared, CancellationToken ct)
     {
+        if (prepared is StreamClip stream) { await StreamAsync(stream.Pcm48k, ct); return; }
         var (name, samples) = (Prepared)prepared;
         if (samples == 0) return;
         if (LiftHeadToSpeak)
@@ -245,6 +253,43 @@ public sealed class ReachyChannel : IPreparingVoiceChannel
             Log?.Invoke($"played {name} ({samples / 24000.0:0.00} s) in {sw.Elapsed.TotalSeconds:0.00} s");
             Playing?.Invoke(false);
         }
+    }
+
+    /// <summary>Speaks a clip through the live stream to the robot: head up, audio out in real time, returns when it has been heard. An interruption drops what is not yet sent AND what the robot has buffered.</summary>
+    private async Task StreamAsync(short[] pcm48k, CancellationToken ct)
+    {
+        var speech = _link.Speech!;
+        if (LiftHeadToSpeak)
+            try { await _robot.GotoAsync(headPose: new XyzRpyPose(Z: ReachyBody.HeadLiftMax, Pitch: -0.05), duration: 0.4, interpolation: Interpolation.EaseInOut, ct: ct); }
+            catch (Exception e) when (e is not OperationCanceledException) { /* posture never blocks speech */ }
+        Playing?.Invoke(true);
+        var sw = System.Diagnostics.Stopwatch.StartNew();
+        try { await speech.SpeakAsync(pcm48k, ct); }
+        catch (OperationCanceledException)
+        {
+            speech.Flush();
+            try { await _robot.ClearIncomingAudioAsync(CancellationToken.None); } catch { }
+            throw;
+        }
+        finally
+        {
+            Log?.Invoke($"streamed a clip ({pcm48k.Length / (double)RobotSpeechStreamer.SampleRate:0.00} s) in {sw.Elapsed.TotalSeconds:0.00} s");
+            Playing?.Invoke(false);
+        }
+    }
+
+    /// <summary>24 kHz to 48 kHz by linear interpolation (the stream's rate is the WebRTC Opus rate).</summary>
+    internal static short[] Upsample2x(short[] pcm24k)
+    {
+        var output = new short[pcm24k.Length * 2];
+        for (var i = 0; i < pcm24k.Length; i++)
+        {
+            var a = pcm24k[i];
+            var b = i + 1 < pcm24k.Length ? pcm24k[i + 1] : a;
+            output[2 * i] = a;
+            output[2 * i + 1] = (short)((a + b) / 2);
+        }
+        return output;
     }
 
     public Task ShowTextAsync(string text, CancellationToken ct) => Task.CompletedTask;
