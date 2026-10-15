@@ -210,7 +210,10 @@ public sealed class ReachyChannel : IPreparingVoiceChannel
     }
 
     /// <summary>A clip uploaded to the robot over its data channel (the way Pollen's SDK and the SpawnDev.AI demo send speech) and ready to play.</summary>
-    private sealed record DataPrepared(string UploadId, int Samples);
+    private sealed record DataPrepared(string UploadId, int Samples, short[] Pcm, bool Flac);
+
+    /// <summary>Set once the robot refuses a FLAC clip: from then on clips go up as WAV.</summary>
+    private volatile bool _flacRefused;
 
     /// <summary>A clip ready to be streamed: loudened, at the stream's 48 kHz.</summary>
     private sealed record StreamClip(short[] Pcm48k);
@@ -225,14 +228,7 @@ public sealed class ReachyChannel : IPreparingVoiceChannel
         // same WAV played by the same daemon call; only the transfer differs. REST stays as the fallback.
         if (_link.Data is { IsOpen: true } data)
         {
-            var timer = System.Diagnostics.Stopwatch.StartNew();
-            try
-            {
-                var wavBytes = BuildWav(pcm, 24000);
-                var id = await data.UploadAudioAsync(wavBytes, ct: ct);
-                Log?.Invoke($"uploaded {id} over the data channel ({wavBytes.Length / 1024} KB) in {timer.ElapsedMilliseconds} ms");
-                return new DataPrepared(id, pcm.Length);
-            }
+            try { return await UploadOverDataChannelAsync(data, pcm, _flacRefused, ct); }
             catch (Exception e) when (e is not OperationCanceledException)
             {
                 Log?.Invoke($"data channel upload failed ({e.Message}); using the REST upload");
@@ -244,6 +240,19 @@ public sealed class ReachyChannel : IPreparingVoiceChannel
             await _robot.UploadSoundAsync(name, wav, ct);
         Log?.Invoke($"uploaded {name} ({pcm.Length * 2 / 1024} KB) in {clock.ElapsedMilliseconds} ms");
         return new Prepared(name, pcm.Length);
+    }
+
+    /// <summary>Uploads over the data channel. FLAC is lossless and about half the bytes of the WAV, and the bytes are the wait: the robot stores the file under the extension in the encoding name and decodes it by content.</summary>
+    private async Task<DataPrepared> UploadOverDataChannelAsync(RobotDataChannel data, short[] pcm, bool wavOnly, CancellationToken ct)
+    {
+        var timer = System.Diagnostics.Stopwatch.StartNew();
+        var wav = BuildWav(pcm, 24000);
+        var flac = wavOnly ? null : FlacEncoder.Encode(pcm, 24000);
+        var useFlac = flac != null && flac.Length < wav.Length;
+        var bytes = useFlac ? flac! : wav;
+        var id = await data.UploadAudioAsync(bytes, useFlac ? "flac-base64" : "wav-base64", ct: ct);
+        Log?.Invoke($"uploaded {id} over the data channel ({bytes.Length / 1024} KB{(useFlac ? $" FLAC, {100 * bytes.Length / wav.Length}% of the WAV" : "")}) in {timer.ElapsedMilliseconds} ms");
+        return new DataPrepared(id, pcm.Length, pcm, useFlac);
     }
 
     /// <summary>Plays a clip made ready by <see cref="PrepareAsync"/>.</summary>
@@ -287,7 +296,15 @@ public sealed class ReachyChannel : IPreparingVoiceChannel
         var sw = System.Diagnostics.Stopwatch.StartNew();
         try
         {
-            await data.PlayUploadedAudioAsync(clip.UploadId, ct: ct);
+            try { await data.PlayUploadedAudioAsync(clip.UploadId, ct: ct); }
+            catch (InvalidOperationException e) when (clip.Flac && e.Message.Contains("would not play"))
+            {
+                // This robot's player will not take FLAC: remember it, send the same clip as a WAV and carry on.
+                _flacRefused = true;
+                Log?.Invoke($"the robot would not play a FLAC clip ({e.Message}); sending WAV from now on");
+                clip = await UploadOverDataChannelAsync(data, clip.Pcm, wavOnly: true, ct);
+                await data.PlayUploadedAudioAsync(clip.UploadId, ct: ct);
+            }
             await Task.Delay(TimeSpan.FromSeconds(clip.Samples / 24000.0) + TimeSpan.FromMilliseconds(250), ct);
         }
         catch (OperationCanceledException)

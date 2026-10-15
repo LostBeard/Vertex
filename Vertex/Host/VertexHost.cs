@@ -78,6 +78,27 @@ public sealed class VertexSettings
 
     private string _path = "";
 
+    /// <summary>
+    /// Version of the settings file. Vertex SAVES the settings every time it starts, so a default that was current when someone ran it is written into their file as if they had chosen it - and
+    /// changing the default later does nothing for them (live 2026-10-15: speech streaming was on by default for one build, got saved, and stayed on after the default went off, so the robot
+    /// was silent). A change of default that must reach people who never touched the setting is a MIGRATION here: bump <see cref="CurrentVersion"/> and reset it in <see cref="Migrate"/>.
+    /// </summary>
+    public int SettingsVersion { get; set; }
+
+    /// <summary>The settings version this build writes.</summary>
+    public const int CurrentVersion = 2;
+
+    /// <summary>Brings settings saved by an older build up to date. Only things that were DEFAULTS are reset; a choice made after the migration is kept.</summary>
+    internal void Migrate()
+    {
+        if (SettingsVersion < 2)
+        {
+            // 2: live Opus speech streaming became opt-in (experimental). It had been the default for one build, which Vertex then saved for everyone who ran it.
+            ReachyStreamSpeech = false;
+        }
+        SettingsVersion = CurrentVersion;
+    }
+
     /// <summary>The settings in a data folder (default %APPDATA%\Vertex).</summary>
     public static VertexSettings Load(string? folder = null)
     {
@@ -86,6 +107,7 @@ public sealed class VertexSettings
         try { settings = JsonSerializer.Deserialize<VertexSettings>(File.ReadAllText(path)) ?? new(); }
         catch (Exception e) when (e is IOException or JsonException) { settings = new(); }
         settings._path = path;
+        settings.Migrate();
         return settings;
     }
 
