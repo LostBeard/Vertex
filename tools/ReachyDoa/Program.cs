@@ -16,7 +16,8 @@ using System.Globalization;
 using System.Net.Http.Json;
 using System.Text.Json;
 
-var host = args.FirstOrDefault(a => !a.StartsWith("--") && !double.TryParse(a, out _)) ?? "reachy-mini.local";
+// The host is the first argument only when it is not a flag or a flag's value ("--label left" once made "left" the host: every read failed and the tool said no speech was heard).
+var host = args.Length > 0 && !args[0].StartsWith("--") ? args[0] : "reachy-mini.local";
 double Arg(string name, double fallback) => Array.IndexOf(args, name) is var i and >= 0 && i + 1 < args.Length ? double.Parse(args[i + 1], CultureInfo.InvariantCulture) : fallback;
 string? Str(string name) => Array.IndexOf(args, name) is var i and >= 0 && i + 1 < args.Length ? args[i + 1] : null;
 var seconds = Arg("--seconds", 20);
@@ -86,6 +87,7 @@ csv?.Dispose();
 var talking = rows.Where(r => r.Speech).ToList();
 Console.WriteLine();
 Console.WriteLine($"{rows.Count} readings ({rows.Count / clock.Elapsed.TotalSeconds:0.0}/s), {talking.Count} with speech.");
+if (rows.Count == 0) { Console.WriteLine($"no readings at all: could not read the microphone array on {host}."); return; }
 if (talking.Count == 0) { Console.WriteLine("no speech heard: nothing to summarise."); return; }
 
 static double Median(IEnumerable<double> xs) { var s = xs.Where(x => !double.IsNaN(x)).OrderBy(x => x).ToList(); return s.Count == 0 ? double.NaN : s[s.Count / 2]; }
