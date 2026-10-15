@@ -328,6 +328,18 @@ public static class GameTools
                 return Task.FromResult("OK: I started carrying on with the build.");
             });
 
+        yield return new GameTool("plant_field",
+            "Make a new field of crops near the player: finds soil, puts water in the middle if carrying a water bucket, tills each block with a hoe (makes one if needed) and plants seeds. Crops: wheat, carrots, potatoes, beetroot. Needs seeds (or carrots, potatoes) in the inventory.",
+            """{"type":"object","properties":{"crop":{"type":"string","description":"wheat, carrots, potatoes or beetroot (default: what we carry most seeds of)"},"size":{"type":"integer","description":"side length of the square field, 3 to 9 (default 5)"},"player":{"type":"string","description":"near this player, or 'me'"}}}""",
+            a =>
+            {
+                var p = Who(a);
+                var crop = Str(a, "crop");
+                var size = Int(a, "size", 5);
+                tasks.Start($"planting a field of {crop ?? "crops"}", ct => skills.PlantFieldAsync(crop, size, p, ct));
+                return Task.FromResult($"OK: I started planting a field of {crop ?? "crops"}. It takes a while; I will say when I am done.");
+            });
+
         yield return new GameTool("smelt",
             "Smelt or cook in a furnace: iron_ingot from raw iron, glass from sand, cooked_beef from beef, charcoal from logs. Builds a furnace from cobblestone if none is near. Takes 10 seconds per item.",
             """{"type":"object","properties":{"result":{"type":"string","description":"what to make, e.g. iron_ingot, glass, cooked_porkchop"},"count":{"type":"integer"}},"required":["result"]}""",

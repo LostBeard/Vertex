@@ -587,7 +587,7 @@ public sealed class Skills(MinecraftClient client)
     /// The nearest spot (within 14 blocks) for a width x depth footprint with `clear` open blocks above it: solid natural ground under every cell at one level and nobody standing there.
     /// Returns the footprint's north-west corner (lowest x and z) and the ground level.
     /// </summary>
-    public (int X, int Y, int Z)? FindFlatRect(double nearX, double nearY, double nearZ, int width, int depth, int clear, Entity? keepClear)
+    public (int X, int Y, int Z)? FindFlatRect(double nearX, double nearY, double nearZ, int width, int depth, int clear, Entity? keepClear, Func<int, int, int, bool>? groundOk = null)
     {
         var w = client.World;
         int bx = (int)Math.Floor(nearX), bz = (int)Math.Floor(nearZ), by = (int)Math.Floor(nearY + 1e-6);
@@ -605,13 +605,13 @@ public sealed class Skills(MinecraftClient client)
             if (!w.IsLoaded(x0, z0) || !w.IsLoaded(x1, z1) || !w.IsLoaded(x0, z1) || !w.IsLoaded(x1, z0)) continue;
             int? level = null;
             for (var y = by + 3; y >= by - 4 && level == null; y--)
-                if (Ground(w.GetState(cx, y - 1, cz)) && Open(w.GetState(cx, y, cz))) level = y;
+                if ((groundOk != null ? groundOk(cx, y - 1, cz) : Ground(w.GetState(cx, y - 1, cz))) && Open(w.GetState(cx, y, cz))) level = y;
             if (level is not int ly) continue;
             var ok = true;
             for (var x = x0; x <= x1 && ok; x++)
             for (var z = z0; z <= z1 && ok; z++)
             {
-                if (!Ground(w.GetState(x, ly - 1, z))) ok = false;
+                if (groundOk != null ? !groundOk(x, ly - 1, z) : !Ground(w.GetState(x, ly - 1, z))) ok = false;
                 for (var dy = 0; dy < clear && ok; dy++)
                     if (!Open(w.GetState(x, ly + dy, z))) ok = false;
             }
@@ -1170,6 +1170,91 @@ public sealed class Skills(MinecraftClient client)
         }
         if (harvested == 0) return (false, "I don't see any ripe crops nearby.");
         return (true, $"I harvested {harvested} crops and replanted {replanted}. I have: {InventorySummary()}.");
+    }
+
+    // ---------------------------------------------------------------- a new field
+
+    private static bool IsHoe(ItemStack s) => s.Name.EndsWith("_hoe");
+
+    /// <summary>Soil a hoe turns into farmland.</summary>
+    private bool Tillable(int x, int y, int z) => client.World.GetBlock(x, y, z)?.Name is "minecraft:dirt" or "minecraft:grass_block" or "minecraft:dirt_path";
+
+    /// <summary>
+    /// Makes a new field of crops: a flat spot of soil near the player (a size x size square, 5 by default), water in the middle if we carry a bucket of it (it keeps the soil within four
+    /// blocks wet), every other block tilled with a hoe and sown, one seed each. Makes a wooden hoe if we have none and the means to. Says what it did, and what it could not.
+    /// </summary>
+    public async Task<(bool, string)> PlantFieldAsync(string? crop, int size, string? nearPlayer, CancellationToken ct)
+    {
+        var wanted = crop?.Trim().ToLowerInvariant().TrimEnd('s');
+        var matches = Crops.Where(c => string.IsNullOrEmpty(wanted) || c.Block.Bare().Contains(wanted) || c.Seed.Bare().Contains(wanted)).ToList();
+        if (matches.Count == 0) return (false, $"I don't know how to grow {crop}. I can plant wheat, carrots, potatoes or beetroot.");
+        var choice = matches.OrderByDescending(c => client.Inventory.Count(c.Seed)).First();
+        var seeds = client.Inventory.Count(choice.Seed);
+        var cropName = Plain(choice.Block);
+        if (seeds == 0) return (false, $"I don't have any {Plain(choice.Seed)} to plant. (Breaking tall grass gives wheat seeds; carrots and potatoes come from villagers and zombies.)");
+        size = size <= 0 ? 5 : Math.Clamp(size, 3, 9);
+
+        if (Have(IsHoe) == 0)
+        {
+            var (made, why) = await client.CraftItemAsync("minecraft:wooden_hoe", 1, ct);
+            if (!made || Have(IsHoe) == 0) return (false, $"I need a hoe to till the soil, and I couldn't make one: {why}");
+        }
+
+        var player = FindPlayer(nearPlayer);
+        var (ox, oy, oz) = player != null ? (player.X, player.Y, player.Z) : client.Position;
+        if (FindFlatRect(ox, oy, oz, size, size, 2, player, Tillable) is not { } site)
+            return (false, $"I can't find a flat, clear patch of soil {size} by {size} blocks around here.");
+        int gy = site.Y, cx = site.X + size / 2, cz = site.Z + size / 2;
+
+        // Water in the middle: dig that block out and pour the bucket into the hole.
+        var water = false;
+        if (Have(s => s.Name == "minecraft:water_bucket") > 0 && size >= 3)
+        {
+            await client.GoToAsync(new GoalReachBlock(cx, gy - 1, cz, 3.5), new PathOptions { MaxNodes = 10_000 }, ct);
+            if (await client.DigAsync(cx, gy - 1, cz, ct))
+            {
+                await PickUpNearbyAsync(cx, gy - 1, cz, ct);
+                if (await client.EquipAsync(s => s.Name == "minecraft:water_bucket", ct))
+                {
+                    client.LookAt(cx + 0.5, gy - 1.0, cz + 0.5);
+                    await client.WaitTicksAsync(2, ct);
+                    await client.UseItemAsync(Hand.Main, ct);
+                    water = await client.WaitUntilAsync(() => client.World.GetBlock(cx, gy - 1, cz)?.Name == "minecraft:water", 20, ct);
+                }
+            }
+        }
+
+        // Row by row, back and forth, so the walk is short.
+        var cells = new List<(int X, int Z)>();
+        for (var dz = 0; dz < size; dz++)
+            for (var i = 0; i < size; i++) cells.Add((site.X + (dz % 2 == 0 ? i : size - 1 - i), site.Z + dz));
+        int planted = 0, skipped = 0;
+        foreach (var (x, z) in cells)
+        {
+            if (ct.IsCancellationRequested || client.Inventory.Count(choice.Seed) == 0) break;
+            if (water && x == cx && z == cz) continue;
+            if (!Tillable(x, gy - 1, z)) { skipped++; continue; }
+            // Tall grass and flowers on top stop a hoe: break them first (instant).
+            var above = client.World.GetState(x, gy, z);
+            if (above > 0 && !D.IsAir(above) && (D.StateFlags[above] & GameData.FlagReplaceable) != 0)
+            {
+                await client.GoToAsync(new GoalReachBlock(x, gy, z, 3.5), new PathOptions { MaxNodes = 5_000 }, ct);
+                await client.DigAsync(x, gy, z, ct);
+            }
+            if (client.DistanceToBlock(x, gy - 1, z) > client.BlockReach - 0.8)
+                await client.GoToAsync(new GoalReachBlock(x, gy - 1, z, 3.5), new PathOptions { MaxNodes = 5_000 }, ct);
+            if (!await client.EquipAsync(IsHoe, ct)) return (false, "I couldn't get the hoe into my hand.");
+            await client.UseOnBlockAsync(x, gy - 1, z, BlockFace.Up, Hand.Main, null, ct);
+            if (!await client.WaitUntilAsync(() => client.World.GetBlock(x, gy - 1, z)?.Name == "minecraft:farmland", 20, ct)) { skipped++; continue; }
+            if (!await client.EquipAsync(choice.Seed, ct)) break;
+            await client.UseOnBlockAsync(x, gy - 1, z, BlockFace.Up, Hand.Main, null, ct);
+            if (await client.WaitUntilAsync(() => client.World.GetBlock(x, gy, z) is { } b && b.Name == choice.Block, 20, ct)) planted++;
+            else skipped++;
+        }
+
+        if (planted == 0) return (false, "I couldn't plant anything there.");
+        var wet = water ? $" with water in the middle" : " (I have no water bucket, so the soil may dry out: bring me one and I will make it a proper field)";
+        return (true, $"I planted a {size} by {size} field of {cropName}{wet}: {planted} planted" + (skipped > 0 ? $", {skipped} spots I couldn't use." : "."));
     }
 
     // ---------------------------------------------------------------- exploring
