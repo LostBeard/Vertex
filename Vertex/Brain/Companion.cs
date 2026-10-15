@@ -257,6 +257,7 @@ public sealed class Companion : IAsyncDisposable
                     e = said = said with { Text = said.Text + " " + more.Text, HeardTick = more.HeardTick, SttMs = more.SttMs };
 
             var forPerson = e is SaidEvent;
+            if (!forPerson) Log?.Invoke($"  (turn: {e.GetType().Name})");
             using var cts = CancellationTokenSource.CreateLinkedTokenSource(ct);
             cts.CancelAfter(TurnTimeout);
             var turn = new Turn(cts, forPerson, interruptible: e is not PrimeEvent) { Said = e as SaidEvent };

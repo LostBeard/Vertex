@@ -50,7 +50,8 @@ public sealed class VertexAi : IAsyncDisposable
     /// <summary>Where the introduced faces are kept between runs (next to the voices; never uploaded).</summary>
     public string FacesFile { get; }
     public AiToolRegistry Tools { get; } = new();
-    public Action<string>? Log { get; set; }
+    public Action<string>? Log { get => _log; set { _log = value; Lane.Log = value; } }
+    private Action<string>? _log;
     /// <summary>Every model call goes through here, one at a time (see <see cref="GpuLane"/>).</summary>
     public GpuLane Lane { get; } = new();
 
@@ -331,11 +332,11 @@ public sealed class VertexAi : IAsyncDisposable
     /// </summary>
     public async Task<AiChatResult> ChatAsync(AiChatRequest request, Func<string, Task>? onDelta, CancellationToken ct = default)
     {
-        using (await Lane.EnterAsync(ct: ct))
+        using (var hold = await Lane.EnterAsync(ct: ct))
         {
             async Task Delta(string d)
             {
-                await Lane.YieldAsync(ct);
+                await hold.YieldAsync(ct);
                 if (onDelta != null) await onDelta(d);
             }
             return await Chat.ChatStreamAsync(request, Delta, ct);

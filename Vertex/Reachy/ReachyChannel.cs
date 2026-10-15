@@ -79,6 +79,9 @@ public sealed class ReachyChannel : IVoiceChannel
     /// <summary>The people in view of the robot's camera (empty when faces are off or the head is down).</summary>
     public IReadOnlyList<Vertex.People.VisiblePerson> InView => _watcher?.Visible(Environment.TickCount64) ?? [];
 
+    /// <summary>The faces in the latest look at the camera (this look only, with their places in the picture), raised after every look.</summary>
+    public event Action<IReadOnlyList<Vertex.People.VisiblePerson>, long>? FacesSeen;
+
     /// <summary>Someone the robot knows came back after a long absence (see <see cref="Vertex.People.FaceWatcher"/>): the moment to say hi.</summary>
     public event Action<Vertex.People.Arrival>? Arrived;
 
@@ -154,7 +157,9 @@ public sealed class ReachyChannel : IVoiceChannel
             try
             {
                 var look = await _ai.LookAsync(frame.Bgra, frame.Width, frame.Height, _voiceCts.Token);
-                _watcher.Observe(look.Results, look.PreviousLastSeen, Environment.TickCount64, frameWidth: frame.Width);
+                var tick = Environment.TickCount64;
+                _watcher.Observe(look.Results, look.PreviousLastSeen, tick, frameWidth: frame.Width);
+                FacesSeen?.Invoke(_watcher.Visible(tick).Where(v => v.LastSeenTick == tick).ToList(), tick);
             }
             catch (OperationCanceledException) { }
             catch (Exception e) { Log?.Invoke("[faces] look failed: " + e.Message); }

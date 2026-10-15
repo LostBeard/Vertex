@@ -68,6 +68,7 @@ public sealed class RobotBody : IBody
         _presence = new ReachyPresence(_body, _style);
         _presence.Log += m => Log?.Invoke(m);
         _channel.Playing += OnPlaying;
+        _channel.FacesSeen += OnFacesSeen;
         _companion.Thinking += OnThinking;
     }
 
@@ -77,6 +78,36 @@ public sealed class RobotBody : IBody
     public bool FaceSpeaker { get; set; } = true;
 
     private CancellationTokenSource? _recentre;
+
+    /// <summary>Keep the person who is talking to the robot in the middle of the picture as they move (a small correction after each look at the camera).</summary>
+    public bool FollowFaces { get; set; } = true;
+
+    /// <summary>A look at the camera: nudge toward the person being talked to if they have drifted from the middle. See <see cref="Vertex.People.FaceFollow"/>.</summary>
+    private void OnFacesSeen(IReadOnlyList<Vertex.People.VisiblePerson> faces, long tick)
+    {
+        if (_parked || !FollowFaces || _body.Moving) return;
+        if (tick - _body.LastMoveTick < Vertex.People.FaceFollow.SettleMilliseconds) return;      // taken while the head was still travelling
+        var step = Vertex.People.FaceFollow.Choose(faces, _companion.CurrentSpeaker);
+        if (step == null) return;
+        _ = _body.TurnTowardAsync(step.YawLeft, _style, duration: 0.6, waitMs: 0);
+        PostponeRecentre();
+    }
+
+    /// <summary>Back to the front after a quiet spell; each turn or follow restarts the wait.</summary>
+    private void PostponeRecentre()
+    {
+        var cts = new CancellationTokenSource();
+        Interlocked.Exchange(ref _recentre, cts)?.Cancel();
+        _ = Task.Run(async () =>
+        {
+            try
+            {
+                await Task.Delay(TimeSpan.FromSeconds(90), cts.Token);
+                if (!_parked) await _body.RecentreAsync(_style, ct: cts.Token);
+            }
+            catch (OperationCanceledException) { }
+        });
+    }
 
     /// <summary>
     /// A friend started talking to the robot: turn to face them, then, once it has been quiet for a minute and a half, turn back to the front. A voice from straight ahead, a face already
@@ -90,18 +121,7 @@ public sealed class RobotBody : IBody
         if (target == null) return;
         Log?.Invoke($"facing {(target.Name ?? "the voice")}: {target.YawLeft * 180 / Math.PI:+0;-0;0} degrees ({(target.FromFace ? "a face matched the voice" : "from the voice direction")})");
         _ = _body.TurnTowardAsync(target.YawLeft, _style);
-        // Back to the front after a quiet spell; each new turn restarts the wait.
-        var cts = new CancellationTokenSource();
-        Interlocked.Exchange(ref _recentre, cts)?.Cancel();
-        _ = Task.Run(async () =>
-        {
-            try
-            {
-                await Task.Delay(TimeSpan.FromSeconds(90), cts.Token);
-                if (!_parked) await _body.RecentreAsync(_style, ct: cts.Token);
-            }
-            catch (OperationCanceledException) { }
-        });
+        PostponeRecentre();
     }
 
     /// <summary>

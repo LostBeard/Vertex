@@ -359,14 +359,14 @@ public class VertexUnitTests
         var holding = new TaskCompletionSource();
         var reply = Task.Run(async () =>
         {
-            using (await lane.EnterAsync())
+            using (var hold = await lane.EnterAsync())
             {
                 holding.SetResult();
                 for (var token = 0; token < 10; token++)
                 {
                     await Task.Delay(15);
                     order.Enqueue("token");
-                    await lane.YieldAsync();
+                    await hold.YieldAsync();
                 }
             }
         });

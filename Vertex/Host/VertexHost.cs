@@ -52,6 +52,8 @@ public sealed class VertexSettings
     public bool ReachyFaces { get; set; } = true;
     /// <summary>Turn the robot to face whoever is talking to it: the way the voice came from, and the face that matches it. It turns back to the front after a minute and a half of quiet.</summary>
     public bool ReachyFaceSpeaker { get; set; } = true;
+    /// <summary>Keep looking at the person who is talking to the robot as they move around (a small correction after each look at the camera). Needs faces on.</summary>
+    public bool ReachyFollowFaces { get; set; } = true;
     /// <summary>
     /// Keep every utterance the robot hears (the audio, the words Vertex heard, who it sounded like) in the data folder's "heard"
     /// folder, to measure and improve listening on this household's own voices. Off by default; never uploaded anywhere.
@@ -394,7 +396,7 @@ public sealed class VertexHost : IAsyncDisposable
             _reachy.IdentifySpeakers = Settings.ReachyRecognizeVoices;
             _reachy.SaveHeardFolder = Settings.ReachySaveHeard ? HeardFolder : null;
             _reachy.Log += m => Add(LineKind.System, "[reachy] " + m);
-            _robot = new RobotBody(_reachy, _companion) { FaceSpeaker = Settings.ReachyFaceSpeaker };
+            _robot = new RobotBody(_reachy, _companion) { FaceSpeaker = Settings.ReachyFaceSpeaker, FollowFaces = Settings.ReachyFollowFaces };
             _robot.Log += m => Add(LineKind.System, "[reachy] " + m);
             await _robot.WakeAsync();
             _companion.Attach(_robot);
