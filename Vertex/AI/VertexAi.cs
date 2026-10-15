@@ -362,7 +362,11 @@ public sealed class VertexAi : IAsyncDisposable
     {
         var clock = System.Diagnostics.Stopwatch.StartNew();
         var heldBy = Lane.CurrentHolder;
-        using (await Lane.EnterAsync(ct: ct))
+        // URGENT: a sentence is spoken while the rest of the reply is still being written, and the language model only steps aside for urgent callers between its tokens. As an ordinary
+        // caller the voice waited for the WHOLE reply to be generated before it could make the first word, then again before every later sentence (measured live 2026-10-15: "after
+        // waiting 3655 ms for the GPU (held by ChatAsync)", a 5 s pause between two sentences). Urgent, the model writes a sentence, the voice makes it while the earlier one plays, and
+        // the model carries on: the sentences follow each other.
+        using (await Lane.EnterAsync(urgent: true, ct))
         {
             var waited = clock.ElapsedMilliseconds;
             var speech = await Voice.SpeakWithVoiceAsync(text, voiceId, ct: ct);
