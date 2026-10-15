@@ -210,7 +210,9 @@ public sealed class ReachyChannel : IPreparingVoiceChannel
     }
 
     /// <summary>A clip uploaded to the robot over its data channel (the way Pollen's SDK and the SpawnDev.AI demo send speech) and ready to play.</summary>
-    private sealed record DataPrepared(string UploadId, int Samples, short[] Pcm, bool Flac);
+    private sealed record DataPrepared(string UploadId, int Samples, short[] Pcm, bool Flac, long Bytes, long UploadStartTick);
+
+    private readonly LinkMonitor _linkMonitor = new();
 
     /// <summary>Set once the robot refuses a FLAC clip: from then on clips go up as WAV.</summary>
     private volatile bool _flacRefused;
@@ -253,9 +255,10 @@ public sealed class ReachyChannel : IPreparingVoiceChannel
         var flac = wavOnly ? null : FlacEncoder.Encode(pcm, 24000);
         var useFlac = flac != null && flac.Length < wav.Length;
         var bytes = useFlac ? flac! : wav;
+        var uploadStart = Environment.TickCount64;
         var id = await data.UploadAudioAsync(bytes, useFlac ? "flac-base64" : "wav-base64", ct: ct);
         Log?.Invoke($"uploaded {id} over the data channel ({bytes.Length / 1024} KB{(useFlac ? $" FLAC, {100 * bytes.Length / wav.Length}% of the WAV" : "")}) in {timer.ElapsedMilliseconds} ms");
-        return new DataPrepared(id, pcm.Length, pcm, useFlac);
+        return new DataPrepared(id, pcm.Length, pcm, useFlac, bytes.Length, uploadStart);
     }
 
     /// <summary>Plays a clip made ready by <see cref="PrepareAsync"/>.</summary>
@@ -312,6 +315,7 @@ public sealed class ReachyChannel : IPreparingVoiceChannel
             // Two numbers that say where a pause between sentences came from: how long the robot took to confirm it had the clip and started it (the part of the transfer that
             // was NOT done ahead of time), and how long the speaker was silent since the previous clip.
             var startedTick = Environment.TickCount64;
+            if (_linkMonitor.Observe(clip.Bytes, startedTick - clip.UploadStartTick, startedTick - commandTick, startedTick) is { } slow) Log?.Invoke(slow);
             var gap = _lastClipEndTick == 0 ? -1 : startedTick - _lastClipEndTick;
             Log?.Invoke($"clip {clip.UploadId} started {startedTick - commandTick} ms after the play command" + (gap >= 0 && gap < 60_000 ? $"; the speaker was silent for {gap} ms before it" : ""));
             await Task.Delay(TimeSpan.FromSeconds(clip.Samples / 24000.0) + TimeSpan.FromMilliseconds(250), ct);
