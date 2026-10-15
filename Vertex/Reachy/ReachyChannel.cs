@@ -215,6 +215,9 @@ public sealed class ReachyChannel : IPreparingVoiceChannel
     /// <summary>Set once the robot refuses a FLAC clip: from then on clips go up as WAV.</summary>
     private volatile bool _flacRefused;
 
+    /// <summary>When the last clip finished playing (Environment.TickCount64), to log the gap before the next one.</summary>
+    private long _lastClipEndTick;
+
     /// <summary>A clip ready to be streamed: loudened, at the stream's 48 kHz.</summary>
     private sealed record StreamClip(short[] Pcm48k);
 
@@ -296,6 +299,7 @@ public sealed class ReachyChannel : IPreparingVoiceChannel
         var sw = System.Diagnostics.Stopwatch.StartNew();
         try
         {
+            var commandTick = Environment.TickCount64;
             try { await data.PlayUploadedAudioAsync(clip.UploadId, ct: ct); }
             catch (InvalidOperationException e) when (clip.Flac && e.Message.Contains("would not play"))
             {
@@ -305,7 +309,13 @@ public sealed class ReachyChannel : IPreparingVoiceChannel
                 clip = await UploadOverDataChannelAsync(data, clip.Pcm, wavOnly: true, ct);
                 await data.PlayUploadedAudioAsync(clip.UploadId, ct: ct);
             }
+            // Two numbers that say where a pause between sentences came from: how long the robot took to confirm it had the clip and started it (the part of the transfer that
+            // was NOT done ahead of time), and how long the speaker was silent since the previous clip.
+            var startedTick = Environment.TickCount64;
+            var gap = _lastClipEndTick == 0 ? -1 : startedTick - _lastClipEndTick;
+            Log?.Invoke($"clip {clip.UploadId} started {startedTick - commandTick} ms after the play command" + (gap >= 0 && gap < 60_000 ? $"; the speaker was silent for {gap} ms before it" : ""));
             await Task.Delay(TimeSpan.FromSeconds(clip.Samples / 24000.0) + TimeSpan.FromMilliseconds(250), ct);
+            _lastClipEndTick = Environment.TickCount64;
         }
         catch (OperationCanceledException)
         {
