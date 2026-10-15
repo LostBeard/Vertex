@@ -38,8 +38,17 @@ public sealed class VertexAi : IAsyncDisposable
     /// <see cref="Speech"/> still gives the final, more accurate text.
     /// </summary>
     public AiStreamingSpeechEngine Streaming { get; }
+    /// <summary>
+    /// Who is in front of the camera: YuNet finds faces, SFace gives each a fingerprint, and a registry of the faces that have been introduced says whose it is. The same shape as
+    /// <see cref="Speakers"/>; strangers are "Visitor N" (a voice's strangers are "Guest N": they are not known to be the same person).
+    /// </summary>
+    public AiFaceEngine Faces { get; }
+    /// <summary>The people Vertex knows - voice and face together by name - and the one place they are listed and removed from. Everything is local to this PC.</summary>
+    public Vertex.People.PeopleDirectory People { get; }
     /// <summary>Where the introduced voices are kept between runs.</summary>
     public string VoicesFile { get; }
+    /// <summary>Where the introduced faces are kept between runs (next to the voices; never uploaded).</summary>
+    public string FacesFile { get; }
     public AiToolRegistry Tools { get; } = new();
     public Action<string>? Log { get; set; }
     /// <summary>Every model call goes through here, one at a time (see <see cref="GpuLane"/>).</summary>
@@ -105,6 +114,104 @@ public sealed class VertexAi : IAsyncDisposable
         {
             OnLoadProgress = (stage, pct) => { if (pct % 50 == 0) Log?.Invoke($"live words model {stage} {pct}%"); },
         };
+        FacesFile = Path.Combine(Path.GetDirectoryName(VoicesFile)!, "faces.json");
+        Faces = new AiFaceEngine(modelSource, Accelerator)
+        {
+            Registry = LoadFaces(FacesFile, log),
+            OnLoadProgress = (stage, pct) => { if (pct % 50 == 0) Log?.Invoke($"face model {stage} {pct}%"); },
+        };
+        // The rule for who is kept: a person who has been introduced stays until someone removes them; a stranger nobody introduces is forgotten after 24 hours.
+        People = new Vertex.People.PeopleDirectory(Speakers.Registry, Faces.Registry, SaveVoices, SaveFaces, TimeSpan.FromHours(24));
+        var gone = People.ExpireGuests();
+        if (gone.Count > 0) log?.Invoke($"forgot {gone.Count} guest(s) nobody introduced in 24 hours: {string.Join(", ", gone)}");
+        _guestExpiry = Task.Run(ExpireGuestsPeriodicallyAsync);
+    }
+
+    private static SpeakerRegistry LoadFaces(string file, Action<string>? log)
+    {
+        try
+        {
+            if (File.Exists(file))
+            {
+                var registry = SpeakerRegistry.FromJson(File.ReadAllText(file));
+                registry.GuestPrefix = "Visitor";      // not part of the saved data
+                log?.Invoke($"faces: {registry.Profiles.Count(p => !p.IsGuest)} known, {registry.Profiles.Count(p => p.IsGuest)} visitor(s)");
+                return registry;
+            }
+        }
+        catch (Exception e) { log?.Invoke($"faces: could not read {file} ({e.Message}); starting with none"); }
+        return AiFaceEngine.NewRegistry();
+    }
+
+    private readonly object _facesLock = new();
+
+    /// <summary>Writes the introduced faces (a temp file, then a replace).</summary>
+    public void SaveFaces()
+    {
+        lock (_facesLock)
+        {
+            try
+            {
+                Directory.CreateDirectory(Path.GetDirectoryName(FacesFile)!);
+                var tmp = FacesFile + ".tmp";
+                File.WriteAllText(tmp, Faces.Registry.ToJson());
+                File.Move(tmp, FacesFile, overwrite: true);
+            }
+            catch (Exception e) { Log?.Invoke($"faces: could not save ({e.Message})"); }
+        }
+    }
+
+    private readonly CancellationTokenSource _stop = new();
+    private Task? _guestExpiry;
+
+    private async Task ExpireGuestsPeriodicallyAsync()
+    {
+        using var timer = new PeriodicTimer(TimeSpan.FromMinutes(30));
+        try
+        {
+            while (await timer.WaitForNextTickAsync(_stop.Token))
+            {
+                var gone = People.ExpireGuests();
+                if (gone.Count > 0) Log?.Invoke($"forgot {gone.Count} guest(s) nobody introduced in 24 hours: {string.Join(", ", gone)}");
+            }
+        }
+        catch (OperationCanceledException) { }
+    }
+
+    /// <summary>What a look at the camera found, and when each named person had been seen BEFORE it (the look updates them), so an absence is measured against the true previous sighting.</summary>
+    public sealed record FaceLook(IReadOnlyList<AiFaceResult> Results, IReadOnlyDictionary<string, long> PreviousLastSeen);
+
+    /// <summary>One look at a camera picture (B, G, R, A): faces found, filed and named. Waits its turn on the GPU lane (not urgent: speech and reflexes go first).</summary>
+    public async Task<FaceLook> LookAsync(byte[] bgra, int width, int height, CancellationToken ct = default)
+    {
+        using (await Lane.EnterAsync(ct: ct))
+        {
+            var before = Faces.Registry.Profiles.Where(p => !p.IsGuest).ToDictionary(p => p.Name, p => p.LastHeardTicks);
+            var results = await Faces.LookAsync(bgra, width, height, observe: true, ct);
+            if (results.Any(r => r.Guest != null || r.Match is { Known: true })) SaveFacesThrottled();
+            return new FaceLook(results, before);
+        }
+    }
+
+    private long _lastFacesSave;
+    /// <summary>Faces are seen several times a second; the file is written at most every ten seconds (an introduction saves at once).</summary>
+    private void SaveFacesThrottled()
+    {
+        var now = Environment.TickCount64;
+        if (now - Interlocked.Read(ref _lastFacesSave) < 10_000) return;
+        Interlocked.Exchange(ref _lastFacesSave, now);
+        SaveFaces();
+    }
+
+    /// <summary>Loads and warms the face models before anyone is looked at (kernels compile on first execution).</summary>
+    public async Task WarmFacesAsync(CancellationToken ct = default)
+    {
+        using (await Lane.EnterAsync(ct: ct))
+        {
+            var clock = System.Diagnostics.Stopwatch.StartNew();
+            await Faces.EnsureReadyAsync(ct);
+            Log?.Invoke($"warmed up: faces {clock.ElapsedMilliseconds} ms");
+        }
     }
 
     private static SpeakerRegistry LoadVoices(string file, Action<string>? log)
@@ -263,11 +370,14 @@ public sealed class VertexAi : IAsyncDisposable
 
     public async ValueTask DisposeAsync()
     {
+        _stop.Cancel();
+        if (_guestExpiry != null) { try { await _guestExpiry; } catch { } }
         Intents?.Dispose();
         Speech.Dispose();
         Speakers.Dispose();
         Turns.Dispose();
         Streaming.Dispose();
+        Faces.Dispose();
         Voice.Dispose();
         await Registry.DisposeAsync();
         Accelerator.Dispose();

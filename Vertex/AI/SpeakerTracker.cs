@@ -47,6 +47,9 @@ public sealed class SpeakerTracker
     private string? _lastName;
     private long _lastTick;
 
+    /// <summary>Raised when someone is introduced ("I'm Nikki" or "this is Nikki"): the name, and whether it is about someone who has not spoken yet. The face side learns the face from it.</summary>
+    public event Action<string, bool>? Introduced;
+
     /// <summary>What an unidentified voice is called when nothing else is known.</summary>
     public string Unknown { get; set; } = "someone in the room";
 
@@ -197,6 +200,7 @@ public sealed class SpeakerTracker
             }
         }
         if (changed) _changed?.Invoke();
+        Introduced?.Invoke(name, forNextVoice);
         return message;
     }
 

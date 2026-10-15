@@ -23,6 +23,9 @@ public sealed class ReachyChannel : IVoiceChannel
     private readonly VertexAi _ai;
     private readonly SpeakerTracker _speakers;
     private MicrophoneEars? _ears;
+    private bool _faces;
+    private Vertex.People.FaceWatcher? _watcher;
+    private int _looking;
     private readonly CancellationTokenSource _voiceCts = new();
     private Task? _voicePoll;
     private int _clip;
@@ -73,6 +76,12 @@ public sealed class ReachyChannel : IVoiceChannel
 
     public ReachyMiniClient Robot => _robot;
 
+    /// <summary>The people in view of the robot's camera (empty when faces are off or the head is down).</summary>
+    public IReadOnlyList<Vertex.People.VisiblePerson> InView => _watcher?.Visible(Environment.TickCount64) ?? [];
+
+    /// <summary>Someone the robot knows came back after a long absence (see <see cref="Vertex.People.FaceWatcher"/>): the moment to say hi.</summary>
+    public event Action<Vertex.People.Arrival>? Arrived;
+
     /// <summary>Where the voice the robot is hearing comes from (the microphone array's direction of arrival, smoothed).</summary>
     public VoiceDirection Voice { get; } = new();
 
@@ -90,9 +99,10 @@ public sealed class ReachyChannel : IVoiceChannel
     /// <summary>Connects the robot's microphone and loads the voice activity detector.</summary>
     /// <param name="smartTurn">Ask the end-of-turn model whether a pause is the end of what someone is saying (see <see cref="TurnAssembler"/>), instead of always waiting half a second.</param>
     /// <param name="liveWords">Also recognise the words WHILE they are spoken (streaming speech to text), reported through <see cref="Hearing"/>.</param>
-    public static async Task<ReachyChannel> ConnectAsync(string host, VertexAi ai, bool smartTurn = true, bool liveWords = false, CancellationToken ct = default)
+    /// <param name="faces">Look at the camera: who is in view, learn the faces of people who are introduced, notice someone coming back after a long absence.</param>
+    public static async Task<ReachyChannel> ConnectAsync(string host, VertexAi ai, bool smartTurn = true, bool liveWords = false, bool faces = false, CancellationToken ct = default)
     {
-        var channel = new ReachyChannel(host, ai) { _smartTurn = smartTurn, _liveWords = liveWords };
+        var channel = new ReachyChannel(host, ai) { _smartTurn = smartTurn, _liveWords = liveWords, _faces = faces };
         try
         {
             await channel.StartAsync(ct);
@@ -121,8 +131,35 @@ public sealed class ReachyChannel : IVoiceChannel
         _link.Log += m => Log?.Invoke("[link] " + m);
         // Subscribed BEFORE connecting: RoseAudioLink only starts its PCM capture when OnMicAudio has a handler.
         _link.OnMicAudio += pcm => _ears.Feed(pcm);
+        if (_faces)
+        {
+            await _ai.WarmFacesAsync(ct);
+            _watcher = new Vertex.People.FaceWatcher(_ai.Faces.Registry, _ai.SaveFaces, m => Log?.Invoke("[faces] " + m));
+            _watcher.Arrived += a => Arrived?.Invoke(a);
+            _speakers.Introduced += (name, forNext) => { _watcher.BeginIntroduction(name, forNext, Environment.TickCount64); _ = Task.Run(_ai.SaveFaces); };
+            // Subscribed BEFORE connecting, like the microphone: the picture decoder only runs when a handler is there. Two looks a second is plenty for a room.
+            _link.VideoMaxFramesPerSecond = 2;
+            _link.OnVideoFrame += OnPicture;
+        }
         await _link.ConnectAsync(ct);
         _voicePoll = Task.Run(() => PollVoiceDirectionAsync(_voiceCts.Token));
+    }
+
+    /// <summary>A camera picture: one look at a time (a picture that arrives while the last is still being looked at is dropped - the room has not changed in 500 ms).</summary>
+    private void OnPicture(SpawnDev.RTC.Video.RTCVideoFrame frame)
+    {
+        if (_watcher == null || Interlocked.Exchange(ref _looking, 1) == 1) return;
+        _ = Task.Run(async () =>
+        {
+            try
+            {
+                var look = await _ai.LookAsync(frame.Bgra, frame.Width, frame.Height, _voiceCts.Token);
+                _watcher.Observe(look.Results, look.PreviousLastSeen, Environment.TickCount64);
+            }
+            catch (OperationCanceledException) { }
+            catch (Exception e) { Log?.Invoke("[faces] look failed: " + e.Message); }
+            finally { Volatile.Write(ref _looking, 0); }
+        });
     }
 
     /// <summary>

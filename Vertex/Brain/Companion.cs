@@ -19,6 +19,11 @@ public sealed record SaidEvent(Guid Speaker, string SpeakerName, string Text, bo
     IVoiceChannel? Channel = null) : BrainEvent;
 /// <summary>Prefill the system prompt and tool list before anyone talks (at start, after a character switch or a body change).</summary>
 public sealed record PrimeEvent : BrainEvent;
+/// <summary>Someone Vertex knows has walked in after a long absence: say hi, by name, if nothing else is going on.</summary>
+/// <param name="Name">Who.</param>
+/// <param name="Absence">How long since they were last seen.</param>
+/// <param name="Channel">Where to say it (the robot).</param>
+public sealed record GreetEvent(string Name, TimeSpan Absence, IVoiceChannel? Channel) : BrainEvent;
 
 /// <summary>
 /// Vertex's mind, wherever it is: the conversation. It hears lines from its voice channels (proximity voice in a game,
@@ -336,10 +341,32 @@ public sealed class Companion : IAsyncDisposable
                 return;
             case SaidEvent:
                 return; // not for us
+            case GreetEvent g:
+                // Nothing was said to Vertex: it simply noticed someone. A short, warm, spoken hello by name - not a reply to anyone, and no tools.
+                foreach (var body in Bodies) body.Act("antennas perk up");
+                await RespondAsync($"[{g.Name} has just come into the room; you have not seen them for {DescribeAbsence(g.Absence)}. Say hi to {g.Name} by name, in one short friendly sentence. Do not call tools.]",
+                    ct, allowTools: false, clock, g.Channel);
+                return;
         }
         foreach (var body in Bodies)
             if (await body.HandleEventAsync(e, clock, ct)) return;
     }
+
+    /// <summary>
+    /// Says hi to someone who has just come back, if Vertex is not busy: no turn running, nobody talked to it in the last minute, and nothing else waiting.
+    /// Returns whether the greeting was queued.
+    /// </summary>
+    public bool TryGreet(string name, TimeSpan absence, IVoiceChannel? channel)
+    {
+        if (Volatile.Read(ref _turn) != null) return false;
+        if (DateTime.UtcNow - _lastExchange < TimeSpan.FromSeconds(60)) return false;
+        if (_events.Reader.TryPeek(out _)) return false;
+        Log?.Invoke($"  (greeting {name}, back after {DescribeAbsence(absence)})");
+        return _events.Writer.TryWrite(new GreetEvent(name, absence, channel));
+    }
+
+    private static string DescribeAbsence(TimeSpan t) =>
+        t.TotalHours >= 36 ? $"{(int)t.TotalDays} days" : t.TotalHours >= 1.5 ? $"about {(int)Math.Round(t.TotalHours)} hours" : "a while";
 
     /// <summary>Where a reply goes: back to the channel it came from, or every channel (the control panel, a game event).</summary>
     public IReadOnlyList<IVoiceChannel> ReplyTo(IVoiceChannel? channel) => channel != null ? [channel] : Channels;

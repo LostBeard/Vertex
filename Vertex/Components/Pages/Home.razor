@@ -38,6 +38,7 @@
             <input @bind="Host.Settings.ReachySpeaker" disabled="@Host.RobotConnected" placeholder="e.g. Aubri" />
             <label><input type="checkbox" style="width:auto" @bind="Host.Settings.ReachyAnswersEverything" disabled="@Host.RobotConnected" /> Answer everything said near the robot (off: say "Vertex" to start talking)</label>
             <label><input type="checkbox" style="width:auto" @bind="Host.Settings.ReachyRecognizeVoices" disabled="@Host.RobotConnected" /> Tell people apart by their voice (people Vertex has been introduced to are called by name; strangers are "Guest 1", "Guest 2")</label>
+            <label><input type="checkbox" style="width:auto" @bind="Host.Settings.ReachyFaces" disabled="@Host.RobotConnected" /> Recognise people by their face through the robot's camera (learns the face of anyone who is introduced, knows who is in the room, says hi to someone it knows who walks in after a long absence; faces stay on this PC)</label>
             <label><input type="checkbox" style="width:auto" @bind="Host.Settings.ReachyLiveWords" disabled="@Host.RobotConnected" /> Show my words as I say them (a streaming recogniser types along while I talk; the finished sentence is still transcribed by the more accurate one; uses about 1.2 GB of GPU memory)</label>
             <label><input type="checkbox" style="width:auto" @bind="Host.Settings.ReachySmartTurn" disabled="@Host.RobotConnected" /> Know when I have finished talking (answers a finished sentence sooner and waits while I am still thinking; off: always waits half a second)</label>
             <label><input type="checkbox" style="width:auto" @bind="Host.Settings.ReachySaveHeard" disabled="@Host.RobotConnected" /> Keep what the robot hears (audio, words, who) in <code>@Host.HeardFolder</code> to measure listening on this household's voices. Stays on this PC.</label>
@@ -57,32 +58,52 @@
         </section>
 
         <section style="margin-top:16px">
-            <h2>Voices</h2>
-            <p class="hint">Vertex tells the people who talk to the robot apart by their voice. Voices stay on this PC.</p>
-            @if (Host.Voices.Count == 0)
+            <h2>People</h2>
+            <p class="hint">Vertex knows people by their voice and their face. Everything about a person stays on this PC. Someone who has been introduced is kept until you remove them; a stranger nobody introduces is a guest and is forgotten after 24 hours.</p>
+            @if (Host.InView.Length > 0)
             {
-                <p class="hint">Nobody yet. Add a person below, or just introduce yourself out loud: "Vertex, I'm Nikki".</p>
+                <p class="hint">Camera sees now: @Host.InView</p>
             }
-            @foreach (var voice in Host.Voices)
+            @if (Host.KnownPeople.Count == 0)
             {
-                RenameTo.TryAdd(voice.Name, "");
+                <p class="hint">Nobody yet. Introduce yourself out loud while the robot can see you: "Vertex, I'm Nikki".</p>
+            }
+            @foreach (var person in Host.KnownPeople)
+            {
+                RenameTo.TryAdd(person.Name, "");
                 <div class="row" style="margin-top:6px">
-                    <strong style="min-width:120px">@voice.Name</strong>
-                    <span class="hint">@(voice.IsGuest ? "a stranger Vertex has heard" : "introduced") - @voice.Embeddings.Count samples, @(Math.Round(voice.Seconds)) s of speech</span>
-                    @if (voice.IsGuest)
+                    <strong style="min-width:120px">@person.Name</strong>
+                    <span class="hint">@Held(person) - @(person.IsGuest ? $"a stranger, forgotten {person.ForgottenAtUtc?.ToLocalTime():MMM d h:mm tt}" : "introduced, kept until removed")@(person.LastSeenUtc is { } seen ? $"; last seen {seen.ToLocalTime():MMM d h:mm tt}" : "")</span>
+                    @if (person.IsGuest)
                     {
-                        <input style="max-width:140px" placeholder="their name" @bind="RenameTo[voice.Name]" />
-                        <button class="secondary" @onclick="() => Host.RenameVoice(voice.Name, RenameTo[voice.Name])">Name them</button>
+                        <input style="max-width:140px" placeholder="their name" @bind="RenameTo[person.Name]" />
+                        <button class="secondary" @onclick="() => Host.NamePerson(person.Name, RenameTo[person.Name])">Name them</button>
                     }
-                    <button class="secondary" @onclick="() => Host.ForgetVoice(voice.Name)">Forget</button>
+                    <button class="secondary" @onclick="() => Host.ForgetPerson(person.Name)">Forget</button>
+                </div>
+            }
+            @if (Host.KnownPeople.Count > 0)
+            {
+                <div class="row" style="margin-top:10px">
+                    <button class="secondary" @onclick="() => Host.ForgetGuests()" disabled="@(!Host.KnownPeople.Any(p => p.IsGuest))">Forget all guests</button>
+                    @if (!ConfirmForgetAll)
+                    {
+                        <button class="secondary" @onclick="() => ConfirmForgetAll = true">Forget everyone...</button>
+                    }
+                    else
+                    {
+                        <span class="hint">Remove every voice and face, introduced people too?</span>
+                        <button @onclick="ForgetEveryone">Yes, forget everyone</button>
+                        <button class="secondary" @onclick="() => ConfirmForgetAll = false">Cancel</button>
+                    }
                 </div>
             }
             <label style="margin-top:12px">Add a person: their name</label>
             <div class="row">
                 <input @bind="NewVoice" placeholder="e.g. Nikki" />
-                <button @onclick="LearnVoice" disabled="@(string.IsNullOrWhiteSpace(NewVoice))">Learn their voice</button>
+                <button @onclick="LearnVoice" disabled="@(string.IsNullOrWhiteSpace(NewVoice))">Learn their voice and face</button>
             </div>
-            <p class="hint">Then have them say a few sentences near the robot: the next new voice it hears is theirs.</p>
+            <p class="hint">Then have them say a few sentences in front of the robot: the next new voice and face it notices are theirs.</p>
             @if (VoiceMessage != "") { <p class="hint">@VoiceMessage</p> }
         </section>
 
@@ -199,6 +220,15 @@
     private Timer? _timer;
     private string NewVoice = "";
     private string VoiceMessage = "";
+    private bool ConfirmForgetAll;
+
+    private static string Held(Vertex.People.PersonRecord p) => p.HasVoice && p.HasFace ? "voice and face" : p.HasVoice ? "voice only" : "face only";
+
+    private void ForgetEveryone()
+    {
+        Host.ForgetEveryone();
+        ConfirmForgetAll = false;
+    }
     /// <summary>The name typed for each guest, by guest name.</summary>
     private Dictionary<string, string> RenameTo { get; } = new();
 

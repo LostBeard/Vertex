@@ -45,6 +45,12 @@ public sealed class VertexSettings
     /// </summary>
     public bool ReachyLiveWords { get; set; } = true;
     /// <summary>
+    /// Recognise faces through the robot's camera: it learns the face of anyone who is introduced ("this is Nikki"), knows who is in the room, can look at who is talking, and says hi to someone it knows
+    /// who walks in after a long absence. Faces and voices are kept only on this PC, for people who were introduced until they are removed on the People page; a stranger nobody introduces is
+    /// forgotten after 24 hours. This is the point of a companion that knows its people; turn it off and Vertex treats everyone as a stranger.
+    /// </summary>
+    public bool ReachyFaces { get; set; } = true;
+    /// <summary>
     /// Keep every utterance the robot hears (the audio, the words Vertex heard, who it sounded like) in the data folder's "heard"
     /// folder, to measure and improve listening on this household's own voices. Off by default; never uploaded anywhere.
     /// </summary>
@@ -196,6 +202,29 @@ public sealed class VertexHost : IAsyncDisposable
     public bool InGame => _brain != null;
     /// <summary>The Reachy Mini is connected and awake.</summary>
     public bool RobotConnected => _robot != null;
+
+    /// <summary>The people Vertex knows (voice and face by name) and the place they are removed from. Empty until the AI is up.</summary>
+    public IReadOnlyList<Vertex.People.PersonRecord> KnownPeople => _ai?.People.List() ?? [];
+
+    /// <summary>Names a stranger Vertex noticed (a voice "Guest N" or a face "Visitor N"): from then on they are introduced and kept until removed.</summary>
+    public bool NamePerson(string from, string to)
+    {
+        var r = !string.IsNullOrWhiteSpace(to) && (_ai?.People.Rename(from, to.Trim()) ?? false);
+        Changed?.Invoke();
+        return r;
+    }
+
+    /// <summary>Removes one person (their voiceprint and their face).</summary>
+    public bool ForgetPerson(string name) { var r = _ai?.People.Forget(name) ?? false; Changed?.Invoke(); return r; }
+
+    /// <summary>Removes every stranger nobody introduced.</summary>
+    public int ForgetGuests() { var n = _ai?.People.ForgetGuests() ?? 0; Changed?.Invoke(); return n; }
+
+    /// <summary>Removes everyone: every voiceprint and every face.</summary>
+    public int ForgetEveryone() { var n = _ai?.People.ForgetAll() ?? 0; Changed?.Invoke(); return n; }
+
+    /// <summary>Who the robot's camera sees right now ("Nikki, a visitor"), or empty.</summary>
+    public string InView => _reachy == null ? "" : string.Join(", ", _reachy.InView.Select(v => v.Name == null ? "someone too far to recognise" : v.IsGuest ? $"{v.Name} (not introduced)" : v.Name));
 
     /// <summary>What is being said right now, as the live recogniser hears it (empty when nobody is talking or live words are off).</summary>
     public string LiveCaption { get; private set; } = "";
@@ -355,7 +384,8 @@ public sealed class VertexHost : IAsyncDisposable
         SetStatus(HostState.Starting, $"Connecting to the robot ({Settings.ReachyHost})...");
         try
         {
-            _reachy = await ReachyChannel.ConnectAsync(Settings.ReachyHost, _ai!, Settings.ReachySmartTurn, Settings.ReachyLiveWords);
+            _reachy = await ReachyChannel.ConnectAsync(Settings.ReachyHost, _ai!, Settings.ReachySmartTurn, Settings.ReachyLiveWords, Settings.ReachyFaces);
+            _reachy.Arrived += a => { if (_companion?.TryGreet(a.Name, a.Absence, _reachy) == true) Changed?.Invoke(); };
             _reachy.Hearing += (text, final) => { LiveCaption = final ? "" : text; Changed?.Invoke(); };
             if (!string.IsNullOrWhiteSpace(Settings.ReachySpeaker)) _reachy.RoomSpeakerName = Settings.ReachySpeaker.Trim();
             _reachy.AnswersEverything = Settings.ReachyAnswersEverything;

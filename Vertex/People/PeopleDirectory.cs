@@ -69,6 +69,16 @@ public sealed class PeopleDirectory
         return voice || face;
     }
 
+    /// <summary>Gives a stranger a name (whichever registry holds it): they become an introduced person, kept until removed. If that name already exists the two are merged.</summary>
+    public bool Rename(string from, string to)
+    {
+        var voice = _voices.Rename(from, to);
+        var face = _faces.Rename(from, to);
+        if (voice) _saveVoices();
+        if (face) _saveFaces();
+        return voice || face;
+    }
+
     /// <summary>Removes every guest (strangers nobody introduced). Returns how many people were removed.</summary>
     public int ForgetGuests()
     {
