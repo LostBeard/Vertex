@@ -293,6 +293,41 @@ public static class GameTools
                 return Task.FromResult("OK: I started walking over to the nearest villager to trade. It takes a few seconds - I have NOT traded yet.");
             });
 
+        yield return new GameTool("build_shape",
+            "Build a named thing near the player: a house (also cabin, hut), a platform (floor, deck), a pyramid, or a castle (fort). Uses the material we carry most of unless one is named. Say when asked for something bigger or smaller.",
+            """{"type":"object","properties":{"shape":{"type":"string","description":"house, platform, pyramid or castle"},"width":{"type":"integer","description":"blocks wide (optional)"},"depth":{"type":"integer","description":"blocks deep (optional)"},"height":{"type":"integer","description":"wall height in blocks (optional)"},"material":{"type":"string","description":"what to build it from, e.g. cobblestone, wood, stone bricks (optional)"},"roof":{"type":"string","description":"roof material (optional)"},"door_side":{"type":"string","description":"north, south, east or west (optional; default faces the player)"},"player":{"type":"string","description":"build near this player, or 'me'"}},"required":["shape"]}""",
+            a =>
+            {
+                var p = Who(a);
+                var shape = Str(a, "shape") ?? "house";
+                int width = Int(a, "width", 0), depth = Int(a, "depth", 0), height = Int(a, "height", 0);
+                var material = Str(a, "material");
+                var roof = Str(a, "roof");
+                var side = Str(a, "door_side");
+                tasks.Start($"building a {shape}", ct => skills.BuildShapeAsync(shape, width, depth, height, material, roof, side, p, ct));
+                return Task.FromResult($"OK: I started building a {shape}. It takes a while; I will say when I am done.");
+            });
+
+        yield return new GameTool("build_script",
+            "Build something you design yourself from a plan. Write the plan as lines, coordinates relative to the corner (x east, y up from the ground, z south). " + BuildScript.Grammar + " Example house: walls 0 0 0 4 2 4 cobblestone / clear 2 0 0 2 1 0 / roof gable 0 0 4 4 3 planks / door 2 0 0 south. Walls up to 4 high and roofs no higher than y 4 are the most reliable.",
+            """{"type":"object","properties":{"plan":{"type":"string","description":"the build plan, one command per line"},"player":{"type":"string","description":"build near this player, or 'me'"}},"required":["plan"]}""",
+            a =>
+            {
+                var p = Who(a);
+                var plan = Str(a, "plan") ?? "";
+                tasks.Start("building from a plan", ct => skills.BuildScriptAsync(plan, p, ct));
+                return Task.FromResult("OK: I started building from the plan. It takes a while; I will say when I am done.");
+            });
+
+        yield return new GameTool("continue_building",
+            "Carry on with the build that was last started (after it was interrupted, or after being given more materials). Blocks already placed stay.",
+            NoArgs,
+            _ =>
+            {
+                tasks.Start("carrying on with the build", ct => skills.ResumeBuildAsync(ct));
+                return Task.FromResult("OK: I started carrying on with the build.");
+            });
+
         yield return new GameTool("smelt",
             "Smelt or cook in a furnace: iron_ingot from raw iron, glass from sand, cooked_beef from beef, charcoal from logs. Builds a furnace from cobblestone if none is near. Takes 10 seconds per item.",
             """{"type":"object","properties":{"result":{"type":"string","description":"what to make, e.g. iron_ingot, glass, cooked_porkchop"},"count":{"type":"integer"}},"required":["result"]}""",

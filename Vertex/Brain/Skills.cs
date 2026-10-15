@@ -578,6 +578,151 @@ public sealed class Skills(MinecraftClient client)
         return null;
     }
 
+    // ---------------------------------------------------------------- custom builds (scripts and shapes)
+
+    /// <summary>The last build that was started: its script and where its corner is, so "keep building" can finish it (blocks already standing are skipped).</summary>
+    private (string Script, int X, int Y, int Z)? _lastBuild;
+
+    /// <summary>
+    /// The nearest spot (within 14 blocks) for a width x depth footprint with `clear` open blocks above it: solid natural ground under every cell at one level and nobody standing there.
+    /// Returns the footprint's north-west corner (lowest x and z) and the ground level.
+    /// </summary>
+    public (int X, int Y, int Z)? FindFlatRect(double nearX, double nearY, double nearZ, int width, int depth, int clear, Entity? keepClear)
+    {
+        var w = client.World;
+        int bx = (int)Math.Floor(nearX), bz = (int)Math.Floor(nearZ), by = (int)Math.Floor(nearY + 1e-6);
+        int hw = width / 2, hd = depth / 2, keep = Math.Max(width, depth) / 2 + 1;
+        var candidates = new List<(int X, int Z, int D2)>();
+        for (var dx = -14; dx <= 14; dx++)
+        for (var dz = -14; dz <= 14; dz++)
+        {
+            var d2 = dx * dx + dz * dz;
+            if (d2 <= 196 && Math.Max(Math.Abs(dx), Math.Abs(dz)) > keep) candidates.Add((bx + dx, bz + dz, d2));
+        }
+        foreach (var (cx, cz, _) in candidates.OrderBy(c => c.D2))
+        {
+            int x0 = cx - hw, z0 = cz - hd, x1 = x0 + width - 1, z1 = z0 + depth - 1;
+            if (!w.IsLoaded(x0, z0) || !w.IsLoaded(x1, z1) || !w.IsLoaded(x0, z1) || !w.IsLoaded(x1, z0)) continue;
+            int? level = null;
+            for (var y = by + 3; y >= by - 4 && level == null; y--)
+                if (Ground(w.GetState(cx, y - 1, cz)) && Open(w.GetState(cx, y, cz))) level = y;
+            if (level is not int ly) continue;
+            var ok = true;
+            for (var x = x0; x <= x1 && ok; x++)
+            for (var z = z0; z <= z1 && ok; z++)
+            {
+                if (!Ground(w.GetState(x, ly - 1, z))) ok = false;
+                for (var dy = 0; dy < clear && ok; dy++)
+                    if (!Open(w.GetState(x, ly + dy, z))) ok = false;
+            }
+            if (!ok) continue;
+            if (client.Entities.Values.Any(e => e.IsPlayer && e.X > x0 - 1.5 && e.X < x1 + 2.5 && e.Z > z0 - 1.5 && e.Z < z1 + 2.5)) continue;
+            if (keepClear != null && keepClear.X > x0 - 1.5 && keepClear.X < x1 + 2.5 && keepClear.Z > z0 - 1.5 && keepClear.Z < z1 + 2.5) continue;
+            return (x0, ly, z0);
+        }
+        return null;
+    }
+
+    /// <summary>
+    /// Builds what a script describes (see <see cref="BuildScript"/>) on a flat spot near a player (or here): checks the script and the materials first, picks the site, places the blocks
+    /// layer by layer with something to click against each time, and goes round again for any that failed. The script and place are kept: <see cref="ResumeBuildAsync"/> finishes an
+    /// interrupted build.
+    /// </summary>
+    public async Task<(bool, string)> BuildScriptAsync(string scriptText, string? nearPlayer, CancellationToken ct)
+    {
+        BuildScript script;
+        try { script = BuildScript.Parse(scriptText, D); }
+        catch (BuildScriptException e) { return (false, "That build plan has a problem: " + e.Message); }
+
+        var player = FindPlayer(nearPlayer);
+        var (ox, oy, oz) = player != null ? (player.X, player.Y, player.Z) : client.Position;
+        if (FindFlatRect(ox, oy, oz, script.Width, script.Depth, script.Height + 1, player) is not { } site)
+            return (false, $"I can't find a flat, clear spot {script.Width} by {script.Depth} blocks around here.");
+        return await BuildAtAsync(scriptText, site, ct);
+    }
+
+    /// <summary>Checks that we carry what a script needs, remembers it as the build in progress, and builds it with its corner at <paramref name="corner"/>.</summary>
+    private async Task<(bool, string)> BuildAtAsync(string scriptText, (int X, int Y, int Z) corner, CancellationToken ct)
+    {
+        BuildScript script;
+        try { script = BuildScript.Parse(scriptText, D); }
+        catch (BuildScriptException e) { return (false, "That build plan has a problem: " + e.Message); }
+        var shortages = script.Needs.Select(kv => (Item: kv.Key, Need: kv.Value, Have: Have(BuildScript.Matcher(kv.Key)))).Where(x => x.Have < x.Need).ToList();
+        if (shortages.Count > 0)
+            return (false, "I don't have enough to build that: " + string.Join(", ", shortages.Select(x => $"I need {x.Need} {BuildScript.Pretty(x.Item)} and have {x.Have}")) + ".");
+        _lastBuild = (scriptText, corner.X, corner.Y, corner.Z);
+        return await RunBuildAsync(script, corner, ct);
+    }
+
+    /// <summary>
+    /// Builds a named shape (see <see cref="BuildShapes"/>): picks the material we carry most of unless one was asked for, a flat spot near the player, the doorway facing the player unless a
+    /// side was given, and uses windows, a door and a torch only if we carry them.
+    /// </summary>
+    public async Task<(bool, string)> BuildShapeAsync(string shape, int width, int depth, int height, string? material, string? roofMaterial, string? doorSide, string? nearPlayer, CancellationToken ct)
+    {
+        var kind = BuildShapes.Normalize(shape);
+        if (kind == null) return (false, $"I don't know how to build a {shape}. I can build a {string.Join(", ", BuildShapes.Names)}, or follow a plan you describe.");
+        var (w, d, h) = BuildShapes.Fit(kind, width, depth, height);
+        if (ChooseMaterial(material) is not var (wallName, _, wallPretty, _)) return (false, $"I can't build with {material}.");
+        string roof;
+        try { roof = string.IsNullOrWhiteSpace(roofMaterial) ? wallName : BuildScript.ResolveMaterial(roofMaterial, D); }
+        catch (BuildScriptException e) { return (false, e.Message); }
+
+        var rise = kind == "house" ? (Math.Min(w, d) + 1) / 2 : kind == "pyramid" ? (w + 1) / 2 : 1;
+        var player = FindPlayer(nearPlayer);
+        var (ox, oy, oz) = player != null ? (player.X, player.Y, player.Z) : client.Position;
+        if (FindFlatRect(ox, oy, oz, w, d, h + rise + 2, player) is not { } site)
+            return (false, $"I can't find a flat, clear spot {w} by {d} blocks around here for a {kind}.");
+
+        // The doorway (or gate) faces whoever asked, so they can walk right in, unless a side was given.
+        var side = doorSide?.Trim().ToLowerInvariant() switch
+        {
+            "north" or "n" => BlockFace.North, "south" or "s" => BlockFace.South, "east" or "e" => BlockFace.East, "west" or "w" => BlockFace.West,
+            _ => Facing(site.X + w / 2.0, site.Z + d / 2.0, ox, oz),
+        };
+        var script = BuildShapes.Script(kind, w, d, h, wallName, roof, side,
+            windows: Have(s => s.Name == "minecraft:glass") >= 3, door: Have(Blueprints.IsDoor) > 0, torch: Have(s => s.Name == "minecraft:torch") > 0);
+        var (ok, text) = await BuildAtAsync(script, site, ct);
+        if (!ok) return (false, text.Replace("build that", $"build a {w} by {d} {wallPretty} {kind}"));
+        return (true, $"{text} It is a {wallPretty} {kind}" + (kind is "house" or "castle" ? $", with the {(kind == "castle" ? "gate" : "door")} on the {Name(side)} side." : "."));
+    }
+
+    /// <summary>Carries on with the last build where it stands: blocks already placed are left alone, the rest are placed.</summary>
+    public async Task<(bool, string)> ResumeBuildAsync(CancellationToken ct)
+    {
+        if (_lastBuild is not { } last) return (false, "I haven't started a build to carry on with.");
+        BuildScript script;
+        try { script = BuildScript.Parse(last.Script, D); }
+        catch (BuildScriptException e) { return (false, "The plan I was building has a problem: " + e.Message); }
+        return await RunBuildAsync(script, (last.X, last.Y, last.Z), ct);
+    }
+
+    private async Task<(bool, string)> RunBuildAsync(BuildScript script, (int X, int Y, int Z) corner, CancellationToken ct)
+    {
+        var world = script.Cells.Select(c => c with { X = c.X + corner.X, Y = c.Y + corner.Y, Z = c.Z + corner.Z }).ToList();
+        var ordered = BuildScript.Order(world, (x, y, z) => Standable(client.World.GetState(x, y, z)));
+        var plan = ordered.Select(c => new Placement(c.X, c.Y, c.Z, BuildScript.Matcher(c.Item), BuildScript.Pretty(c.Item), c.Facing)).ToList();
+
+        var placed = 0;
+        var failed = 0;
+        string? missing = null;
+        for (var pass = 0; pass < 3 && !ct.IsCancellationRequested; pass++)
+        {
+            var (p, f, m) = await client.BuildAsync(plan, ct);
+            placed += p;
+            failed = f;
+            missing = m;
+            if (m != null || f == 0 || p == 0) break;       // done, out of something, or a pass that got nowhere
+        }
+        // Step away from it, to the open side, so we are not left standing inside our own build.
+        await client.GoToAsync(Goal.Near(corner.X + script.Width / 2.0, corner.Y, corner.Z - 2.5, 2.0), new PathOptions { MaxNodes = 8_000 }, ct);
+        var size = $"{script.Width} by {script.Depth}, {script.Height} high";
+        if (missing != null) return (false, $"I ran out of {missing} while building ({placed} blocks placed, {size}). Give me more and say keep building.");
+        return failed == 0
+            ? (true, $"I built it: {placed} blocks placed ({size}).")
+            : (true, $"I built most of it ({placed} blocks placed, {size}), but {failed} {(failed == 1 ? "block" : "blocks")} wouldn't go where I wanted.");
+    }
+
     // ---------------------------------------------------------------- walls, towers, bridges
 
     /// <summary>A block whose top we can stand on (any full-height solid block, built or natural).</summary>
