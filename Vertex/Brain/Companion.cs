@@ -606,7 +606,7 @@ public sealed class Companion : IAsyncDisposable
             {
                 Model = Model,
                 Messages = messages,
-                Options = new AiGenerationOptions { MaxOutputTokens = 160, Strategy = "top_p", Temperature = 0.7f, TopP = 0.9f, RepetitionPenalty = 1.1f },
+                Options = new AiGenerationOptions { MaxOutputTokens = 220, Strategy = "top_p", Temperature = 0.7f, TopP = 0.9f, RepetitionPenalty = 1.1f },
             }, OnDelta, ct);
         }
         finally

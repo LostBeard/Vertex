@@ -173,6 +173,13 @@ public sealed class Mouth : IAsyncDisposable
         catch (Exception e) when (e is not OperationCanceledException) { Log?.Invoke($"playing on {channel.Name} failed: {e.Message}"); }
     }
 
+    /// <summary>
+    /// The most characters one spoken clip holds (about 7 s of speech). A longer sentence is spoken in pieces cut at a comma or a joining word: a clip is rendered, sent to the robot
+    /// and played as a unit, so a 14 s clip (live 2026-10-15: a sentence listing three biomes) could not be ready, 6 s of transfer included, when the clip before it ended, and the
+    /// speaker sat silent for 11 s, while the same words as two 7 s clips are rendered and sent while the one before plays.
+    /// </summary>
+    public const int MaxClipChars = 120;
+
     /// <summary>Splits text into sentences so speech can start before the whole reply is rendered.</summary>
     public static IEnumerable<string> Sentences(string text)
     {
@@ -182,13 +189,60 @@ public sealed class Mouth : IAsyncDisposable
             var c = text[i];
             if ((c is '.' or '!' or '?') && (i + 1 == text.Length || char.IsWhiteSpace(text[i + 1])))
             {
-                var s = text[start..(i + 1)].Trim();
-                if (s.Length > 0) yield return s;
+                foreach (var piece in Pieces(text[start..(i + 1)].Trim())) yield return piece;
                 start = i + 1;
             }
         }
-        var rest = text[start..].Trim();
-        if (rest.Length > 0) yield return rest;
+        foreach (var piece in Pieces(text[start..].Trim())) yield return piece;
+    }
+
+    private static readonly string[] ClauseBreaks = [", ", "; ", ": ", " - ", " — "];
+    private static readonly string[] JoiningWords = [" and ", " but ", " or ", " so ", " because ", " which ", " where ", " while ", " when ", " then "];
+
+    /// <summary>A sentence, or (when it is longer than <see cref="MaxClipChars"/>) pieces of it of about equal length, cut near the middle at the best break.</summary>
+    internal static IEnumerable<string> Pieces(string sentence)
+    {
+        if (sentence.Length == 0) yield break;
+        if (sentence.Length <= MaxClipChars) { yield return sentence; yield break; }
+        var cut = AvoidDanglingWord(sentence, BestCut(sentence));
+        foreach (var piece in Pieces(sentence[..cut].Trim())) yield return piece;
+        foreach (var piece in Pieces(sentence[cut..].Trim())) yield return piece;
+    }
+
+    // Where to cut: a comma-like break nearest the middle (within the middle 40%), else a joining word (the cut goes BEFORE it), else the space nearest the middle.
+    private static int BestCut(string s)
+    {
+        int mid = s.Length / 2, lo = s.Length * 3 / 10, hi = s.Length * 7 / 10;
+        int Nearest(IEnumerable<int> positions) => positions.Where(p => p >= lo && p <= hi).OrderBy(p => Math.Abs(p - mid)).DefaultIfEmpty(-1).First();
+        var clause = Nearest(ClauseBreaks.SelectMany(b => AllIndexes(s, b).Select(i => i + b.TrimEnd().Length)));
+        if (clause > 0) return clause;
+        var joining = Nearest(JoiningWords.SelectMany(w => AllIndexes(s, w)));
+        if (joining > 0) return joining;
+        var space = Nearest(AllIndexes(s, " "));
+        return space > 0 ? space : mid;
+    }
+
+    // A clip must not end on a word that wants the next one ("... can find and | then dig ..."): the cut moves back to before it.
+    private static readonly HashSet<string> Dangling = new(StringComparer.OrdinalIgnoreCase)
+        { "and", "but", "or", "so", "then", "because", "which", "where", "while", "when", "the", "a", "an", "to", "of", "with", "in", "on", "at", "for", "that", "if" };
+
+    private static int AvoidDanglingWord(string s, int cut)
+    {
+        var floor = s.Length / 4;                                          // never make a stub of the first piece
+        while (cut > floor)
+        {
+            var left = s[..cut].TrimEnd();
+            var space = left.LastIndexOf(' ');
+            if (space < 0 || !Dangling.Contains(left[(space + 1)..].Trim(',', ';', ':'))) break;
+            if (left[^1] is ',' or ';' or ':') break;                      // a comma already gives it a place to stop
+            cut = space;
+        }
+        return cut;
+    }
+
+    private static IEnumerable<int> AllIndexes(string s, string what)
+    {
+        for (var i = s.IndexOf(what, StringComparison.Ordinal); i >= 0; i = s.IndexOf(what, i + 1, StringComparison.Ordinal)) yield return i;
     }
 
     /// <summary>Chat lines are at most 256 characters: split on word boundaries.</summary>
