@@ -23,6 +23,9 @@ namespace Vertex.AI;
 /// </remarks>
 public sealed class LiveWords : IAsyncDisposable
 {
+    /// <summary>Whether the log gets the words themselves (see <see cref="WordsInLog"/>). The live caption is a separate, transient thing and is not affected.</summary>
+    public bool LogWords { get; set; }
+
     /// <summary>Audio kept from before the detector was sure it was speech (16 kHz samples): the first word starts before the detector says so.</summary>
     public const int PrerollSamples = 8000;
 
@@ -156,7 +159,7 @@ public sealed class LiveWords : IAsyncDisposable
                         stream.Dispose(); stream = null;
                         if (text.Length > 0)
                         {
-                            Log?.Invoke($"live words: \"{text}\" ({chunks} chunks, {(chunks > 0 ? chunkMs / chunks : 0):0} ms each)");
+                            Log?.Invoke($"live words: {WordsInLog.Quote(text, LogWords)} ({chunks} chunks, {(chunks > 0 ? chunkMs / chunks : 0):0} ms each)");
                             Words?.Invoke(text, true);
                         }
                         last = ""; chunkMs = 0; chunks = 0;

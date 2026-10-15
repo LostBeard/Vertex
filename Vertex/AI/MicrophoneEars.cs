@@ -31,6 +31,17 @@ public sealed class MicrophoneEars : IAsyncDisposable
     private readonly TurnAssembler? _turns;
     private readonly Task _pump;
     private LiveWords? _live;
+    private bool _logWords;
+
+    /// <summary>
+    /// Whether the words of everything heard are written to the log. Off by default (see <see cref="WordsInLog"/>): the robot hears the whole room, and the dashboard that shows the log
+    /// can be opened from any device on the network. What is said TO Vertex is still logged, by the conversation, as what it heard and answered.
+    /// </summary>
+    public bool LogWords
+    {
+        get => _logWords;
+        set { _logWords = value; if (_live != null) _live.LogWords = value; }
+    }
     private int _pendingTranscriptions;
 
     private volatile bool _muted;
@@ -111,7 +122,7 @@ public sealed class MicrophoneEars : IAsyncDisposable
         var ears = new MicrophoneEars(ai, new VoiceActivityDetector(vad, options, ownsVad: true), smartTurn);
         if (liveWords)
         {
-            ears._live = new LiveWords(ai);
+            ears._live = new LiveWords(ai) { LogWords = ears._logWords };
             ears._live.Words += (text, final) => ears.Hearing?.Invoke(text, final);
             ears._live.Log += m => ears.Log?.Invoke(m);
         }
@@ -200,7 +211,7 @@ public sealed class MicrophoneEars : IAsyncDisposable
                 if (string.IsNullOrWhiteSpace(text) || Ears.IsNoise(text)) return;
                 if (unsure != null && !WakeWord.Names(text, WakeName))
                 {
-                    Log?.Invoke($"ignored {seconds:0.00} s of sound: {unsure}, and \"{text}\" is not the name ({measure.RmsDb:0} dB rms, {measure.PeakDb:0.0} dB peak)");
+                    Log?.Invoke($"ignored {seconds:0.00} s of sound: {unsure}, and {WordsInLog.Quote(text, _logWords)} is not the name ({measure.RmsDb:0} dB rms, {measure.PeakDb:0.0} dB peak)");
                     SaveIgnored(samples, unsure, measure, text);
                     return;
                 }
@@ -208,7 +219,7 @@ public sealed class MicrophoneEars : IAsyncDisposable
                 // punctuation) and nothing has already been waited for, hold the turn for a continuation instead of answering a fragment.
                 if (_turns != null && why is "complete" or "silence" && TurnText.LooksUnfinished(text) && !EndedAfterTheMute(startSample + samples.Length))
                 {
-                    Log?.Invoke($"holding: \"{text}\" stops partway");
+                    Log?.Invoke($"holding: {WordsInLog.Quote(text, _logWords)} stops partway");
                     _turns.Hold(samples, startSample, ended);
                     return;
                 }
@@ -220,7 +231,7 @@ public sealed class MicrophoneEars : IAsyncDisposable
                     catch (OperationCanceledException) { throw; }
                     catch (Exception e) { Log?.Invoke("speaker identification failed: " + e.Message); }
                 }
-                Log?.Invoke($"heard{(speaker?.Name is { } who ? " (" + who + (speaker.Reliable ? "" : ", short") + ")" : "")}: \"{text}\" ({seconds:0.0} s, {measure.RmsDb:0} dB rms, {measure.PeakDb:0.0} dB peak, text in {stt.ElapsedMilliseconds} ms{(speaker != null ? ", voice in " + speaker.EmbedMs.ToString("0") + " ms" : "")}, turn ended: {why})");
+                Log?.Invoke($"heard{(speaker?.Name is { } who ? " (" + who + (speaker.Reliable ? "" : ", short") + ")" : "")}: {WordsInLog.Quote(text, _logWords)} ({seconds:0.0} s, {measure.RmsDb:0} dB rms, {measure.PeakDb:0.0} dB peak, text in {stt.ElapsedMilliseconds} ms{(speaker != null ? ", voice in " + speaker.EmbedMs.ToString("0") + " ms" : "")}, turn ended: {why})");
                 if (SaveFolder is { Length: > 0 } folder) SaveHeard(folder, samples, text, seconds, speaker, stt.Elapsed.TotalMilliseconds);
                 Heard?.Invoke(new HeardUtterance(text, seconds, ended, stt.Elapsed.TotalMilliseconds, speaker));
             }

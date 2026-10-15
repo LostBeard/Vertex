@@ -61,6 +61,13 @@ public sealed class ReachyChannel : IPreparingVoiceChannel
         set { if (_ears != null) _ears.SaveFolder = value; }
     }
 
+    /// <summary>Write the words of everything the robot hears to the log (default off: only what is said to Vertex is logged). See <see cref="MicrophoneEars.LogWords"/>.</summary>
+    public bool LogWords
+    {
+        get => _ears?.LogWords ?? false;
+        set { if (_ears != null) _ears.LogWords = value; }
+    }
+
     /// <summary>The voice tracker: who is talking, introductions, the people Vertex knows.</summary>
     public SpeakerTracker Speakers => _speakers;
 

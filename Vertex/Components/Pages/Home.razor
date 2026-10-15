@@ -76,6 +76,7 @@
                 <Check @bind-Value="Host.Settings.ReachyStreamSpeech" Disabled="@Host.RobotConnected" Title="Experimental: live Opus speech">Streams the speech as live compressed audio instead of sending each sentence to the robot to play. Starts at once, but the sound is compressed. Off is the normal way and sounds like the Hugging Face demo.</Check>
 
                 <h3>Data</h3>
+                <Check @bind-Value="Host.Settings.ReachyLogWords" Disabled="@Host.RobotConnected" Title="Write everything the robot hears in the log">Off: the log shows who spoke and for how long, and the words only of what is said to Vertex. The robot hears the whole room, and this page can be opened from any device on the network.</Check>
                 <Check @bind-Value="Host.Settings.ReachySaveHeard" Disabled="@Host.RobotConnected" Title="Keep what the robot hears">Audio, words and who, in <code>@Host.HeardFolder</code>, to measure listening on this household's voices. Stays on this PC.</Check>
             }
             else if (Tab == "people")

@@ -65,6 +65,11 @@ public sealed class VertexSettings
     /// </summary>
     public bool ReachySaveHeard { get; set; }
     /// <summary>
+    /// Write the words of everything the robot hears into the log (and so onto the dashboard, which can be opened from any device on the network). Off by default: the robot hears the
+    /// whole room, including conversations nobody meant for it. What is said to Vertex is always logged.
+    /// </summary>
+    public bool ReachyLogWords { get; set; }
+    /// <summary>
     /// The server's modpack (a Modrinth .mrpack URL or file), for learning its modded blocks the way a player gets
     /// them. Empty: AubsCraft's pack on mc.spawndev.com, none elsewhere.
     /// </summary>
@@ -426,6 +431,7 @@ public sealed class VertexHost : IAsyncDisposable
             _reachy.AnswersEverything = Settings.ReachyAnswersEverything;
             _reachy.IdentifySpeakers = Settings.ReachyRecognizeVoices;
             _reachy.SaveHeardFolder = Settings.ReachySaveHeard ? HeardFolder : null;
+            _reachy.LogWords = Settings.ReachyLogWords;
             _reachy.Log += m => Add(LineKind.System, "[reachy] " + m);
             _robot = new RobotBody(_reachy, _companion) { FaceSpeaker = Settings.ReachyFaceSpeaker, FollowFaces = Settings.ReachyFollowFaces };
             _robot.Log += m => Add(LineKind.System, "[reachy] " + m);
