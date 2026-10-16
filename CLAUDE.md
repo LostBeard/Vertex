@@ -19,3 +19,8 @@ plugins. Global rules: `D:\users\tj\Projects\AGENTS.md`. This file holds Vertex 
 - **Bulk data stays pooled.** Frames come from `ArrayPool`; chunk data is parsed in place into the world model,
   never copied into intermediate managed arrays first.
 - **Accounts:** tokens are cached encrypted (DPAPI, current user). Never log a token, never commit one.
+
+## Docs
+
+`README.md`, `Docs/` (Skills, Architecture, Reachy, Privacy-and-Safety, Testing) and `SpawnDev.Minecraft/README.md` describe what Vertex does today. When a skill, a setting, a
+default, a number measured in `PLAN.md` or a port changes, update the page that states it in the same commit. Measured numbers carry their date and hardware.
