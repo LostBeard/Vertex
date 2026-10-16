@@ -381,6 +381,16 @@ public static class GameTools
                 return Task.FromResult("OK: I started putting torches around. It takes a little while; I will say when I am done.");
             });
 
+        yield return new GameTool("shoot",
+            "Shoot mobs with a bow from a distance (needs a bow and arrows). Use for 'shoot the skeleton', 'use your bow', or when a monster is far away and you have a bow.",
+            """{"type":"object","properties":{"target":{"type":"string","description":"what to shoot, e.g. zombie, skeleton, monsters"}},"required":["target"]}""",
+            a =>
+            {
+                var target = Str(a, "target") ?? "monsters";
+                tasks.Start($"shooting {target}", ct => skills.ShootAsync(target, ct));
+                return Task.FromResult($"OK: I started shooting {target} with my bow.");
+            });
+
         yield return new GameTool("smelt",
             "Smelt or cook in a furnace: iron_ingot from raw iron, glass from sand, cooked_beef from beef, charcoal from logs. Builds a furnace from cobblestone if none is near. Takes 10 seconds per item.",
             """{"type":"object","properties":{"result":{"type":"string","description":"what to make, e.g. iron_ingot, glass, cooked_porkchop"},"count":{"type":"integer"}},"required":["result"]}""",

@@ -1460,6 +1460,75 @@ public sealed class Skills(MinecraftClient client)
         return (true, $"I put up {placed} torch{(placed == 1 ? "" : "es")} around here, about {spacing} blocks apart, so nothing can spawn in the dark" + (failed > 0 ? $" ({failed} spots wouldn't take one)." : "."));
     }
 
+    // ---------------------------------------------------------------- shooting
+
+    private Func<Entity, bool> MobMatcher(string what)
+    {
+        var w = what.Trim().ToLowerInvariant();
+        return w is "monster" or "monsters" or "mobs" or "hostile" or "enemies" or "bad guys" or ""
+            ? e => Hostile.Contains(e.Name)
+            : e => e.Name.Bare() == w.TrimEnd('s') || e.Name.Bare() == w;
+    }
+
+    /// <summary>
+    /// Shoots mobs with a bow from a distance: draws for a full second (full power, 3 blocks a tick), points where the arrow will be at the target's height when it arrives (leading it if it
+    /// walks), releases, and goes again until it is gone. Gets closer when it is too far for an arrow, and fights it by hand when it comes too close for a bow.
+    /// </summary>
+    public async Task<(bool, string)> ShootAsync(string what, CancellationToken ct)
+    {
+        if (Have(s => s.Name == "minecraft:bow") == 0) return (false, "I need a bow to shoot.");
+        var matches = MobMatcher(what);
+        int shots = 0, kills = 0;
+        var down = new HashSet<int>();                                  // a mob stays listed for its death animation: once it is down it is not a target and not counted again
+        while (!ct.IsCancellationRequested)
+        {
+            if (client.Health < 6) return (kills > 0, $"I had to stop shooting, I'm hurt (health {client.Health / 2:0} hearts). {Report(shots, kills)}");
+            if (Have(s => s.Name == "minecraft:arrow") == 0) return (kills > 0, $"I ran out of arrows. {Report(shots, kills)}");
+            var (px, py, pz) = client.Position;
+            var target = client.Entities.Values.Where(e => !e.IsPlayer && matches(e) && !down.Contains(e.Id) && e.Health is not <= 0 && e.DistanceTo(px, py, pz) < 40)
+                .OrderBy(e => e.DistanceTo(px, py, pz)).FirstOrDefault();
+            if (target == null) break;
+            var distance = target.DistanceTo(px, py, pz);
+            if (distance < 5)
+            {
+                // Too close to draw: by hand.
+                if (await FightAsync(target.Id, null, ct)) { kills++; down.Add(target.Id); }
+                continue;
+            }
+            if (distance > 32)
+            {
+                await client.GoToAsync(Goal.Near(target.X, target.Y, target.Z, 24), new PathOptions { MaxNodes = 8_000 }, ct);
+                continue;
+            }
+            if (!await client.EquipAsync(s => s.Name == "minecraft:bow", ct)) return (false, "I couldn't get the bow into my hand.");
+
+            // Draw, watching the target for ten ticks to know how it is moving, aiming again every tick, release at full draw.
+            var id = target.Id;
+            await client.UseItemAsync(Hand.Main, ct);
+            (double X, double Z)? early = null, late = null;
+            var velocity = (X: 0.0, Z: 0.0);
+            for (var tick = 0; tick < 21 && !ct.IsCancellationRequested; tick++)
+            {
+                if (!client.Entities.TryGetValue(id, out var t)) break;
+                if (tick == 6) early = (t.X, t.Z);
+                if (tick == 16) { late = (t.X, t.Z); velocity = ((late.Value.X - early!.Value.X) / 10, (late.Value.Z - early.Value.Z) / 10); }
+                var (ex, ey, ez) = client.Position;
+                var aimAt = Ballistics.AimAt(ex, ey + 1.62, ez, t.X, t.Y + t.Type.Height * 0.65, t.Z, velocity.X, 0, velocity.Z);
+                if (aimAt is { } a) client.Look((float)a.Yaw, (float)a.Pitch);
+                else client.LookAt(t.X, t.Y + t.Type.Height * 0.65, t.Z);
+                await client.WaitTicksAsync(1, ct);
+            }
+            await client.ReleaseUseItemAsync(ct);
+            shots++;
+            await client.WaitTicksAsync(14, ct);                       // the flight, and the mob's death
+            if (!client.Entities.ContainsKey(id) || client.Entities.TryGetValue(id, out var after) && after.Health is <= 0) { kills++; down.Add(id); }
+        }
+        if (shots == 0 && kills == 0) return (false, $"I don't see any {what} to shoot at.");
+        return (true, Report(shots, kills));
+
+        string Report(int s, int k) => $"I shot {s} arrow{(s == 1 ? "" : "s")} and {(k == 0 ? "none of the " + what + " are down yet" : $"brought down {k} {what}")}. I have {Have(a => a.Name == "minecraft:arrow")} arrows left.";
+    }
+
     // ---------------------------------------------------------------- exploring
 
     /// <summary>Blocks worth telling friends about, by what to call them.</summary>
