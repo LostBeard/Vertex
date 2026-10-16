@@ -155,4 +155,48 @@ public class LiveShieldTests
             Assert.That(lost, Is.LessThan(12), "and was not nearly killed doing it");
         }
     }
+
+    /// <summary>A stray (it shoots slowness arrows and, unlike a skeleton, does not burn in daylight) 14 blocks away: walked up to and killed, with and without a shield.</summary>
+    private async Task<(bool Won, float Lost)> FightAStrayAsync(MinecraftClient client, string name, int ax, int az, Skills skills)
+    {
+        await _server.CommandAsync("kill @e[type=!minecraft:player]");
+        await _server.CommandAsync($"effect clear {name}");
+        await _server.CommandAsync($"effect give {name} minecraft:instant_health 1 10 true");
+        await _server.CommandAsync($"effect give {name} minecraft:saturation 1 10 true");
+        await _server.CommandAsync($"tp {name} {ax + 0.5} 200 {az + 0.5} -90 0");
+        await client.WaitTicksAsync(40);
+        await _server.CommandAsync($"summon minecraft:stray {ax + 12.5} 200 {az + 0.5}");
+        await Wait.UntilAsync(() => client.Entities.Values.Any(e => e.Name == "minecraft:stray"), Timeout, () => "the stray");
+        var before = client.Health;
+        var lowest = before;
+        using var watch = new CancellationTokenSource();
+        var watcher = Task.Run(async () => { while (!watch.IsCancellationRequested) { lowest = Math.Min(lowest, client.Health); await Task.Delay(20); } });
+        var (ok, text) = await skills.AttackAsync("stray", CancellationToken.None);
+        watch.Cancel();
+        await watcher;
+        TestContext.Out.WriteLine($"stray fight: {text} lost {before - lowest}");
+        return (ok && text.Contains("defeated 1"), before - lowest);
+    }
+
+    [Test]
+    public async Task AStrayShootingFromAfar_IsWalkedUpToAndBeaten_WithAShield()
+    {
+        const string name = "VertexShieldStry";
+        var (client, ax, az) = await JoinOnArenaAsync(name, 16);
+        await using var _ = client;
+        await GiveAsync(client, name, "minecraft:iron_sword", 1);
+        await GiveAsync(client, name, "minecraft:shield", 1);
+        var skills = new Skills(client);
+        var plain = new List<float>();
+        for (var i = 0; i < 2; i++) plain.Add((await FightAStrayAsync(client, name, ax, az, skills)).Lost);
+        Assert.That(await skills.EquipShieldAsync(CancellationToken.None), Is.True);
+        var shielded = new List<float>();
+        for (var i = 0; i < 2; i++)
+        {
+            var (won, lost) = await FightAStrayAsync(client, name, ax, az, skills);
+            Assert.That(won, Is.True, $"it beat the stray (fight {i + 1})");
+            shielded.Add(lost);
+        }
+        TestContext.Out.WriteLine($"health lost without a shield: {string.Join(", ", plain)}; with: {string.Join(", ", shielded)}");
+    }
 }
