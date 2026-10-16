@@ -91,6 +91,34 @@ public class DecodeSpeedTests
         TestContext.Out.WriteLine($"third turn : prompt {c.Prompt} tokens, first token {c.First:0.00} s, decode {c.Decode:0.0} tok/s");
     }
 
+    /// <summary>Where a per-turn PREFILL goes at a long context: a 3,000-token system prompt (cached after the first turn) and a user message of about 300 tokens, profiled by op type.</summary>
+    [Test]
+    public async Task WhereThePrefillGoes_AtALongContext()
+    {
+        var filler = string.Join(" ", Enumerable.Range(0, 140).Select(i => $"Fact {i}: the village has {i % 17 + 3} houses, {i % 5 + 1} wells and {i % 11 + 2} gardens."));
+        var message = string.Join(" ", Enumerable.Range(0, 28).Select(i => $"Note {i}: the baker sells {i % 7 + 1} loaves and {i % 4 + 2} cakes today."));
+        async Task<(double First, int Prompt)> Turn(string user)
+        {
+            var request = new AiChatRequest { Model = _model, Messages = [new("system", "You are a friendly helper. " + filler), new("user", user)], Options = new AiGenerationOptions { MaxOutputTokens = 1 } };
+            var sw = Stopwatch.StartNew();
+            var first = -1.0;
+            var result = await _ai.ChatAsync(request, _ => { if (first < 0) first = sw.Elapsed.TotalSeconds; return Task.CompletedTask; }, CancellationToken.None);
+            return (Math.Max(first, sw.Elapsed.TotalSeconds), result.PromptTokens);
+        }
+        var warm = await Turn("Hello. " + message);
+        TestContext.Out.WriteLine($"first (cold prefix): prompt {warm.Prompt} tokens, {warm.First:0.00} s");
+        // TRUE per-op GPU time: a sync after every node (PerOpSync), each node's wall time kept (CapturedNodeTimingsMs holds the LAST forward, which with one output token is the prefill).
+        SpawnDev.ILGPU.ML.Graph.GraphExecutor.PerOpSync = true;
+        SpawnDev.ILGPU.ML.Graph.GraphExecutor.CapturedNodeTimingsMs = new Dictionary<string, double>();
+        var t2 = await Turn("Different start. " + message + " And one more thing.");
+        var timings = SpawnDev.ILGPU.ML.Graph.GraphExecutor.CapturedNodeTimingsMs;
+        SpawnDev.ILGPU.ML.Graph.GraphExecutor.CapturedNodeTimingsMs = null;
+        SpawnDev.ILGPU.ML.Graph.GraphExecutor.PerOpSync = false;
+        TestContext.Out.WriteLine($"second (suffix prefill, per-op synced): prompt {t2.Prompt} tokens, {t2.First:0.00} s; nodes timed {timings.Count}, sum {timings.Values.Sum():0} ms");
+        foreach (var g in timings.GroupBy(kv => kv.Key.Split('_')[1]).OrderByDescending(g => g.Sum(x => x.Value)).Take(10))
+            TestContext.Out.WriteLine($"  {g.Key,-24} {g.Sum(x => x.Value),9:0.0} ms  x{g.Count()}  ({g.Sum(x => x.Value) / g.Count():0.00} ms each)");
+    }
+
     [Test]
     public async Task DecodeRate_ByTheSamplingSettings()
     {

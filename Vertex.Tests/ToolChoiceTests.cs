@@ -75,6 +75,9 @@ public class ToolChoiceTests
         var log = new ConcurrentQueue<string>();
         var vertex = new MinecraftClient(GameProfile.Offline("VertexTools"), new ClientOptions());
         var aubs = new MinecraftClient(GameProfile.Offline("Aubri"));
+        // A client the server drops (a keep-alive timeout while the machine is busy) makes every later prompt read "no tool": say so in the log (a full run once went silent after two prompts).
+        vertex.Disconnected += reason => { log.Enqueue("!! Vertex's connection ended: " + reason); TestContext.Out.WriteLine("!! Vertex's connection ended: " + reason); };
+        aubs.Disconnected += reason => { log.Enqueue("!! Aubri's connection ended: " + reason); TestContext.Out.WriteLine("!! Aubri's connection ended: " + reason); };
         using var cts = new CancellationTokenSource(Timeout);
         await vertex.ConnectAsync("127.0.0.1", Port, cts.Token);
         await aubs.ConnectAsync("127.0.0.1", Port, cts.Token);
