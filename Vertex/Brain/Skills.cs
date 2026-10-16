@@ -232,7 +232,7 @@ public sealed class Skills(MinecraftClient client)
             if (ok)
             {
                 broken++;
-                await PickUpNearbyAsync(bx, by, bz, ct);
+                await PickUpNearbyAsync(bx, by, bz, ct, mayDig: true);
             }
             else failures++;
         }
@@ -250,8 +250,11 @@ public sealed class Skills(MinecraftClient client)
         return Lava(1, 0, 0) || Lava(-1, 0, 0) || Lava(0, 0, 1) || Lava(0, 0, -1) || Lava(0, -1, 0) || Lava(0, 1, 0) || Lava(0, 2, 0);
     }
 
-    /// <summary>Walks over the item drops near a spot.</summary>
-    public async Task PickUpNearbyAsync(int x, int y, int z, CancellationToken ct)
+    /// <summary>
+    /// Walks over the item drops near a spot. Digging to a drop is only allowed when the caller mined something that can leave one sealed in a pocket (ore) and the drop is within two blocks
+    /// of the spot: with digging always on, a field's water hole made Vertex dig a shaft after the dirt it had just dropped (found 2026-10-15 on the AubsCraft dev world).
+    /// </summary>
+    public async Task PickUpNearbyAsync(int x, int y, int z, CancellationToken ct, bool mayDig = false)
     {
         await client.WaitTicksAsync(8, ct); // drops spawn and settle
         for (var tries = 0; tries < 4; tries++)
@@ -259,7 +262,7 @@ public sealed class Skills(MinecraftClient client)
             var drop = client.Entities.Values.Where(e => e.IsItem && e.DistanceTo(x + 0.5, y + 0.5, z + 0.5) < 5).OrderBy(e => e.DistanceTo(x + 0.5, y, z + 0.5)).FirstOrDefault();
             if (drop == null) return;
             // Digging allowed: a drop from ore reached from a few blocks away lies in the sealed pocket the ore left (found 2026-10-15: a diamond mined from above was never picked up).
-            await client.GoToAsync(Goal.Near(drop.X, drop.Y, drop.Z, 0.8), new PathOptions { MaxNodes = 5_000, CanDig = true }, ct);
+            await client.GoToAsync(Goal.Near(drop.X, drop.Y, drop.Z, 0.8), new PathOptions { MaxNodes = 5_000, CanDig = mayDig && drop.DistanceTo(x + 0.5, y + 0.5, z + 0.5) < 2.5 }, ct);
             await client.WaitTicksAsync(3, ct);
         }
     }
@@ -1226,13 +1229,16 @@ public sealed class Skills(MinecraftClient client)
             await client.GoToAsync(new GoalReachBlock(cx, gy - 1, cz, 3.5), new PathOptions { MaxNodes = 10_000 }, ct);
             if (await client.DigAsync(cx, gy - 1, cz, ct))
             {
-                await PickUpNearbyAsync(cx, gy - 1, cz, ct);
+                // The dirt it dropped is left in the hole (the water carries it off): walking down for it put Vertex IN the pit, and the bucket was then emptied at its own feet one block too
+                // low (seen 2026-10-15 on the AubsCraft dev world: water at the bottom, air above it, and Vertex stuck swimming in the shaft).
                 if (await client.EquipAsync(s => s.Name == "minecraft:water_bucket", ct))
                 {
                     client.LookAt(cx + 0.5, gy - 1.0, cz + 0.5);
                     await client.WaitTicksAsync(2, ct);
                     await client.UseItemAsync(Hand.Main, ct);
-                    water = await client.WaitUntilAsync(() => client.World.GetBlock(cx, gy - 1, cz)?.Name == "minecraft:water", 20, ct);
+                    // The server answers within a tick or two on a quiet machine and several seconds on a busy one (the AubsCraft dev world while its viewer copies region files): the
+                    // block turning to water, or the bucket turning empty, both say it poured.
+                    water = await client.WaitUntilAsync(() => client.World.GetBlock(cx, gy - 1, cz)?.Name == "minecraft:water" || Have(s => s.Name == "minecraft:water_bucket") == 0, 100, ct);
                 }
             }
         }
