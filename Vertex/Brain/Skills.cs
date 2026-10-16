@@ -1395,6 +1395,71 @@ public sealed class Skills(MinecraftClient client)
             : (false, "The cow didn't give milk.");
     }
 
+    // ---------------------------------------------------------------- lighting
+
+    /// <summary>Torches (and the like) that already light a spot.</summary>
+    private static bool IsLightSource(string block) =>
+        block.EndsWith("torch") || block is "minecraft:lantern" or "minecraft:soul_lantern" or "minecraft:glowstone" or "minecraft:sea_lantern" or "minecraft:jack_o_lantern"
+        or "minecraft:shroomlight" or "minecraft:campfire" or "minecraft:soul_campfire" or "minecraft:beacon" or "minecraft:end_rod" or "minecraft:froglight";
+
+    private bool LitNearby(int x, int y, int z, int within)
+    {
+        for (var dx = -within; dx <= within; dx++)
+        for (var dz = -within; dz <= within; dz++)
+        for (var dy = -2; dy <= 3; dy++)
+            if (client.World.GetBlock(x + dx, y + dy, z + dz) is { } b && IsLightSource(b.Name)) return true;
+        return false;
+    }
+
+    /// <summary>
+    /// Puts torches on the ground around a player (or here) so nothing can spawn in the dark: one every 6 blocks across a square of the given radius (default 10), skipping every spot that
+    /// already has a torch or other light within 4 blocks. Makes torches from coal and sticks if there are none and the means to.
+    /// </summary>
+    public async Task<(bool, string)> LightUpAsync(int radius, string? nearPlayer, CancellationToken ct)
+    {
+        radius = Math.Clamp(radius <= 0 ? 10 : radius, 4, 24);
+        if (Have(s => s.Name == "minecraft:torch") == 0)
+        {
+            var (made, why) = await client.CraftItemAsync("minecraft:torch", 8, ct);
+            if (!made || Have(s => s.Name == "minecraft:torch") == 0) return (false, $"I have no torches and I couldn't make any: {why}");
+        }
+        var player = FindPlayer(nearPlayer);
+        var (ox, oy, oz) = player != null ? (player.X, player.Y, player.Z) : client.Position;
+        int cx = (int)Math.Floor(ox), cz = (int)Math.Floor(oz), cy = (int)Math.Floor(oy + 1e-6);
+
+        const int spacing = 6;
+        var spots = new List<(int X, int Y, int Z)>();
+        var already = 0;
+        // The grid belongs to the WORLD (multiples of 6), not to where we happen to stand: asking again from somewhere else lines up with the torches already there.
+        int Floor6(int v) => (int)Math.Floor(v / (double)spacing) * spacing;
+        for (var x = Floor6(cx - radius - spacing / 2); x <= cx + radius + spacing / 2; x += spacing)
+        for (var z = Floor6(cz - radius - spacing / 2); z <= cz + radius + spacing / 2; z += spacing)
+        {
+            // Grid points just outside the circle count too (half a spacing): the ground at its edge has to be lit by a torch beyond it.
+            if ((x - cx) * (x - cx) + (z - cz) * (z - cz) > (radius + spacing / 2) * (radius + spacing / 2)) continue;
+            if (!client.World.IsLoaded(x, z) || GroundLevel(x, z, cy) is not int gy) continue;
+            if (LitNearby(x, gy, z, 4)) { already++; continue; }
+            spots.Add((x, gy, z));
+        }
+        if (spots.Count == 0) return (true, already > 0 ? "It is already well lit here." : "I couldn't find any ground to put torches on around here.");
+
+        // Nearest first, then onward from each: a short walk.
+        var ordered = new List<(int X, int Y, int Z)>();
+        var at = (X: (int)Math.Floor(client.Position.X), Z: (int)Math.Floor(client.Position.Z));
+        while (spots.Count > 0)
+        {
+            var next = spots.OrderBy(s => Math.Abs(s.X - at.X) + Math.Abs(s.Z - at.Z)).First();
+            ordered.Add(next);
+            spots.Remove(next);
+            at = (next.X, next.Z);
+        }
+        var plan = ordered.Select(p => new Placement(p.X, p.Y, p.Z, s => s.Name == "minecraft:torch", "torches")).ToList();
+        var (placed, failed, missing) = await client.BuildAsync(plan, ct);
+        if (missing != null) return (placed > 0, $"I ran out of torches after putting up {placed}. Give me more (coal and sticks make them) and ask again.");
+        if (placed == 0) return (false, "I couldn't put any torches down there.");
+        return (true, $"I put up {placed} torch{(placed == 1 ? "" : "es")} around here, about {spacing} blocks apart, so nothing can spawn in the dark" + (failed > 0 ? $" ({failed} spots wouldn't take one)." : "."));
+    }
+
     // ---------------------------------------------------------------- exploring
 
     /// <summary>Blocks worth telling friends about, by what to call them.</summary>

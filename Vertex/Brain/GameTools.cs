@@ -370,6 +370,17 @@ public static class GameTools
                 return Task.FromResult("OK: I started walking over to a cow to milk it.");
             });
 
+        yield return new GameTool("light_up",
+            "Put torches on the ground around the player (or here) so monsters cannot spawn in the dark. Makes torches from coal and sticks if needed. Use for 'light this up', 'put some torches around', 'it's too dark'.",
+            """{"type":"object","properties":{"radius":{"type":"integer","description":"how far around, 4 to 24 blocks (default 10)"},"player":{"type":"string","description":"around this player, or 'me'"}}}""",
+            a =>
+            {
+                var p = Who(a);
+                var radius = Int(a, "radius", 10);
+                tasks.Start("lighting up the area", ct => skills.LightUpAsync(radius, p, ct));
+                return Task.FromResult("OK: I started putting torches around. It takes a little while; I will say when I am done.");
+            });
+
         yield return new GameTool("smelt",
             "Smelt or cook in a furnace: iron_ingot from raw iron, glass from sand, cooked_beef from beef, charcoal from logs. Builds a furnace from cobblestone if none is near. Takes 10 seconds per item.",
             """{"type":"object","properties":{"result":{"type":"string","description":"what to make, e.g. iron_ingot, glass, cooked_porkchop"},"count":{"type":"integer"}},"required":["result"]}""",
@@ -387,6 +398,9 @@ public static class GameTools
 
         yield return new GameTool("eat", "Eat some food from your inventory.", NoArgs,
             async _ => (await skills.EatAsync(CancellationToken.None)).Item2);
+
+        yield return new GameTool("stay", "Stay right here and wait: do not wander off or start any job on your own until you are asked to do something. Use for 'stay', 'wait here', 'don't move', 'stay put'.", NoArgs,
+            _ => { tasks.Stop(); client.Controls.Clear(); brain.Staying = true; return Task.FromResult("OK: I am staying right here until you ask me to do something."); });
 
         yield return new GameTool("stop", "Stop what you are doing and stand still.", NoArgs,
             _ => { tasks.Stop(); client.Controls.Clear(); return Task.FromResult("OK: I stopped and I am standing still."); });

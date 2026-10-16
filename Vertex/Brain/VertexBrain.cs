@@ -44,6 +44,11 @@ public sealed class VertexBrain : IBody
 
     /// <summary>How long Vertex waits with nothing to do (nobody talking, no job) before working on a goal by itself.</summary>
     public TimeSpan IdleBeforeGoals { get; set; } = TimeSpan.FromSeconds(60);
+    /// <summary>
+    /// Told to stay (or wait) here: nothing is started on its own (no goal, no studying blocks) until it is given a job. Any job started clears it.
+    /// </summary>
+    public bool Staying { get; set; }
+
     /// <summary>When idle with no goal, study unknown (modded) blocks nearby by touch.</summary>
     public bool StudyWhenIdle { get; set; } = true;
     /// <summary>How often the idle check runs.</summary>
@@ -110,6 +115,7 @@ public sealed class VertexBrain : IBody
         }
         client.PlayerAdded += OnPlayerAdded;
         Tasks.Requester = () => _pursuing?.For ?? CurrentSpeaker;
+        Tasks.Starting += _ => Staying = false;      // told to stay, then given something to do: the stay is over
         Tasks.GoalOf = () => _pursuing;
         Tasks.Finished += o => companion.Post(new TaskEvent(o));
         companion.Attach(this);
@@ -277,21 +283,22 @@ public sealed class VertexBrain : IBody
                 var now = Now();
                 foreach (var p in Client.Players.Values.Where(p => p.Id != Client.Profile.Id)) Memory.Seen(p.Id, now);
                 if (Tasks.IsBusy) { _lastActivity = now; continue; }
-                if (_goalQueued || !Client.IsSpawned || now - _lastActivity < IdleBeforeGoals) continue;
-                if (Memory.ActiveGoals.FirstOrDefault() is not { } goal)
+                var goal = Memory.ActiveGoals.FirstOrDefault();
+                var unstudied = goal == null && !Staying && StudyWhenIdle && Skills.UnstudiedBlocks(16).Count > 0;     // the scan only when it could matter
+                var action = IdlePolicy.Decide(Staying, Tasks.IsBusy, _goalQueued, Client.IsSpawned, now - _lastActivity, IdleBeforeGoals, goal != null, StudyWhenIdle, unstudied);
+                if (action == IdleAction.StudyBlocks)
                 {
                     // Nothing to do: be curious about the blocks around that Vertex does not know (no language model
                     // needed; nothing is broken, it only walks up to them and feels them out).
-                    if (StudyWhenIdle && Skills.UnstudiedBlocks(16).Count > 0)
-                    {
-                        _lastActivity = now;
-                        Tasks.Start("studying blocks I don't know", ct => Skills.StudyBlocksAsync(16, ct));
-                    }
-                    continue;
+                    _lastActivity = now;
+                    Tasks.Start("studying blocks I don't know", ct => Skills.StudyBlocksAsync(16, ct));
                 }
-                _goalQueued = true;
-                _lastActivity = now;
-                Companion.Post(new GoalEvent(goal));
+                else if (action == IdleAction.WorkOnGoal)
+                {
+                    _goalQueued = true;
+                    _lastActivity = now;
+                    Companion.Post(new GoalEvent(goal!));
+                }
             }
         }
         catch (OperationCanceledException) { }

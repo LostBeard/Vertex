@@ -23,6 +23,9 @@ public sealed class TaskRunner
 
     public event Action<TaskOutcome>? Finished;
 
+    /// <summary>Raised when a job is started (not for a reflex that interrupts one): whoever said "stay here" is no longer obeyed once Vertex is given something to do.</summary>
+    public event Action<string>? Starting;
+
     public bool IsBusy => Current != null;
 
     /// <summary>Who a task started now is for (the brain: whoever is talking, or the goal being worked on).</summary>
@@ -35,8 +38,11 @@ public sealed class TaskRunner
     public Func<Objective?>? GoalOf { get; set; }
 
     /// <summary>Starts a task (cancelling the current one). The task returns its summary for the brain.</summary>
-    public void Start(string description, Func<CancellationToken, Task<(bool Success, string Summary)>> work) =>
+    public void Start(string description, Func<CancellationToken, Task<(bool Success, string Summary)>> work)
+    {
+        Starting?.Invoke(description);
         Run(description, work, null, Requester?.Invoke(), GoalOf?.Invoke());
+    }
 
     /// <summary>
     /// Does something urgent now (get away from a creeper), then goes back to what it was doing (following
