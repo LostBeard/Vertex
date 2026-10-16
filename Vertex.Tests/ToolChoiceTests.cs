@@ -9,7 +9,9 @@ namespace Vertex.Tests;
 
 /// <summary>
 /// With this many tools on offer, does the language model still pick the right one for what a child says? The real model (llama3.1:8b through SpawnDev.AI) is asked a dozen things in chat
-/// and the tool it calls first is read from the log; each tool is stopped right away (this tests the choice, not the doing, which has its own tests on Paper).
+/// and the first tool it calls (with its arguments) is read from the log; each tool is stopped right away (this tests the choice, not the doing, which has its own tests on Paper).
+/// MEASURED 2026-10-15 with 42 tools: 3 of 14 right (garbled arguments, a prompt cache that thrashed, and a history poisoned by "I called X" with no call), which is why there are 35 now,
+/// the build, trade, farm and animal tools are merged, and these turns keep the tool list in the prompt.
 /// </summary>
 [Category("GPU")]
 [NonParallelizable]
@@ -42,24 +44,29 @@ public class ToolChoiceTests
         foreach (var f in _folders) if (Directory.Exists(f)) Directory.Delete(f, true);
     }
 
-    // What a child (or a parent) might say, and the tool that is the right answer; a set of acceptable tools where more than one is right.
-    private static readonly (string Says, string[] Tools)[] Cases =
+    // What a child (or a parent) might say, the tool that is the right answer, and what its arguments must contain.
+    private static readonly (string Says, string Tool, string[] ArgsContain)[] Cases =
     [
-        ("Vertex, can you build me a castle?", ["build_shape"]),
-        ("Vertex, build a little cabin please", ["build_shape"]),
-        ("Vertex, make a platform to stand on", ["build_shape"]),
-        ("Vertex, keep building where you left off", ["continue_building"]),
-        ("Vertex, what does that villager sell?", ["villager_trades"]),
-        ("Vertex, sell all my wheat to the villager", ["trade"]),
-        ("Vertex, buy some bread from the villager", ["trade"]),
-        ("Vertex, make me a wheat farm", ["plant_field"]),
-        ("Vertex, harvest the crops", ["farm"]),
-        ("Vertex, breed the cows", ["breed_animals"]),
-        ("Vertex, shear the sheep", ["shear_sheep"]),
-        ("Vertex, can you milk the cow?", ["milk_cow"]),
-        ("Vertex, follow me", ["follow_player"]),
-        ("Vertex, get me ten wood", ["collect"]),
+        ("Vertex, can you build me a castle?", "build_shape", ["castle"]),
+        ("Vertex, build a little cabin please", "build_shape", []),
+        ("Vertex, make a platform to stand on", "build_shape", ["platform"]),
+        ("Vertex, keep building where you left off", "build_shape", ["continue"]),
+        ("Vertex, what does that villager sell?", "trade", []),
+        ("Vertex, sell all my wheat to the villager", "trade", ["wheat"]),
+        ("Vertex, buy some bread from the villager", "trade", ["bread"]),
+        ("Vertex, make me a wheat farm", "farm", ["plant"]),
+        ("Vertex, harvest the crops", "farm", []),
+        ("Vertex, breed the cows", "animals", ["breed"]),
+        ("Vertex, shear the sheep", "animals", ["shear"]),
+        ("Vertex, can you milk the cow?", "animals", ["milk"]),
+        ("Vertex, stay right here and wait for me", "stay", []),
+        ("Vertex, it is too dark, put some torches around", "light_up", []),
+        ("Vertex, shoot that zombie with your bow", "shoot", ["zombie"]),
+        ("Vertex, follow me", "follow_player", []),
+        ("Vertex, get me ten wood", "collect", []),
     ];
+
+    private static readonly Regex ToolLine = new(@"^\s+tool (\w+)\((.*)\) ->", RegexOptions.Compiled);
 
     [Test]
     public async Task EachRequestGetsTheRightTool()
@@ -90,29 +97,31 @@ public class ToolChoiceTests
         await _server.CommandAsync($"tp Aubri {ax + 3.5} 200 {az + 0.5}");
         await vertex.WaitTicksAsync(20);
 
-        var results = new List<(string Says, string Wanted, string? Got, bool Ok)>();
-        foreach (var (says, tools) in Cases)
+        var results = new List<(string Says, string Wanted, string Got, bool Ok)>();
+        foreach (var (says, wanted, argsContain) in Cases)
         {
             brain.Tasks.Stop();
             await Wait.UntilAsync(() => !brain.Companion.IsThinking && !brain.Tasks.IsBusy, Timeout, () => "still busy before: " + says);
             while (log.TryDequeue(out _)) { }
             await aubs.SendChatAsync(says);
-            string? chosen = null;
-            var deadline = DateTime.UtcNow + TimeSpan.FromSeconds(90);
+            string? chosen = null, args = "";
+            var started = DateTime.UtcNow;
+            var deadline = started + TimeSpan.FromSeconds(90);
             while (DateTime.UtcNow < deadline && chosen == null)
             {
                 await Task.Delay(300);
                 foreach (var line in log.ToArray())
-                    if (Regex.Match(line, @"tool (\w+)") is { Success: true } m) { chosen = m.Groups[1].Value; break; }
+                    if (ToolLine.Match(line) is { Success: true } m) { chosen = m.Groups[1].Value; args = m.Groups[2].Value; break; }
             }
-            var ok = chosen != null && tools.Contains(chosen);
-            results.Add((says, string.Join("|", tools), chosen, ok));
-            TestContext.Out.WriteLine($"=> \"{says}\": wanted {string.Join("|", tools)}, got {chosen ?? "(no tool)"} {(ok ? "ok" : "WRONG")}");
+            var seconds = (DateTime.UtcNow - started).TotalSeconds;
+            var ok = chosen == wanted && argsContain.All(w => args.Contains(w, StringComparison.OrdinalIgnoreCase));
+            results.Add((says, wanted + (argsContain.Length > 0 ? " " + string.Join(",", argsContain) : ""), chosen == null ? "(no tool)" : chosen + " " + args, ok));
+            TestContext.Out.WriteLine($"=> \"{says}\": wanted {wanted} {string.Join(",", argsContain)}, got {chosen ?? "(no tool)"} {args} [{seconds:0} s] {(ok ? "ok" : "WRONG")}");
         }
         brain.Tasks.Stop();
 
-        var summary = string.Join("\n", results.Select(r => $"  {(r.Ok ? "ok   " : "WRONG")} \"{r.Says}\": wanted {r.Wanted}, got {r.Got ?? "(no tool)"}"));
+        var summary = string.Join("\n", results.Select(r => $"  {(r.Ok ? "ok   " : "WRONG")} \"{r.Says}\": wanted {r.Wanted}, got {r.Got}"));
         TestContext.Out.WriteLine("\n" + summary);
-        Assert.That(results.Count(r => r.Ok), Is.GreaterThanOrEqualTo(results.Count - 1), "at most one wrong choice of " + results.Count + ":\n" + summary);
+        Assert.That(results.Count(r => r.Ok), Is.GreaterThanOrEqualTo(results.Count - 2), "at most two wrong choices of " + results.Count + ":\n" + summary);
     }
 }

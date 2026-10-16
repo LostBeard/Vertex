@@ -193,17 +193,6 @@ public static class GameTools
                 return Task.FromResult("OK: I am going to bed.");
             });
 
-        yield return new GameTool("build_house",
-            "Build a small house near the person talking (walls, roof, windows if you have glass, a door and a torch if you have them). Needs about 70 blocks of one kind (planks, cobblestone...); 7x7 with about 115.",
-            """{"type":"object","properties":{"material":{"type":"string","description":"what to build with, e.g. planks, cobblestone; empty = what you have most of"},"player":{"type":"string","description":"who to build it near; 'me' = the person talking"}}}""",
-            a =>
-            {
-                var p = Who(a);
-                var material = Str(a, "material");
-                tasks.Start("building a house", ct => skills.BuildHouseAsync(p, material, ct));
-                return Task.FromResult("OK: I started building a house. It takes a minute; I am NOT done yet.");
-            });
-
         yield return new GameTool("build_wall",
             "Build a wall: a straight line going a direction from the person talking, or all the way around them (a pen for animals, a fence for a base) with a gateway.",
             """{"type":"object","properties":{"shape":{"type":"string","enum":["line","around"],"description":"line = straight; around = a square around the player"},"direction":{"type":"string","description":"for a line: north, south, east, west, or empty = the way the player faces"},"length":{"type":"integer","description":"line length in blocks (default 10), or for around the distance from the player to the wall (default 4)"},"height":{"type":"integer","description":"blocks high (default 2)"},"material":{"type":"string","description":"what to build with; empty = what you have most of"},"player":{"type":"string","description":"'me' = the person talking"}}}""",
@@ -263,111 +252,89 @@ public static class GameTools
                 return Task.FromResult($"OK: I set off exploring {(string.IsNullOrEmpty(dir) ? "" : dir + " ")}about {distance} blocks. I will come back and tell you what I find.");
             });
 
-        yield return new GameTool("farm",
-            "Harvest the ripe crops nearby (wheat, carrots, potatoes, beetroot) and replant them.",
-            NoArgs,
-            _ =>
+        yield return new GameTool("build_shape",
+            "Build near the player: a house (cabin), platform, pyramid or castle. shape 'continue' carries on with the last build. Uses the wood or stone we carry most of unless a material is named.",
+            """{"type":"object","properties":{"shape":{"type":"string","description":"house, platform, pyramid, castle, or continue"},"size":{"type":"integer","description":"blocks wide (optional)"},"material":{"type":"string","description":"e.g. cobblestone, wood (optional)"}},"required":["shape"]}""",
+            a =>
             {
-                tasks.Start("farming", ct => skills.FarmAsync(ct));
-                return Task.FromResult("OK: I started harvesting the ripe crops. I will replant as I go.");
+                var p = Who(a);
+                var shape = Str(a, "shape") ?? "house";
+                if (shape.Trim().ToLowerInvariant() is "continue" or "resume" or "keep building" or "carry on")
+                {
+                    tasks.Start("carrying on with the build", ct => skills.ResumeBuildAsync(ct));
+                    return Task.FromResult("OK: I started carrying on with the last build.");
+                }
+                int size = Int(a, "size", 0);
+                var material = Str(a, "material");
+                tasks.Start($"building a {shape}", ct => skills.BuildShapeAsync(shape, size, 0, 0, material, null, null, p, ct));
+                return Task.FromResult($"OK: I started building a {shape}. It takes a while; I will say when I am done.");
             });
 
-        yield return new GameTool("villager_trades",
-            "Walk to the nearest villager or wandering trader and look at what it trades (does not buy anything). Use when asked what a villager sells or buys.",
-            NoArgs,
-            _ =>
-            {
-                tasks.Start("looking at a villager's trades", ct => skills.VillagerOffersAsync(ct));
-                return Task.FromResult("OK: I started walking over to the nearest villager to see its trades. I will say what they are.");
-            });
+        if (brain.AdvancedBuildTools)
+            yield return new GameTool("build_script",
+                "Build something you design yourself. plan = lines, coordinates relative to the corner (x east, y up, z south). " + BuildScript.Grammar + " Walls up to 4 high and roofs no higher than y 4 are most reliable.",
+                """{"type":"object","properties":{"plan":{"type":"string","description":"one command per line"},"player":{"type":"string","description":"near this player, or 'me'"}},"required":["plan"]}""",
+                a =>
+                {
+                    var p = Who(a);
+                    var plan = Str(a, "plan") ?? "";
+                    tasks.Start("building from a plan", ct => skills.BuildScriptAsync(plan, p, ct));
+                    return Task.FromResult("OK: I started building from the plan. It takes a while; I will say when I am done.");
+                });
 
         yield return new GameTool("trade",
-            "Trade with the nearest villager or wandering trader: buy something with emeralds or other items, or sell things for emeralds. 'want' is what to get (emerald, bread, diamond), 'give' is what to hand over (wheat, coal).",
-            """{"type":"object","properties":{"want":{"type":"string","description":"what to get from the villager, e.g. emerald, bread"},"give":{"type":"string","description":"what to hand over, e.g. wheat, emerald"},"count":{"type":"integer","description":"how many of the wanted item to get (or of the given item to sell); 0 = sell all"}}}""",
+            "Talk to the nearest villager or trader. With no arguments: look at what it trades. 'want' = what to get (emerald, bread), 'give' = what to hand over (wheat); either or both.",
+            """{"type":"object","properties":{"want":{"type":"string","description":"what to get, e.g. emerald, bread"},"give":{"type":"string","description":"what to hand over, e.g. wheat"},"count":{"type":"integer","description":"how many (0 = sell all)"}}}""",
             a =>
             {
                 var want = Str(a, "want");
                 var give = Str(a, "give");
+                if (string.IsNullOrWhiteSpace(want) && string.IsNullOrWhiteSpace(give))
+                {
+                    tasks.Start("looking at a villager's trades", ct => skills.VillagerOffersAsync(ct));
+                    return Task.FromResult("OK: I started walking over to the nearest villager to see its trades. I will say what they are.");
+                }
                 var count = Math.Clamp(Int(a, "count", 0), 0, 640);
                 tasks.Start($"trading with a villager ({give ?? "?"} for {want ?? "?"})", ct => skills.TradeWithVillagerAsync(want, give, want != null && count <= 0 ? 1 : count, ct));
                 return Task.FromResult("OK: I started walking over to the nearest villager to trade. It takes a few seconds - I have NOT traded yet.");
             });
 
-        yield return new GameTool("build_shape",
-            "Build a named thing near the player: a house (also cabin, hut), a platform (floor, deck), a pyramid, or a castle (fort). Uses the material we carry most of unless one is named. Say when asked for something bigger or smaller.",
-            """{"type":"object","properties":{"shape":{"type":"string","description":"house, platform, pyramid or castle"},"width":{"type":"integer","description":"blocks wide (optional)"},"depth":{"type":"integer","description":"blocks deep (optional)"},"height":{"type":"integer","description":"wall height in blocks (optional)"},"material":{"type":"string","description":"what to build it from, e.g. cobblestone, wood, stone bricks (optional)"},"roof":{"type":"string","description":"roof material (optional)"},"door_side":{"type":"string","description":"north, south, east or west (optional; default faces the player)"},"player":{"type":"string","description":"build near this player, or 'me'"}},"required":["shape"]}""",
+        yield return new GameTool("farm",
+            "Farming. action 'harvest' (default): pick the ripe crops nearby and replant. action 'plant': make a new field (till, water, sow) from seeds, carrots or potatoes we carry.",
+            """{"type":"object","properties":{"action":{"type":"string","enum":["harvest","plant"]},"crop":{"type":"string","description":"for plant: wheat, carrots, potatoes or beetroot"},"size":{"type":"integer","description":"for plant: side of the field, 3 to 9"}}}""",
             a =>
             {
-                var p = Who(a);
-                var shape = Str(a, "shape") ?? "house";
-                int width = Int(a, "width", 0), depth = Int(a, "depth", 0), height = Int(a, "height", 0);
-                var material = Str(a, "material");
-                var roof = Str(a, "roof");
-                var side = Str(a, "door_side");
-                tasks.Start($"building a {shape}", ct => skills.BuildShapeAsync(shape, width, depth, height, material, roof, side, p, ct));
-                return Task.FromResult($"OK: I started building a {shape}. It takes a while; I will say when I am done.");
+                if ((Str(a, "action") ?? "harvest").Trim().ToLowerInvariant() is "plant" or "sow" or "new")
+                {
+                    var p = Who(a);
+                    var crop = Str(a, "crop");
+                    var size = Int(a, "size", 5);
+                    tasks.Start($"planting a field of {crop ?? "crops"}", ct => skills.PlantFieldAsync(crop, size, p, ct));
+                    return Task.FromResult($"OK: I started planting a field of {crop ?? "crops"}. It takes a while; I will say when I am done.");
+                }
+                tasks.Start("farming", ct => skills.FarmAsync(ct));
+                return Task.FromResult("OK: I started harvesting the ripe crops. I will replant as I go.");
             });
 
-        yield return new GameTool("build_script",
-            "Build something you design yourself from a plan. Write the plan as lines, coordinates relative to the corner (x east, y up from the ground, z south). " + BuildScript.Grammar + " Example house: walls 0 0 0 4 2 4 cobblestone / clear 2 0 0 2 1 0 / roof gable 0 0 4 4 3 planks / door 2 0 0 south. Walls up to 4 high and roofs no higher than y 4 are the most reliable.",
-            """{"type":"object","properties":{"plan":{"type":"string","description":"the build plan, one command per line"},"player":{"type":"string","description":"build near this player, or 'me'"}},"required":["plan"]}""",
+        yield return new GameTool("animals",
+            "Farm animals. action 'breed' (feeds two adults their food so a baby is born; animal = cow, sheep, pig, chicken...), 'shear' (sheep, needs shears), 'milk' (a cow, needs a bucket).",
+            """{"type":"object","properties":{"action":{"type":"string","enum":["breed","shear","milk"]},"animal":{"type":"string","description":"for breed: cow, sheep, pig, chicken, rabbit or goat"}},"required":["action"]}""",
             a =>
             {
-                var p = Who(a);
-                var plan = Str(a, "plan") ?? "";
-                tasks.Start("building from a plan", ct => skills.BuildScriptAsync(plan, p, ct));
-                return Task.FromResult("OK: I started building from the plan. It takes a while; I will say when I am done.");
-            });
-
-        yield return new GameTool("continue_building",
-            "Carry on with the build that was last started (after it was interrupted, or after being given more materials). Blocks already placed stay.",
-            NoArgs,
-            _ =>
-            {
-                tasks.Start("carrying on with the build", ct => skills.ResumeBuildAsync(ct));
-                return Task.FromResult("OK: I started carrying on with the build.");
-            });
-
-        yield return new GameTool("plant_field",
-            "Make a new field of crops near the player: finds soil, puts water in the middle if carrying a water bucket, tills each block with a hoe (makes one if needed) and plants seeds. Crops: wheat, carrots, potatoes, beetroot. Needs seeds (or carrots, potatoes) in the inventory.",
-            """{"type":"object","properties":{"crop":{"type":"string","description":"wheat, carrots, potatoes or beetroot (default: what we carry most seeds of)"},"size":{"type":"integer","description":"side length of the square field, 3 to 9 (default 5)"},"player":{"type":"string","description":"near this player, or 'me'"}}}""",
-            a =>
-            {
-                var p = Who(a);
-                var crop = Str(a, "crop");
-                var size = Int(a, "size", 5);
-                tasks.Start($"planting a field of {crop ?? "crops"}", ct => skills.PlantFieldAsync(crop, size, p, ct));
-                return Task.FromResult($"OK: I started planting a field of {crop ?? "crops"}. It takes a while; I will say when I am done.");
-            });
-
-        yield return new GameTool("breed_animals",
-            "Breed farm animals: feeds two adults the food they like (wheat for cows and sheep, carrots for pigs, seeds for chickens) so a baby is born. Needs the food in the inventory.",
-            """{"type":"object","properties":{"animal":{"type":"string","description":"cow, sheep, pig, chicken, rabbit or goat"},"pairs":{"type":"integer","description":"how many pairs to breed (default 1)"}},"required":["animal"]}""",
-            a =>
-            {
-                var animal = Str(a, "animal") ?? "";
-                var pairs = Math.Clamp(Int(a, "pairs", 1), 1, 5);
-                tasks.Start($"breeding {animal}", ct => skills.BreedAnimalsAsync(animal, pairs, ct));
-                return Task.FromResult($"OK: I started breeding {animal}. It takes a little while; I will say when a baby is born.");
-            });
-
-        yield return new GameTool("shear_sheep",
-            "Shear the sheep nearby that still have wool and pick up the wool. Needs shears in the inventory.",
-            """{"type":"object","properties":{"count":{"type":"integer","description":"how many sheep at most (0 = all nearby)"}}}""",
-            a =>
-            {
-                var count = Math.Clamp(Int(a, "count", 0), 0, 20);
-                tasks.Start("shearing sheep", ct => skills.ShearSheepAsync(count, ct));
-                return Task.FromResult("OK: I started shearing the sheep nearby.");
-            });
-
-        yield return new GameTool("milk_cow",
-            "Milk the nearest cow into an empty bucket.",
-            NoArgs,
-            _ =>
-            {
-                tasks.Start("milking a cow", ct => skills.MilkCowAsync(ct));
-                return Task.FromResult("OK: I started walking over to a cow to milk it.");
+                var action = (Str(a, "action") ?? "").Trim().ToLowerInvariant();
+                switch (action)
+                {
+                    case "shear":
+                        tasks.Start("shearing sheep", ct => skills.ShearSheepAsync(0, ct));
+                        return Task.FromResult("OK: I started shearing the sheep nearby.");
+                    case "milk":
+                        tasks.Start("milking a cow", ct => skills.MilkCowAsync(ct));
+                        return Task.FromResult("OK: I started walking over to a cow to milk it.");
+                    default:
+                        var animal = Str(a, "animal") ?? "cow";
+                        tasks.Start($"breeding {animal}", ct => skills.BreedAnimalsAsync(animal, 1, ct));
+                        return Task.FromResult($"OK: I started breeding {animal}. It takes a little while; I will say when a baby is born.");
+                }
             });
 
         yield return new GameTool("light_up",

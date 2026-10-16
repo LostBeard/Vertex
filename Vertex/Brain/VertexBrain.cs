@@ -49,6 +49,12 @@ public sealed class VertexBrain : IBody
     /// </summary>
     public bool Staying { get; set; }
 
+    /// <summary>
+    /// Offer the language model the build_script tool (it writes a build plan itself). Off: an 8B model garbled long plans and every extra tool makes the choice of tool harder, so it is
+    /// offered shapes (build_shape) only. For a bigger model.
+    /// </summary>
+    public bool AdvancedBuildTools { get; set; }
+
     /// <summary>When idle with no goal, study unknown (modded) blocks nearby by touch.</summary>
     public bool StudyWhenIdle { get; set; } = true;
     /// <summary>How often the idle check runs.</summary>

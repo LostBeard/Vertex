@@ -477,10 +477,14 @@ public sealed class Companion : IAsyncDisposable
             messages.Add(new AiChatMessage("user", "[You gave no answer and called no tool. If you were asked to do something, call the right tool now; then answer in one short sentence.]"));
             reply = await ChatOnceAsync(messages, true, ct, clock, spoken.Count > 0 ? null : spoken, to);
         }
+        // Still claiming to act after being asked again, with no tool called: nothing happened, and keeping the claim in the history teaches the model to claim without calling (seen
+        // 2026-10-15: after one "I called trade. I'm walking to the villager." with no call, every later reply was a claim and no tool was ever called again).
+        var falseClaim = allowTools && !askedAQuestion && Volatile.Read(ref _toolRuns) == runsBefore && ClaimsAction(reply);
+        if (falseClaim) { Log?.Invoke("  (still no tool: not keeping what it said)"); reply = ""; }
         lock (_history)
         {
             _history.Add(new AiChatMessage("user", userMessage));
-            _history.Add(new AiChatMessage("assistant", reply.Length > 0 ? reply : "(did it)"));
+            _history.Add(new AiChatMessage("assistant", reply.Length > 0 ? reply : falseClaim ? "(I could not do that)" : "(did it)"));
             // Old exchanges leave in CHUNKS, not one per turn: the language model reuses the start of the prompt from
             // the last turn only while it is unchanged, and a window that slid every turn made it prefill the whole
             // history again each time (MEASURED 2026-10-12, AiSessionTests: reused 525 of 543 tokens, first word
@@ -489,7 +493,8 @@ public sealed class Companion : IAsyncDisposable
         }
         // The end of the reply that was not a whole sentence while streaming (or all of it, when nothing streamed).
         var rest = Unspoken(reply, spoken);
-        if (rest.Count(char.IsLetter) >= 4 && !ChatTemplates.IsOnlyPythonicCalls(rest))
+        if (falseClaim) SayInTurn("Sorry, I'm not sure how to do that one.", clock, to);
+        else if (rest.Count(char.IsLetter) >= 4 && !ChatTemplates.IsOnlyPythonicCalls(rest))
             SayInTurn(rest, clock, to);
         else if (spoken.Count == 0 && clock.TakeReport())
             Log?.Invoke("timing: " + clock.Describe(reply.Length > 0 ? "answered without speaking" : "acted without speaking"));
@@ -549,8 +554,11 @@ public sealed class Companion : IAsyncDisposable
     private async Task<string> ChatOnceAsync(List<AiChatMessage> messages, bool allowTools, CancellationToken ct, TurnClock clock,
         List<string>? spoken, IReadOnlyList<IVoiceChannel> to)
     {
-        var tools = Ai.Chat.Tools;
-        if (!allowTools) Ai.Chat.Tools = null;
+        // A turn that must not act (telling friends how a job went) still carries the tool list: the language model reuses the start of the prompt from the last turn only while it is
+        // unchanged, and a prompt WITHOUT the 4,000-token tool list made the next turn read all of it again (MEASURED 2026-10-15: first word 39 s and 29 s after such a turn). A call it
+        // makes anyway comes back unexecuted (no rounds).
+        var rounds = Ai.Chat.MaxToolRounds;
+        if (!allowTools) Ai.Chat.MaxToolRounds = 0;
         var pending = new StringBuilder();
         var generated = new StringBuilder();
         var madeUpFriend = false;
@@ -611,7 +619,7 @@ public sealed class Companion : IAsyncDisposable
         }
         finally
         {
-            Ai.Chat.Tools = tools;
+            Ai.Chat.MaxToolRounds = rounds;
             Ai.Chat.PerfLog = perf;
         }
         var reply = SelfTalk.CutFriendsLine(AiChatEngine.StripToolCalls(AiChatEngine.StripThinking(result.TextWithoutToolCalls)).Trim());
@@ -629,6 +637,7 @@ public sealed class Companion : IAsyncDisposable
         "let me get", "let me grab", "let me go", "let me find", "i'm getting", "i am getting", "i'm following", "i am following", "i'm on it", "right away", "be right there",
         // Saying it remembered without the remember tool remembers nothing (seen 3 in a row on 2026-10-11:
         // "I remember, Aubri loves pink axolotls." and no tool call).
+        "i called ", "i've called ", "i have called ", "i started ", "i'm walking ", "i'm trading", "i'm planting", "i'm building", "i'm feeding", "i'm picking", "i'm shearing", "i'm milking", "i'm lighting", "i'm shooting",
         "i remember,", "i remember that", "i've remembered", "i have remembered", "i'll remember", "i will remember", "i'll keep that in mind", " noted",
     ];
 
