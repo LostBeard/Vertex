@@ -1313,7 +1313,8 @@ public sealed class Skills(MinecraftClient client)
             try { await client.GoToAsync(Goal.Near(now.X, now.Y, now.Z, Math.Max(1.5, within - 1.0)), new PathOptions { MaxNodes = 8_000 }, hop.Token); }
             catch (OperationCanceledException) when (!ct.IsCancellationRequested) { }
         }
-        return client.Entities.TryGetValue(target.Id, out var last) && last.DistanceTo(client.Position.X, client.Position.Y, client.Position.Z) <= within;
+        // Behind a fence we cannot get closer, but an animal inside a pen can still be fed across it: the server lets us interact up to 3 blocks of the animal's box (about 3.2 to its middle) (seen 2026-10-15 on the AubsCraft dev world).
+        return client.Entities.TryGetValue(target.Id, out var last) && last.DistanceTo(client.Position.X, client.Position.Y, client.Position.Z) <= Math.Max(within, 3.2);
     }
 
     private List<Entity> AnimalsNear(string kind, bool adultsOnly)

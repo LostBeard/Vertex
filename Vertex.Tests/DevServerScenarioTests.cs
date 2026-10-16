@@ -80,4 +80,51 @@ public class DevServerScenarioTests
         var door = await rcon.CommandAsync($"execute if block {cx + 2} {cy} {cz} minecraft:oak_door");
         Assert.That(door, Does.Contain("Test passed"), "the doorway has its door");
     }
+
+    [Test]
+    public async Task AFarmWithAPenOnTheDevWorld_FieldIsSownAndTheCowsHaveABaby()
+    {
+        await using var rcon = await RconAsync();
+        var vertex = new MinecraftClient(GameProfile.Offline("Vertex"), new ClientOptions { Log = m => TestContext.Out.WriteLine("[Vertex] " + m) });
+        using var cts = new CancellationTokenSource(TimeSpan.FromMinutes(10));
+        await vertex.ConnectAsync(Host, Port, cts.Token);
+        await using var _v = vertex;
+
+        // A clean patch: 30..50 x, 20..40 z, with a fenced pen (35..39, 33..37) holding two cows.
+        await rcon.CommandAsync("kill @e[type=minecraft:cow]");
+        await rcon.CommandAsync("fill 30 -60 20 50 -50 40 minecraft:air");
+        await rcon.CommandAsync("fill 30 -61 20 50 -61 40 minecraft:grass_block");
+        await rcon.CommandAsync("fill 35 -60 33 39 -59 37 minecraft:oak_fence hollow");
+        await rcon.CommandAsync("clear Vertex");
+        await rcon.CommandAsync("tp Vertex 42.5 -60 26.5");
+        await Wait.UntilAsync(() => vertex.World.IsLoaded(30, 20) && vertex.World.IsLoaded(50, 40) && Math.Abs(vertex.Position.Y - -60) < 0.2, Timeout, () => $"{vertex.Position}");
+        await rcon.CommandAsync("summon minecraft:cow 37.5 -60 35.5");
+        await rcon.CommandAsync("summon minecraft:cow 36.5 -60 34.5");
+        foreach (var (item, count) in new[] { ("wooden_hoe", 1), ("wheat_seeds", 30), ("water_bucket", 1), ("wheat", 4) })
+        {
+            var before = vertex.Inventory.Count(item);
+            await rcon.CommandAsync($"give Vertex minecraft:{item} {count}");
+            await Wait.UntilAsync(() => vertex.Inventory.Count(item) == before + count, Timeout, () => vertex.Inventory.ToString());
+        }
+        await vertex.WaitTicksAsync(10);
+        var skills = new Skills(vertex);
+
+        var (ok, text) = await skills.PlantFieldAsync("wheat", 5, null, cts.Token);
+        TestContext.Out.WriteLine(text);
+        Assert.That(ok, Is.True, text);
+        var wheat = 0;
+        for (var x = 30; x <= 50; x++)
+        for (var z = 20; z <= 40; z++)
+            if ((await rcon.CommandAsync($"execute if block {x} -60 {z} minecraft:wheat")).Contains("Test passed")) wheat++;
+        TestContext.Out.WriteLine($"the server counts {wheat} wheat plants");
+        Assert.That(wheat, Is.EqualTo(24), "24 wheat plants on 24 farmland blocks, by the server's count");
+
+        var (bred, text2) = await skills.BreedAnimalsAsync("cow", 1, cts.Token);
+        TestContext.Out.WriteLine(text2 + $" | Vertex at {vertex.Position} | cows: " + string.Join("; ", vertex.Entities.Values.Where(e => e.Name == "minecraft:cow").Select(e => $"({e.X:0.0},{e.Y:0.0},{e.Z:0.0})")));
+        Assert.That(bred, Is.True, text2);
+        var cows = await rcon.CommandAsync("execute if entity @e[type=minecraft:cow]");
+        TestContext.Out.WriteLine("server: " + cows);
+        Assert.That(cows, Does.Contain("count: 3"), "two cows and a calf, by the server's own count");
+        TestContext.Out.WriteLine("BOX field+pen: x 30..50, y -61..-58, z 20..40");
+    }
 }
