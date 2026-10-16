@@ -253,8 +253,8 @@ public static class GameTools
             });
 
         yield return new GameTool("build_shape",
-            "Build near the player: a house (cabin), platform, pyramid or castle. shape 'continue' (and nothing else) when asked to keep building / carry on / finish the last build. Uses the wood or stone we carry most of unless a material is named, and cuts logs or mines cobblestone first when short of it.",
-            """{"type":"object","properties":{"shape":{"type":"string","description":"house, platform, pyramid, castle, or continue; with the material in front if one was asked for, e.g. 'stone castle'"}},"required":["shape"]}""",
+            "Build near the player: a house (cabin), platform, pyramid, castle or a fenced pen for animals. shape 'continue' (and nothing else) when asked to keep building / carry on / finish the last build. Uses the wood or stone we carry most of unless a material is named, and cuts logs or mines cobblestone first when short of it.",
+            """{"type":"object","properties":{"shape":{"type":"string","description":"house, platform, pyramid, castle, pen (a fenced pen for animals), or continue; with the material in front if one was asked for, e.g. 'stone castle'"}},"required":["shape"]}""",
             a =>
             {
                 var p = Who(a);

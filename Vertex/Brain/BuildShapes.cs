@@ -9,7 +9,7 @@ namespace Vertex.Brain;
 /// </summary>
 public static class BuildShapes
 {
-    public static readonly string[] Names = ["house", "platform", "pyramid", "castle"];
+    public static readonly string[] Names = ["house", "platform", "pyramid", "castle", "pen"];
 
     /// <summary>The shape a person's words mean ("cabin", "hut", "home" are a house; "deck", "floor" a platform), or null.</summary>
     public static string? Normalize(string? shape) => shape?.Trim().ToLowerInvariant().Replace(' ', '_') switch
@@ -18,6 +18,7 @@ public static class BuildShapes
         "platform" or "floor" or "deck" or "foundation" or "patio" or "pad" => "platform",
         "pyramid" or "mound" => "pyramid",
         "castle" or "fort" or "fortress" or "keep" or "stronghold" => "castle",
+        "pen" or "corral" or "paddock" or "enclosure" or "animal_pen" or "fence" or "pasture" => "pen",
         _ => null,
     };
 
@@ -27,6 +28,7 @@ public static class BuildShapes
         "house" => (5, 5, 3),
         "platform" => (7, 7, 1),
         "pyramid" => (9, 9, 1),
+        "pen" => (7, 7, 1),
         _ => (13, 13, 3),
     };
 
@@ -43,6 +45,7 @@ public static class BuildShapes
             "house" => (W(width, 3, 11), W(depth, 3, 11), Math.Clamp(height, 2, 4)),
             "platform" => (W(width, 1, 21), W(depth, 1, 21), 1),
             "pyramid" => (W(width, 3, 11), W(width, 3, 11), 1),          // square, and 11 wide is 6 layers high: as high as can be reached
+            "pen" => (W(width, 3, 15), W(depth, 3, 15), 1),
             _ => (W(width, 9, 17), W(width, 9, 17), Math.Clamp(height, 2, 3)),
         };
     }
@@ -71,6 +74,15 @@ public static class BuildShapes
             case "pyramid":
                 sb.AppendLine($"roof pyramid 0 0 {w - 1} {d - 1} 0 {wall}");
                 break;
+            case "pen":
+            {
+                // A ring of fence (a fence is a block and a half high to walk into, so one layer holds a cow) with a fence gate in the middle of the gate side.
+                sb.AppendLine($"walls 0 0 0 {w - 1} 0 {d - 1} fence");
+                var (gx, gz) = Middle(doorSide);
+                sb.AppendLine($"clear {gx} 0 {gz} {gx} 0 {gz}");
+                sb.AppendLine($"gate {gx} 0 {gz} {doorSide.ToString().ToLowerInvariant()}");
+                break;
+            }
             case "house":
             {
                 sb.AppendLine($"walls 0 0 0 {w - 1} {h - 1} {d - 1} {wall}");

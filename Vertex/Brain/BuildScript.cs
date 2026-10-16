@@ -37,7 +37,7 @@ public sealed class BuildScript
     public const string Grammar =
         "One command per line, coordinates relative to the build's corner (x east, y up from the ground, z south): " +
         "fill x1 y1 z1 x2 y2 z2 MATERIAL | hollow x1 y1 z1 x2 y2 z2 MATERIAL (box shell) | walls x1 y1 z1 x2 y2 z2 MATERIAL | floor x1 z1 x2 z2 y MATERIAL | " +
-        "roof flat/gable/pyramid x1 z1 x2 z2 y MATERIAL | line x1 y1 z1 x2 y2 z2 MATERIAL | block x y z MATERIAL | door x y z north/south/east/west | torch x y z | clear x1 y1 z1 x2 y2 z2 (removes cells, e.g. a doorway).";
+        "roof flat/gable/pyramid x1 z1 x2 z2 y MATERIAL | line x1 y1 z1 x2 y2 z2 MATERIAL | block x y z MATERIAL | door x y z north/south/east/west | gate x y z north/south/east/west (a fence gate) | torch x y z | clear x1 y1 z1 x2 y2 z2 (removes cells, e.g. a doorway).";
 
     private BuildScript(IReadOnlyList<BuildCell> cells, int width, int depth, int height)
     {
@@ -184,6 +184,14 @@ public sealed class BuildScript
                 Put(x, y, z, "door", facing, late: true);
                 break;
             }
+            case "gate":
+            {
+                int x = N(0), y = N(1), z = N(2);
+                var facing = a.Length > 3 ? ParseFacing(a[3]) : null;
+                if (facing == null) throw new BuildScriptException("a gate needs a side: north, south, east or west.");
+                Put(x, y, z, "gate", facing, late: true);
+                break;
+            }
             case "torch":
                 Put(N(0), N(1), N(2), "minecraft:torch", late: true);
                 break;
@@ -217,10 +225,11 @@ public sealed class BuildScript
         switch (w)
         {
             case "wood" or "wooden" or "plank" or "planks" or "wood_planks" or "wooden_planks": return "planks";
+            case "fence" or "fences" or "wooden_fence": return "fence";       // any wooden fence
             case "cobble" or "cobbles": return "minecraft:cobblestone";
             case "stone_brick" or "stonebrick" or "stonebricks": return "minecraft:stone_bricks";
             case "brick": return "minecraft:bricks";
-            case "door" or "torch": throw new BuildScriptException($"use the {w} command for a {w}.");
+            case "door" or "torch" or "gate" or "fence_gate": throw new BuildScriptException($"use the {(w == "fence_gate" ? "gate" : w)} command for a {w.Replace('_', ' ')}.");
         }
         foreach (var candidate in new[] { w, w.EndsWith("s") ? w[..^1] : w + "s" })
             if (data.Item("minecraft:" + candidate) is { Block: not null } item) return item.Name;
@@ -231,11 +240,13 @@ public sealed class BuildScript
     public static Func<SpawnDev.Minecraft.Items.ItemStack, bool> Matcher(string item) => item switch
     {
         "door" => Blueprints.IsDoor,
+        "gate" => s => s.Name.EndsWith("_fence_gate"),
+        "fence" => s => s.Name.EndsWith("_fence"),
         _ => Blueprints.MaterialMatch(item),
     };
 
     /// <summary>What to call an item when talking: "planks", "stone bricks".</summary>
-    public static string Pretty(string item) => item == "planks" ? "planks" : item.Replace("minecraft:", "").Replace('_', ' ');
+    public static string Pretty(string item) => item is "planks" or "fence" ? item : item == "gate" ? "fence gate" : item.Replace("minecraft:", "").Replace('_', ' ');
 
     // ---------------------------------------------------------------- order
 

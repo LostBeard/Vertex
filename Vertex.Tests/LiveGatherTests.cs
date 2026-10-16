@@ -78,6 +78,37 @@ public class LiveGatherTests
     }
 
     [Test]
+    public async Task APenForAnimals_IsAFenceRingWithAGate_MadeFromLogsItCuts()
+    {
+        const string name = "VertexPenner";
+        var (client, ax, az) = await JoinAsync(name, trees: true);
+        await using var _ = client;
+        var skills = new Skills(client);
+
+        using var cts = new CancellationTokenSource(TimeSpan.FromMinutes(4));
+        var (ok, text) = await skills.BuildShapeAsync("pen", 0, 0, 0, null, null, null, null, cts.Token);
+        TestContext.Out.WriteLine(text);
+        Assert.That(ok, Is.True, text);
+        int fences = 0, gates = 0, gx = 0, gz = 0;
+        var xs = new List<int>(); var zs = new List<int>();
+        for (var x = ax - 10; x <= ax + 10; x++)
+        for (var z = az - 10; z <= az + 10; z++)
+        {
+            var b = client.World.GetBlock(x, 200, z)?.Name ?? "";
+            if (b.EndsWith("_fence_gate")) { gates++; gx = x; gz = z; xs.Add(x); zs.Add(z); }
+            else if (b.EndsWith("_fence")) { fences++; xs.Add(x); zs.Add(z); }
+        }
+        // The gate's plate must run ALONG the side it is in (facing across it), or animals walk round it.
+        var facing = client.World.Data.GetProperty(client.World.GetState(gx, 200, gz), "facing");
+        var onNorthOrSouthSide = gz == zs.Min() || gz == zs.Max();
+        TestContext.Out.WriteLine($"gate at {gx},{gz} facing {facing}; ring x {xs.Min()}..{xs.Max()}, z {zs.Min()}..{zs.Max()}");
+        Assert.That(onNorthOrSouthSide ? facing is "north" or "south" : facing is "east" or "west", Is.True, $"the gate faces {facing}");
+        TestContext.Out.WriteLine($"{fences} fences, {gates} gates standing");
+        Assert.That(fences, Is.EqualTo(23), "a 7 by 7 ring is 24 blocks, one of them the gate");
+        Assert.That(gates, Is.EqualTo(1));
+    }
+
+    [Test]
     public async Task WithNoTreesToCut_ItSaysSo()
     {
         const string name = "VertexNoTrees";

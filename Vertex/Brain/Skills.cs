@@ -759,7 +759,9 @@ public sealed partial class Skills(MinecraftClient client)
         var kind = BuildShapes.Normalize(shape);
         if (kind == null) return (false, $"I don't know how to build a {shape}. I can build a {string.Join(", ", BuildShapes.Names)}, or follow a plan you describe.");
         var (w, d, h) = BuildShapes.Fit(kind, width, depth, height);
-        if (ChooseMaterial(material) is not var (wallName, _, wallPretty, _)) return (false, $"I can't build with {material}.");
+        // A pen is fence, whatever material was said; the others are built of what we carry most of unless one was named.
+        var chosen = kind == "pen" ? ((string, Func<ItemStack, bool>, string, string)?)("fence", BuildScript.Matcher("fence"), "wooden", "fence") : ChooseMaterial(material);
+        if (chosen is not var (wallName, _, wallPretty, _)) return (false, $"I can't build with {material}.");
         string roof;
         try { roof = string.IsNullOrWhiteSpace(roofMaterial) ? wallName : BuildScript.ResolveMaterial(roofMaterial, D); }
         catch (BuildScriptException e) { return (false, e.Message); }

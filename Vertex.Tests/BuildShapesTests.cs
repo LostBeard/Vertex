@@ -18,7 +18,25 @@ public class BuildShapesTests
     [TestCase("pyramid", "pyramid")]
     [TestCase("castle", "castle")]
     [TestCase("fortress", "castle")]
+    [TestCase("pen", "pen")]
+    [TestCase("corral", "pen")]
+    [TestCase("animal pen", "pen")]
     public void PeopleSayItManyWays(string said, string shape) => Assert.That(BuildShapes.Normalize(said), Is.EqualTo(shape));
+
+    [Test]
+    public void APenIsAFenceRingWithOneGate_OnEverySide()
+    {
+        foreach (var side in new[] { BlockFace.North, BlockFace.South, BlockFace.East, BlockFace.West })
+        {
+            var script = BuildScript.Parse(BuildShapes.Script("pen", 7, 7, 1, "fence", "fence", side, false, false, false), Data);
+            Assert.That(script.Needs["fence"], Is.EqualTo(23), $"a 7 x 7 ring is 24 blocks, one of them the gate ({side})");
+            Assert.That(script.Needs["gate"], Is.EqualTo(1));
+            Assert.That(script.Cells.Select(c => c.Y).Distinct(), Is.EqualTo(new[] { 0 }), "one layer");
+            var gate = script.Cells.Single(c => c.Item == "gate");
+            Assert.That(gate.Facing, Is.EqualTo(side), "the gate faces across the side it is in");
+        }
+        Assert.That(() => BuildScript.Parse("gate 0 0 0", Data), Throws.TypeOf<BuildScriptException>().With.Message.Contains("needs a side"));
+    }
 
     [Test]
     public void ThingsItCannotBuildAreNotShapes()
