@@ -190,6 +190,7 @@ public class LiveFarmingTests
         TestContext.Out.WriteLine(harvestText);
         Assert.That(harvested, Is.True, harvestText);
         Assert.That(harvestText, Does.Contain("harvested 8 crops").And.Contain("replanted"));
+        await Wait.UntilAsync(() => client.Inventory.Count("wheat") >= 8, Timeout, () => client.Inventory.ToString());       // the last drop's pick-up is counted a moment after the harvest returns
         Assert.That(client.Inventory.Count("wheat"), Is.GreaterThanOrEqualTo(8), "a wheat from each plant");
         Assert.That(farmland.Count(f => BlockAt(client, f.X, 200, f.Z) == "minecraft:wheat"), Is.GreaterThanOrEqualTo(6), "and the field is sown again");
         Assert.That(seedsAfterPlanting, Is.EqualTo(12 - 8));

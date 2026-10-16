@@ -82,6 +82,10 @@ public class DevServerScenarioTests
         Assert.That(door, Does.Contain("Test passed"), "the doorway has its door");
     }
 
+    /// <summary>
+    /// KNOWN FAILING on the dev world (2026-10-15): the water hole in the middle of the field ends up one block deeper than the soil and Vertex is stuck swimming in it, so it never reaches the
+    /// pen. The same skill passes on Paper's test arena (LiveFarmingTests); cause not found yet (the column dump below shows what the server has).
+    /// </summary>
     [Test]
     public async Task AFarmWithAPenOnTheDevWorld_FieldIsSownAndTheCowsHaveABaby()
     {
@@ -125,6 +129,13 @@ public class DevServerScenarioTests
         var (ok, text) = await skills.PlantFieldAsync("wheat", 5, null, cts.Token);
         TestContext.Out.WriteLine(text + " | inventory now: " + vertex.Inventory + $" | at {vertex.Position} selected {vertex.Inventory.SelectedHotbar}");
         Assert.That(ok, Is.True, text);
+        foreach (var yy in new[] { -60, -61, -62, -63 })
+        {
+            var names = new List<string>();
+            foreach (var b in new[] { "air", "water", "grass_block", "dirt", "farmland", "wheat", "bedrock" })
+                if ((await rcon.CommandAsync($"execute if block 38 {yy} 26 minecraft:{b}")).Contains("Test passed")) names.Add(b);
+            TestContext.Out.WriteLine($"pit column 38,{yy},26: {string.Join("/", names)}; client says {BlockAt(vertex, 38, yy, 26)}");
+        }
         var wheat = 0;
         for (var x = 30; x <= 50; x++)
         for (var z = 20; z <= 40; z++)
