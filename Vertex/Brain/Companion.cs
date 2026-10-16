@@ -420,6 +420,13 @@ public sealed class Companion : IAsyncDisposable
     /// prompt: the system prompt plus the tool list is the long, unchanging start of every prompt, and the language model
     /// reuses it from the last turn only while it stays byte-identical.
     /// </summary>
+    /// <summary>
+    /// What Vertex said about game updates (a task finished, a friend arrived), newest last. They are NOT kept in the conversation history: a history full of "[Game update] ... / I
+    /// finished building the castle" turns taught the 8B model to answer every request by REPORTING a result instead of calling the tool (MEASURED 2026-10-15, ToolChoiceTests: 15 of 18
+    /// right fell to 11, with replies like "I harvested the wheat, but there was nothing to harvest" and no call).
+    /// </summary>
+    private readonly List<string> _recent = [];
+
     public string NowPrompt()
     {
         var sb = new StringBuilder();
@@ -433,6 +440,8 @@ public sealed class Companion : IAsyncDisposable
             any = true;
         }
         if (!any) sb.AppendLine("- Nothing in particular.");
+        lock (_recent)
+            if (_recent.Count > 0) sb.AppendLine("- What you reported lately: " + string.Join(" / ", _recent));
         return sb.ToString();
     }
 
@@ -487,6 +496,16 @@ public sealed class Companion : IAsyncDisposable
         // 2026-10-15: after one "I called trade. I'm walking to the villager." with no call, every later reply was a claim and no tool was ever called again).
         var falseClaim = allowTools && !askedAQuestion && Volatile.Read(ref _toolRuns) == runsBefore && ClaimsAction(reply);
         if (falseClaim) { Log?.Invoke("  (still no tool: not keeping what it said)"); reply = ""; }
+        if (!allowTools && userMessage.StartsWith('['))
+        {
+            // A game update (they begin with a bracket, and have tools off): kept as a short note in the state, not as a turn of the conversation. A friend's words answered without tools (a command already done) stay in the history.
+            lock (_recent)
+            {
+                if (reply.Count(char.IsLetter) >= 4) _recent.Add(reply.Trim());
+                while (_recent.Count > 3) _recent.RemoveAt(0);
+            }
+        }
+        else
         lock (_history)
         {
             _history.Add(new AiChatMessage("user", userMessage));
