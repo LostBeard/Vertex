@@ -337,6 +337,16 @@ public static class GameTools
                 }
             });
 
+        yield return new GameTool("fish",
+            "Go fishing: walk to open water, cast the fishing rod, wait for a bite and reel the catch in (needs a fishing rod). count = how many (default 1).",
+            """{"type":"object","properties":{"count":{"type":"integer","description":"how many to catch (default 1)"}}}""",
+            a =>
+            {
+                var count = Math.Clamp(Int(a, "count", 1), 1, 20);
+                tasks.Start("fishing", ct => skills.FishAsync(count, ct));
+                return Task.FromResult("OK: I started fishing. It takes a while to get a bite; I will say what I caught.");
+            });
+
         yield return new GameTool("light_up",
             "Put torches on the ground around the player (or here) so monsters cannot spawn in the dark. Makes torches from coal and sticks if needed. Use for 'light this up', 'put some torches around', 'it's too dark'.",
             """{"type":"object","properties":{"radius":{"type":"integer","description":"how far around, 4 to 24 blocks (default 10)"},"player":{"type":"string","description":"around this player, or 'me'"}}}""",

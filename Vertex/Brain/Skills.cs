@@ -11,7 +11,7 @@ namespace Vertex.Brain;
 /// fight, eat. Each returns a short summary the language model reads. Names the players say ("wood", "Aubrey",
 /// "zombies") are matched forgivingly: speech-to-text and kids' names are both fuzzy.
 /// </summary>
-public sealed class Skills(MinecraftClient client)
+public sealed partial class Skills(MinecraftClient client)
 {
     private GameData D => client.World.Data;
 
