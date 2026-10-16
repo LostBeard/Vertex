@@ -61,5 +61,4 @@ switch that on, and the dashboard (which any device on the network can open) sho
 - **What is untested:** the robot's own echo cancellation while it speaks and you interrupt it (barge-in with a live robot).
 - `tools/ReachyDoa` tries the direction-of-arrival reading on its own.
 
-The robot, its WebRTC link and its audio and camera streams are also used by other projects of the same author; if the robot is being used by another app,
-connect to it from only one at a time.
+The robot talks to one app at a time over its audio and camera links: if another app is connected to it, stop that one before starting Vertex.
