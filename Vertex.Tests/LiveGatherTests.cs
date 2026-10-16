@@ -112,8 +112,12 @@ public class LiveGatherTests
     public async Task WithNoTreesToCut_ItSaysSo()
     {
         const string name = "VertexNoTrees";
-        var (client, _, _) = await JoinAsync(name, trees: false);
+        var (client, ax, az) = await JoinAsync(name, trees: false);
         await using var _ = client;
+        // The trees an earlier test planted nearby (the server is shared) are still standing: take them down.
+        await _server.CommandAsync($"fill {ax - 40} 200 {az - 40} {ax + 40} 206 {az + 40} minecraft:air replace minecraft:oak_log");
+        await Wait.UntilAsync(() => client.World.GetBlock(ax + 12, 202, az - 6)?.Name != "minecraft:oak_log", Timeout, () => "no trees");
+        await client.WaitTicksAsync(20);
         var skills = new Skills(client);
 
         var (ok, text) = await skills.BuildShapeAsync("house", 0, 0, 0, "wood", null, null, null, CancellationToken.None);
