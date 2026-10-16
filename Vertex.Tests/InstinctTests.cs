@@ -116,3 +116,29 @@ public class InstinctTests
         Assert.That(sw.Elapsed.TotalMilliseconds / 1000, Is.LessThan(2.0));
     }
 }
+
+/// <summary>The compact form of a tool definition (what the language model is shown).</summary>
+public class GameToolCompactTests
+{
+    [Test]
+    public void FirstSentence_KeepsTheFirstSentenceAndCutsLongOnesAtAWord()
+    {
+        Assert.That(GameTool.FirstSentence("Build near the player. Uses wood. Many more words."), Is.EqualTo("Build near the player."));
+        Assert.That(GameTool.FirstSentence("Short one"), Is.EqualTo("Short one"));
+        var longOne = GameTool.FirstSentence(string.Join(" ", Enumerable.Repeat("word", 60)));
+        Assert.That(longOne.Length, Is.LessThanOrEqualTo(152));
+        Assert.That(longOne, Does.EndWith("word.").Or.EndsWith("word"));
+    }
+
+    [Test]
+    public void WithoutDescriptions_CutsLongDescriptions_AndKeepsNamesTypesEnumsAndRequired()
+    {
+        var full = """{"type":"object","properties":{"action":{"type":"string","enum":["a","b"],"description":"which one"},"count":{"type":"integer","description":"how many"}},"required":["action"]}""";
+        var compact = GameTool.WithoutDescriptions(full);
+        Assert.That(compact, Does.Contain("which one").And.Contain("how many"), "short descriptions stay");
+        var longDesc = GameTool.WithoutDescriptions("{\"type\":\"object\",\"properties\":{\"x\":{\"type\":\"string\",\"description\":\"" + string.Join(" ", Enumerable.Repeat("long", 40)) + "\"}}}");
+        Assert.That(longDesc.Length, Is.LessThan(160), "long ones are cut");
+        Assert.That(compact, Does.Contain("\"enum\":[\"a\",\"b\"]").And.Contain("\"required\":[\"action\"]").And.Contain("\"count\""));
+        Assert.That(GameTool.WithoutDescriptions("not json"), Is.EqualTo("not json"));
+    }
+}

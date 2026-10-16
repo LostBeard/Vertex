@@ -65,8 +65,25 @@ public sealed class VertexAi : IAsyncDisposable
     /// </remarks>
     public const string SpeechRepo = "istupakov/parakeet-tdt-0.6b-v3-onnx";
 
+    /// <summary>
+    /// The language model's fast kernels. The library keeps four of them OFF by default (pending its full six-backend sweep) and its own Ollama-style example turns them on: a vectorised
+    /// Q4_K decode GEMV, the dp4a int8 version of it (the llama.cpp/Ollama technique), the grouped fused attention (prefill) and last-position-only logits. Vertex ran without them and wrote
+    /// 12 tokens a second (4.7 with its 4,000-token prompt) against Ollama's 88 on the same GPU, measured 2026-10-16. VERTEX_FAST_KERNELS=0 turns them off again (the A/B).
+    /// </summary>
+    private static void EnableFastKernels()
+    {
+        if (Environment.GetEnvironmentVariable("VERTEX_FAST_KERNELS") == "0") return;
+        // Each one can be left out for an A/B: VERTEX_NO_FK=warp,dp4a,grouped,lastpos (any of them, comma separated).
+        var off = (Environment.GetEnvironmentVariable("VERTEX_NO_FK") ?? "").Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
+        SpawnDev.ILGPU.ML.Kernels.FusedDequantMatMul.EnableWarpGemv = !off.Contains("warp");
+        SpawnDev.ILGPU.ML.Kernels.FusedDequantMatMul.EnableDp4aGemv = !off.Contains("dp4a");
+        SpawnDev.ILGPU.ML.Kernels.FusedAttentionKernel.EnableGroupedAttention = !off.Contains("grouped");
+        SpawnDev.ILGPU.ML.GGUF.GGUFGraphBuilder.EnableLastPositionLogits = !off.Contains("lastpos");
+    }
+
     public VertexAi(Action<string>? log = null, string? voicesFile = null)
     {
+        EnableFastKernels();
         Log = log;
         _context = SpawnDev.ILGPU.ML.MLContext.Create().ToContext();
         // CUDA first: the desktop path. OpenCL/CPU keep it working anywhere, slowly.

@@ -7,9 +7,48 @@ namespace Vertex.Brain;
 /// <summary>A tool the language model can call, backed by a delegate.</summary>
 public sealed class GameTool(string name, string description, string schema, Func<JsonElement, Task<string>> run) : IAiTool
 {
+    /// <summary>
+    /// What the language model is shown: the first sentence of each description and the schema without its per-argument descriptions. The 36 full definitions were about 3,300 tokens, and the model
+    /// reads them again for every cache miss and attends over them for every token it writes: its speed fell from 52 tokens a second at a short context to 12.7 at 4,800 tokens, and the library's
+    /// fast attention only holds up to 4,096 (measured 2026-10-16). VERTEX_FULL_TOOLS=1 shows the full text (the A/B).
+    /// </summary>
+    public static bool Compact { get; set; } = Environment.GetEnvironmentVariable("VERTEX_FULL_TOOLS") != "1";
+
     public string Name => name;
-    public string Description => description;
-    public string ParametersJsonSchema => schema;
+    public string Description => Compact ? FirstSentence(description) : description;
+    public string ParametersJsonSchema => Compact ? WithoutDescriptions(schema) : schema;
+
+    /// <summary>The text up to the end of the first sentence, at most 150 characters (cut at a word).</summary>
+    public static string FirstSentence(string text)
+    {
+        var t = text.Trim();
+        var end = t.IndexOf(". ", StringComparison.Ordinal);
+        if (end > 0) t = t[..(end + 1)];
+        if (t.Length <= 150) return t;
+        var cut = t.LastIndexOf(' ', 150);
+        return (cut > 40 ? t[..cut] : t[..150]).TrimEnd(',', ';', ':') + (t.EndsWith('.') ? "" : ".");
+    }
+
+    /// <summary>
+    /// The schema with each argument's "description" cut short (60 characters, at a word). Removing them altogether cost accuracy: without "what to hand over, e.g. wheat" the model
+    /// called trade with empty arguments (14 of 18 right instead of 16-17, measured 2026-10-16).
+    /// </summary>
+    public static string WithoutDescriptions(string schemaJson)
+    {
+        try
+        {
+            var node = System.Text.Json.Nodes.JsonNode.Parse(schemaJson);
+            if (node?["properties"] is System.Text.Json.Nodes.JsonObject props)
+                foreach (var kv in props)
+                    if (kv.Value is System.Text.Json.Nodes.JsonObject o && o["description"]?.GetValue<string>() is { } d && d.Length > 60)
+                    {
+                        var cut = d.LastIndexOf(' ', 60);
+                        o["description"] = (cut > 20 ? d[..cut] : d[..60]).TrimEnd(',', ';', ':', ' ');
+                    }
+            return node?.ToJsonString() ?? schemaJson;
+        }
+        catch (JsonException) { return schemaJson; }
+    }
 
     /// <summary>
     /// Called with every execution. AiChatEngine runs tools inside its own loop and reports only calls it did NOT
@@ -253,7 +292,7 @@ public static class GameTools
             });
 
         yield return new GameTool("build_shape",
-            "Build near the player: a house (cabin), platform, pyramid, castle or a fenced pen for animals. shape 'continue' (and nothing else) when asked to keep building / carry on / finish the last build. Uses the wood or stone we carry most of unless a material is named, and cuts logs or mines cobblestone first when short of it.",
+            "Build near the player: a house, platform, pyramid, castle or animal pen (shape), or shape 'continue' to keep building where you left off. Uses the wood or stone we carry most of unless a material is named, and cuts logs or mines cobblestone first when short of it.",
             """{"type":"object","properties":{"shape":{"type":"string","description":"house, platform, pyramid, castle, pen (a fenced pen for animals), or continue; with the material in front if one was asked for, e.g. 'stone castle'"}},"required":["shape"]}""",
             a =>
             {

@@ -64,6 +64,33 @@ public class DecodeSpeedTests
             TestContext.Out.WriteLine($"  phase {SpawnDev.ILGPU.ML.Graph.GraphExecutor.OpPhaseNames[i],-16} {SpawnDev.ILGPU.ML.Graph.GraphExecutor.OpPhaseMs[i] / tokens:0.00} ms/tok");
     }
 
+    /// <summary>The cost of a LONG context (Vertex's prompt is about 4,000 tokens): the first prefill, a second turn on the same prefix (what each chat turn is), and the decode rate at that length.</summary>
+    [Test]
+    public async Task LongContext_PrefillAndDecode()
+    {
+        var filler = string.Join(" ", Enumerable.Range(0, 250).Select(i => $"Fact {i}: the village has {i % 17 + 3} houses, {i % 5 + 1} wells and {i % 11 + 2} gardens."));
+        async Task<(double First, double Decode, int Prompt, int Tokens)> Turn(string user)
+        {
+            var request = new AiChatRequest
+            {
+                Model = _model,
+                Messages = [new("system", "You are a friendly helper. Here is what you know about the village. " + filler), new("user", user)],
+                Options = new AiGenerationOptions { MaxOutputTokens = 40 },
+            };
+            var sw = Stopwatch.StartNew();
+            var first = -1.0;
+            var result = await _ai.ChatAsync(request, _ => { if (first < 0) first = sw.Elapsed.TotalSeconds; return Task.CompletedTask; }, CancellationToken.None);
+            var decode = result.GeneratedTokens / Math.Max(sw.Elapsed.TotalSeconds - Math.Max(first, 0), 1e-6);
+            return (first, decode, result.PromptTokens, result.GeneratedTokens);
+        }
+        var a = await Turn("Say hello to the village in one sentence.");
+        TestContext.Out.WriteLine($"first turn : prompt {a.Prompt} tokens, first token {a.First:0.00} s, decode {a.Decode:0.0} tok/s");
+        var b = await Turn("Now say goodbye to the village in one sentence.");
+        TestContext.Out.WriteLine($"second turn: prompt {b.Prompt} tokens, first token {b.First:0.00} s, decode {b.Decode:0.0} tok/s");
+        var c = await Turn("Tell me one thing about house number three.");
+        TestContext.Out.WriteLine($"third turn : prompt {c.Prompt} tokens, first token {c.First:0.00} s, decode {c.Decode:0.0} tok/s");
+    }
+
     [Test]
     public async Task DecodeRate_ByTheSamplingSettings()
     {
