@@ -340,6 +340,36 @@ public static class GameTools
                 return Task.FromResult($"OK: I started planting a field of {crop ?? "crops"}. It takes a while; I will say when I am done.");
             });
 
+        yield return new GameTool("breed_animals",
+            "Breed farm animals: feeds two adults the food they like (wheat for cows and sheep, carrots for pigs, seeds for chickens) so a baby is born. Needs the food in the inventory.",
+            """{"type":"object","properties":{"animal":{"type":"string","description":"cow, sheep, pig, chicken, rabbit or goat"},"pairs":{"type":"integer","description":"how many pairs to breed (default 1)"}},"required":["animal"]}""",
+            a =>
+            {
+                var animal = Str(a, "animal") ?? "";
+                var pairs = Math.Clamp(Int(a, "pairs", 1), 1, 5);
+                tasks.Start($"breeding {animal}", ct => skills.BreedAnimalsAsync(animal, pairs, ct));
+                return Task.FromResult($"OK: I started breeding {animal}. It takes a little while; I will say when a baby is born.");
+            });
+
+        yield return new GameTool("shear_sheep",
+            "Shear the sheep nearby that still have wool and pick up the wool. Needs shears in the inventory.",
+            """{"type":"object","properties":{"count":{"type":"integer","description":"how many sheep at most (0 = all nearby)"}}}""",
+            a =>
+            {
+                var count = Math.Clamp(Int(a, "count", 0), 0, 20);
+                tasks.Start("shearing sheep", ct => skills.ShearSheepAsync(count, ct));
+                return Task.FromResult("OK: I started shearing the sheep nearby.");
+            });
+
+        yield return new GameTool("milk_cow",
+            "Milk the nearest cow into an empty bucket.",
+            NoArgs,
+            _ =>
+            {
+                tasks.Start("milking a cow", ct => skills.MilkCowAsync(ct));
+                return Task.FromResult("OK: I started walking over to a cow to milk it.");
+            });
+
         yield return new GameTool("smelt",
             "Smelt or cook in a furnace: iron_ingot from raw iron, glass from sand, cooked_beef from beef, charcoal from logs. Builds a furnace from cobblestone if none is near. Takes 10 seconds per item.",
             """{"type":"object","properties":{"result":{"type":"string","description":"what to make, e.g. iron_ingot, glass, cooked_porkchop"},"count":{"type":"integer"}},"required":["result"]}""",

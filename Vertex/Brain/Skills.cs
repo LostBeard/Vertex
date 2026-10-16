@@ -1257,6 +1257,144 @@ public sealed class Skills(MinecraftClient client)
         return (true, $"I planted a {size} by {size} field of {cropName}{wet}: {planted} planted" + (skipped > 0 ? $", {skipped} spots I couldn't use." : "."));
     }
 
+    // ---------------------------------------------------------------- animals
+
+    /// <summary>What each kind of farm animal eats to breed (any of the foods works).</summary>
+    private static readonly Dictionary<string, string[]> BreedingFood = new()
+    {
+        ["minecraft:cow"] = ["minecraft:wheat"],
+        ["minecraft:mooshroom"] = ["minecraft:wheat"],
+        ["minecraft:sheep"] = ["minecraft:wheat"],
+        ["minecraft:goat"] = ["minecraft:wheat"],
+        ["minecraft:pig"] = ["minecraft:carrot", "minecraft:potato", "minecraft:beetroot"],
+        ["minecraft:chicken"] = ["minecraft:wheat_seeds", "minecraft:beetroot_seeds", "minecraft:melon_seeds", "minecraft:pumpkin_seeds", "minecraft:torchflower_seeds"],
+        ["minecraft:rabbit"] = ["minecraft:carrot", "minecraft:golden_carrot", "minecraft:dandelion"],
+    };
+
+    /// <summary>A baby: the ageable-mob flag at metadata index 16.</summary>
+    private static bool IsBaby(Entity e) => e.Metadata.TryGetValue(16, out var v) && v is true;
+
+    /// <summary>A sheared sheep: bit 0x10 of the sheep's flags (metadata index 17).</summary>
+    private static bool IsSheared(Entity e) => e.Metadata.TryGetValue(17, out var v) && v is byte or sbyte or int && (Convert.ToInt32(v) & 0x10) != 0;
+
+    private string? AnimalKind(string? words)
+    {
+        var w = words?.Trim().ToLowerInvariant().Replace(' ', '_');
+        if (string.IsNullOrEmpty(w)) return null;
+        w = w.TrimEnd('s');
+        if (w is "cow" or "cattle") return "minecraft:cow";
+        if (w is "chicken" or "hen") return "minecraft:chicken";
+        if (w is "mushroom_cow") return "minecraft:mooshroom";
+        return BreedingFood.Keys.FirstOrDefault(k => k.Bare() == w) ?? (D.Entity("minecraft:" + w) != null ? "minecraft:" + w : null);
+    }
+
+    /// <summary>Walks up to an animal (they wander, so in short hops) until it is within arm's reach, or it has gone.</summary>
+    private async Task<bool> ApproachAsync(Entity target, double within, CancellationToken ct)
+    {
+        for (var hops = 0; hops < 25 && !ct.IsCancellationRequested; hops++)
+        {
+            if (!client.Entities.TryGetValue(target.Id, out var now)) return false;
+            if (now.DistanceTo(client.Position.X, client.Position.Y, client.Position.Z) <= within) return true;
+            using var hop = CancellationTokenSource.CreateLinkedTokenSource(ct);
+            hop.CancelAfter(TimeSpan.FromSeconds(2));
+            try { await client.GoToAsync(Goal.Near(now.X, now.Y, now.Z, Math.Max(1.5, within - 1.0)), new PathOptions { MaxNodes = 8_000 }, hop.Token); }
+            catch (OperationCanceledException) when (!ct.IsCancellationRequested) { }
+        }
+        return client.Entities.TryGetValue(target.Id, out var last) && last.DistanceTo(client.Position.X, client.Position.Y, client.Position.Z) <= within;
+    }
+
+    private List<Entity> AnimalsNear(string kind, bool adultsOnly)
+    {
+        var (x, y, z) = client.Position;
+        return client.Entities.Values.Where(e => e.Name == kind && (!adultsOnly || !IsBaby(e)) && e.DistanceTo(x, y, z) < 24).OrderBy(e => e.DistanceTo(x, y, z)).ToList();
+    }
+
+    /// <summary>
+    /// Breeds two adults of a kind of farm animal by feeding both the food they like (wheat for cows and sheep, carrots for pigs, seeds for chickens), then waits to see the baby arrive.
+    /// Repeats for more pairs while there are adults and food (`pairs`).
+    /// </summary>
+    public async Task<(bool, string)> BreedAnimalsAsync(string? animal, int pairs, CancellationToken ct)
+    {
+        var kind = AnimalKind(animal);
+        if (kind == null || !BreedingFood.TryGetValue(kind, out var foods))
+            return (false, $"I don't know how to breed {animal ?? "that"}. I can breed cows, sheep, pigs, chickens, rabbits and goats.");
+        var foodNames = string.Join(" or ", foods.Select(Plain));
+        pairs = Math.Clamp(pairs <= 0 ? 1 : pairs, 1, 5);
+        var babies = 0;
+        var fedAlready = new HashSet<int>();
+        for (var pair = 0; pair < pairs && !ct.IsCancellationRequested; pair++)
+        {
+            var adults = AnimalsNear(kind, adultsOnly: true).Where(a => !fedAlready.Contains(a.Id)).ToList();
+            if (adults.Count < 2) return babies > 0 ? (true, $"{Report(babies)} I need two more adult {Plain(kind)}s close by for another pair.") : (false, $"I need two adult {Plain(kind)}s close by to breed them, and I only see {adults.Count}.");
+            var food = foods.FirstOrDefault(f => client.Inventory.Count(f) >= 2);
+            if (food == null) return babies > 0 ? (true, $"{Report(babies)} I ran out of {foodNames}.") : (false, $"I need two {foodNames} to breed {Plain(kind)}s and I only have {foods.Sum(f => client.Inventory.Count(f))}.");
+
+            var first = adults[0];
+            var second = adults.Where(a => a.Id != first.Id).OrderBy(a => a.DistanceTo(first.X, first.Y, first.Z)).First();
+            var before = client.Entities.Values.Where(e => e.Name == kind && IsBaby(e)).Select(e => e.Id).ToHashSet();
+            foreach (var parent in new[] { first, second })
+            {
+                if (!await ApproachAsync(parent, 2.6, ct)) return babies > 0 ? (true, Report(babies)) : (false, $"I couldn't catch up with a {Plain(kind)}.");
+                if (!await client.EquipAsync(s => s.Name == food, ct)) return (false, $"I couldn't get the {Plain(food)} into my hand.");
+                client.LookAt(parent.X, parent.Y + parent.Type.Height * 0.5, parent.Z);
+                await client.InteractAsync(client.Entities.GetValueOrDefault(parent.Id) ?? parent, Hand.Main, ct);
+                fedAlready.Add(parent.Id);
+                await client.WaitTicksAsync(6, ct);
+            }
+            // They walk to each other; a baby appears a few seconds after they meet.
+            var arrived = await client.WaitUntilAsync(() => client.Entities.Values.Any(e => e.Name == kind && IsBaby(e) && !before.Contains(e.Id)), 20 * 30, ct);
+            if (!arrived) return babies > 0 ? (true, $"{Report(babies)} The next pair didn't breed yet.") : (false, $"I fed two {Plain(kind)}s but no baby came yet. They may need to be closer together, or they bred recently.");
+            babies++;
+        }
+        return (true, Report(babies));
+
+        string Report(int n) => $"I bred {Plain(kind)}s: {n} {(n == 1 ? "baby" : "babies")} born.";
+    }
+
+    /// <summary>Shears every sheep within reach of a walk (up to `count`, all if 0) that still has its wool, and picks the wool up.</summary>
+    public async Task<(bool, string)> ShearSheepAsync(int count, CancellationToken ct)
+    {
+        if (Have(s => s.Name == "minecraft:shears") == 0) return (false, "I need shears to shear sheep. (They are two iron ingots.)");
+        var sheared = 0;
+        var wool = Have(s => s.Name.EndsWith("_wool"));
+        var done = new HashSet<int>();
+        while (!ct.IsCancellationRequested && (count <= 0 || sheared < count))
+        {
+            var sheep = AnimalsNear("minecraft:sheep", adultsOnly: true).FirstOrDefault(s => !IsSheared(s) && !done.Contains(s.Id));
+            if (sheep == null) break;
+            done.Add(sheep.Id);
+            if (!await ApproachAsync(sheep, 2.6, ct)) continue;
+            if (!await client.EquipAsync(s => s.Name == "minecraft:shears", ct)) return (false, "I couldn't get the shears into my hand.");
+            client.LookAt(sheep.X, sheep.Y + sheep.Type.Height * 0.5, sheep.Z);
+            await client.InteractAsync(client.Entities.GetValueOrDefault(sheep.Id) ?? sheep, Hand.Main, ct);
+            if (await client.WaitUntilAsync(() => client.Entities.TryGetValue(sheep.Id, out var e) && IsSheared(e), 30, ct))
+            {
+                sheared++;
+                await client.WaitTicksAsync(8, ct);
+                await PickUpNearbyAsync((int)Math.Floor(sheep.X), (int)Math.Floor(sheep.Y), (int)Math.Floor(sheep.Z), ct);
+            }
+        }
+        if (sheared == 0) return (false, "I don't see any sheep with wool on near me.");
+        var got = Have(s => s.Name.EndsWith("_wool")) - wool;
+        return (true, $"I sheared {sheared} sheep and got {got} wool.");
+    }
+
+    /// <summary>Milks the nearest adult cow with a bucket.</summary>
+    public async Task<(bool, string)> MilkCowAsync(CancellationToken ct)
+    {
+        if (Have(s => s.Name == "minecraft:bucket") == 0) return (false, "I need an empty bucket to milk a cow.");
+        var cow = AnimalsNear("minecraft:cow", adultsOnly: true).FirstOrDefault() ?? AnimalsNear("minecraft:mooshroom", adultsOnly: true).FirstOrDefault();
+        if (cow == null) return (false, "I don't see a cow to milk.");
+        if (!await ApproachAsync(cow, 2.6, ct)) return (false, "I couldn't catch up with the cow.");
+        if (!await client.EquipAsync(s => s.Name == "minecraft:bucket", ct)) return (false, "I couldn't get the bucket into my hand.");
+        var before = Have(s => s.Name == "minecraft:milk_bucket");
+        client.LookAt(cow.X, cow.Y + cow.Type.Height * 0.5, cow.Z);
+        await client.InteractAsync(client.Entities.GetValueOrDefault(cow.Id) ?? cow, Hand.Main, ct);
+        return await client.WaitUntilAsync(() => Have(s => s.Name == "minecraft:milk_bucket") > before, 30, ct)
+            ? (true, "I milked the cow: I have a bucket of milk.")
+            : (false, "The cow didn't give milk.");
+    }
+
     // ---------------------------------------------------------------- exploring
 
     /// <summary>Blocks worth telling friends about, by what to call them.</summary>
