@@ -29,7 +29,7 @@ public class BrainEndToEndTests
         await _server.CommandAsync("time set day");
         _ai = TestAi.Create();
         var models = await _ai.ModelNamesAsync();
-        _model = models.FirstOrDefault(m => m.StartsWith("llama3.1")) ?? throw new AssertionException("llama3.1 not in the Ollama cache: " + string.Join(", ", models));
+        _model = models.FirstOrDefault(m => m.StartsWith(Environment.GetEnvironmentVariable("VERTEX_TEST_MODEL") ?? "llama3.1")) ?? throw new AssertionException("the model (VERTEX_TEST_MODEL, default llama3.1) is not in the Ollama cache: " + string.Join(", ", models));
         await _ai.EnsureChatReadyAsync(_model);
     }
 

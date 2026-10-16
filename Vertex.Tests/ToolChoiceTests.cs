@@ -32,7 +32,7 @@ public class ToolChoiceTests
         await _server.CommandAsync("time set day");
         _ai = TestAi.Create();
         var models = await _ai.ModelNamesAsync();
-        _model = models.FirstOrDefault(m => m.StartsWith("llama3.1")) ?? throw new AssertionException("llama3.1 not in the Ollama cache: " + string.Join(", ", models));
+        _model = models.FirstOrDefault(m => m.StartsWith(Environment.GetEnvironmentVariable("VERTEX_TEST_MODEL") ?? "llama3.1")) ?? throw new AssertionException("the model (VERTEX_TEST_MODEL, default llama3.1) is not in the Ollama cache: " + string.Join(", ", models));
         await _ai.EnsureChatReadyAsync(_model);
     }
 
@@ -86,6 +86,7 @@ public class ToolChoiceTests
         var brain = new VertexBrain(vertex, null, _ai, store, Character.BuiltIn[0], _model);
         brain.Log += m => { log.Enqueue(m); TestContext.Out.WriteLine(m); };
         brain.Channel.EchoText = true;
+        if (Environment.GetEnvironmentVariable("VERTEX_TEST_INSTINCT") == "0") brain.Companion.UseInstinct = false;       // to compare with and without the instinct hint
         brain.Start();
         await using var _b = brain;
         await Wait.UntilAsync(() => vertex.Entities.Values.Any(e => e.PlayerName == "Aubri"), Timeout, () => "Vertex sees Aubri");

@@ -427,6 +427,26 @@ public sealed class Companion : IAsyncDisposable
     /// </summary>
     private readonly List<string> _recent = [];
 
+    private static readonly Instinct TheInstinct = new();
+
+    /// <summary>Whether System One's instinct is given to the language model as a hint about which tool a request wants.</summary>
+    public bool UseInstinct { get; set; } = true;
+
+    /// <summary>
+    /// What System One thinks the request is, as a note for the language model: a tool to use unless clearly wrong, or "just talk". Only when it is sure (a guess below 50% is not passed on);
+    /// the model decides. Null for game updates and when the instinct is unsure.
+    /// </summary>
+    public static string? InstinctHint(string userMessage)
+    {
+        if (userMessage.StartsWith('[')) return null;
+        // "Aubri says (in chat): Vertex, build a house" -> the words that were said.
+        var at = userMessage.IndexOf("): ", StringComparison.Ordinal);
+        var said = at >= 0 && at < 80 ? userMessage[(at + 3)..] : userMessage;
+        var (tool, confidence) = TheInstinct.Guess(said);
+        if (tool == "chat") return confidence >= 0.7f ? "Your instinct says this is just talk, not a request to do anything: answer in words, without a tool." : null;
+        return confidence >= 0.5f ? $"Your first instinct on this request is the tool {tool}. Call it, unless that is clearly wrong." : null;
+    }
+
     public string NowPrompt()
     {
         var sb = new StringBuilder();
@@ -466,6 +486,7 @@ public sealed class Companion : IAsyncDisposable
         // The state is its own note just before the message. Glued to the front of the message, the model began its
         // replies with the note's label ("Right now: I'm on my way to Aubri", BrainTests 2026-10-12).
         messages.Add(new AiChatMessage("system", NowPrompt()));
+        if (allowTools && UseInstinct && InstinctHint(userMessage) is { } hint) { messages.Add(new AiChatMessage("system", hint)); Log?.Invoke("  (instinct: " + hint + ")"); }
         messages.Add(new AiChatMessage("user", userMessage));
         Log?.Invoke("> " + userMessage);
         var runsBefore = Volatile.Read(ref _toolRuns);
