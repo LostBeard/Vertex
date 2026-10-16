@@ -463,6 +463,9 @@ public sealed partial class Skills(MinecraftClient client)
             }
             else await client.WaitTicksAsync(2, ct); // watch: threats are checked every few ticks
         }
+        // Guarding only ends by being stopped, and stopping is a cancellation like every other task's (TaskRunner expects the throw): when the token was cancelled between two turns of the
+        // loop above, the loop just ended, and the task returned normally (seen once in a full suite run, 2026-10-16).
+        ct.ThrowIfCancellationRequested();
         return (true, $"stopped guarding {name} ({kills} monsters defeated)");
     }
 

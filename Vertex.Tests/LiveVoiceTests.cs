@@ -16,8 +16,36 @@ public class LiveVoiceTests
     private const int Port = 25932;
     private const int VoicePort = 25933;
     private static readonly TimeSpan Timeout = TimeSpan.FromSeconds(60);
-    private static readonly string PluginJar = Path.GetFullPath(Path.Combine(TestContext.CurrentContext.TestDirectory,
-        "..", "..", "..", "..", "..", "..", "AubsCraft", "voicechat-bukkit-2.6.16.jar"));
+    /// <summary>
+    /// The Simple Voice Chat Bukkit plugin: VERTEX_VOICECHAT_JAR, or the copy next to the AubsCraft repo (found relative to the test folder, which only works for a build inside the repo),
+    /// or the newest one in the AubsCraft test servers' plugin folders (%LOCALAPPDATA%\AubsCraft.Tests\servers), where the AubsCraft tests keep theirs.
+    /// </summary>
+    private static readonly string PluginJar = FindPluginJar();
+
+    private static string FindPluginJar()
+    {
+        var env = Environment.GetEnvironmentVariable("VERTEX_VOICECHAT_JAR");
+        if (!string.IsNullOrEmpty(env) && File.Exists(env)) return env;
+        // Walk up from wherever the tests were built to a folder that has the AubsCraft repo beside it (a build in /tmp is not inside the repo).
+        var beside = Path.GetFullPath(Path.Combine(TestContext.CurrentContext.TestDirectory, "..", "..", "..", "..", "..", "..", "AubsCraft", "voicechat-bukkit-2.6.16.jar"));
+        for (var dir = new DirectoryInfo(AppContext.BaseDirectory); dir != null; dir = dir.Parent)
+        {
+            var candidate = Path.Combine(dir.FullName, "AubsCraft", "voicechat-bukkit-2.6.16.jar");
+            if (File.Exists(candidate)) return candidate;
+        }
+        if (File.Exists(beside)) return beside;
+        var projects = Environment.GetEnvironmentVariable("VERTEX_PROJECTS_DIR");
+        if (!string.IsNullOrEmpty(projects) && Directory.EnumerateFiles(Path.Combine(projects, "AubsCraft"), "voicechat-bukkit-*.jar").FirstOrDefault() is { } inProjects) return inProjects;
+        var servers = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "AubsCraft.Tests", "servers");
+        if (Directory.Exists(servers))
+        {
+            var found = Directory.EnumerateFiles(servers, "voicechat-bukkit-*.jar", SearchOption.AllDirectories)
+                .Where(f => !f.Contains(".paper-remapped") && !f.Contains(Path.DirectorySeparatorChar + "vertex-"))
+                .OrderByDescending(f => f, StringComparer.OrdinalIgnoreCase).FirstOrDefault();
+            if (found != null) return found;
+        }
+        return beside;
+    }
     private PaperServer _server = null!;
 
     [OneTimeSetUp]
@@ -29,7 +57,7 @@ public class LiveVoiceTests
             {
                 var plugins = Path.Combine(dir, "plugins");
                 Directory.CreateDirectory(Path.Combine(plugins, "voicechat"));
-                File.Copy(PluginJar, Path.Combine(plugins, "voicechat-bukkit-2.6.16.jar"), overwrite: true);
+                File.Copy(PluginJar, Path.Combine(plugins, Path.GetFileName(PluginJar)), overwrite: true);
                 File.WriteAllText(Path.Combine(plugins, "voicechat", "voicechat-server.properties"), $"port={VoicePort}\n");
                 return Task.CompletedTask;
             });
