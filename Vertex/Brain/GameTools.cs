@@ -442,8 +442,8 @@ public static class GameTools
             a => Task.FromResult(brain.Remember(Str(a, "fact") ?? "", Str(a, "about") is { Length: > 0 } about ? Speaker(about) : null)));
 
         yield return new GameTool("set_goal",
-            "Take on a long-term goal that needs many steps over time (build a castle, collect 64 diamonds, find a village). You work on it by yourself whenever nobody needs you, and remember it between games.",
-            """{"type":"object","properties":{"goal":{"type":"string","description":"the goal, e.g. 'build a castle by the lake'"},"player":{"type":"string","description":"who it is for ('me' = the person talking)"}},"required":["goal"]}""",
+            "Take on a long-term goal that needs many steps over time (collect 64 diamonds, find a village, explore for a stronghold). NOT for building: build_shape builds right away. You work on it by yourself whenever nobody needs you, and remember it between games.",
+            """{"type":"object","properties":{"goal":{"type":"string","description":"the goal, e.g. 'find a village'"},"player":{"type":"string","description":"who it is for ('me' = the person talking)"}},"required":["goal"]}""",
             a => Task.FromResult(brain.SetGoal(Str(a, "goal") ?? "", Who(a))));
 
         yield return new GameTool("finish_goal",

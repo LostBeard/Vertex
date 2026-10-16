@@ -322,10 +322,20 @@ public class VertexUnitTests
     [Test]
     public void Brain_NoticesWhenItClaimsAnActionInWords()
     {
-        foreach (var r in new[] { "I'm on my way.", "I'll get you some wood!", "Coming!", "Let me grab that.", "I’m following you, Aubs!", "I remember, Aubri loves pink axolotls.", "I remember that you love pink axolotls.", "Noted!" })
+        foreach (var r in new[] { "I'm on my way.", "I'll get you some wood!", "Coming!", "Let me grab that.", "I’m following you, Aubs!", "I remember, Aubri loves pink axolotls.", "I remember that you love pink axolotls.", "Noted!", "I'm collecting wood for Aubri.", "I'm on my way to milk the cow." })
             Assert.That(VertexBrain.ClaimsAction(r), r);
         foreach (var r in new[] { "Hi Aubri!", "I like turtles too.", "It's night time now.", "That was fun!", "Let me know if you need anything.", "I remember the castle we built!", "That is annotated." })
             Assert.That(VertexBrain.ClaimsAction(r), Is.False, r);
+    }
+
+    [Test]
+    public void Brain_RequestsEndingInAQuestionMarkAreStillRequests()
+    {
+        foreach (var q in new[] { "Vertex, can you milk the cow?", "could you get me wood?", "Will you build a house please?" })
+            Assert.That(Companion.IsRealQuestion(q), Is.False, q);
+        foreach (var q in new[] { "What is the best thing to build?", "Do you like turtles?", "Where are you?" })
+            Assert.That(Companion.IsRealQuestion(q), Is.True, q);
+        Assert.That(Companion.IsRealQuestion("go get wood"), Is.False, "no question mark, no question");
     }
 
     [Test]

@@ -463,7 +463,7 @@ public sealed class Companion : IAsyncDisposable
         var spoken = new List<string>();
         var reply = await ChatOnceAsync(messages, allowTools, ct, clock, spoken, to);
         // A question is answered, not acted on: "what's the best thing to build?" got "I'm on my way to helping you decide" and a retry that ordered a tool call.
-        var askedAQuestion = userMessage.TrimEnd().EndsWith('?');
+        var askedAQuestion = IsRealQuestion(userMessage);
         // An 8B model sometimes SAYS it is doing something ("I'm on my way") without calling a tool, and then nothing
         // happens (seen 2026-10-11 in BrainTests.ComeHere). Once, tell it so and let it call the tool.
         if (allowTools && !askedAQuestion && Volatile.Read(ref _toolRuns) == runsBefore && ClaimsAction(reply))
@@ -644,8 +644,23 @@ public sealed class Companion : IAsyncDisposable
         // Saying it remembered without the remember tool remembers nothing (seen 3 in a row on 2026-10-11:
         // "I remember, Aubri loves pink axolotls." and no tool call).
         "i called ", "i've called ", "i have called ", "i started ", "i'm walking ", "i'm trading", "i'm planting", "i'm building", "i'm feeding", "i'm picking", "i'm shearing", "i'm milking", "i'm lighting", "i'm shooting",
+        "i'm collecting", "i'm gathering", "i'm mining", "i'm chopping", "i'm cutting", "i'm crafting", "i'm smelting", "i'm fetching", "i'm bringing", "i'm giving", "i'm eating", "i'm sleeping",
+        "i'm exploring", "i'm guarding", "i'm attacking", "i'm fighting", "i'm storing", "i'm taking", "i'm placing", "i'm harvesting", "i'm breeding", "i'm staying", "i'm stopping",
         "i remember,", "i remember that", "i've remembered", "i have remembered", "i'll remember", "i will remember", "i'll keep that in mind", " noted",
     ];
+
+    /// <summary>
+    /// Whether a message asks something that is to be ANSWERED. "Can you milk the cow?" ends in a question mark but is a request (seen 2026-10-15: exempt as a question, the model said
+    /// "I'm on my way to milk the cow" and called no tool, and nobody asked it again).
+    /// </summary>
+    public static bool IsRealQuestion(string message)
+    {
+        var m = message.Trim();
+        if (!m.EndsWith('?')) return false;
+        var t = " " + m.ToLowerInvariant().Replace('’', '\'') + " ";
+        string[] requests = [" can you ", " could you ", " would you ", " will you ", " can u ", " could u ", " would u ", " please "];
+        return !requests.Any(t.Contains);
+    }
 
     /// <summary>Whether a reply says Vertex is doing (or about to do) something.</summary>
     public static bool ClaimsAction(string reply)
