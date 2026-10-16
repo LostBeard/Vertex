@@ -703,11 +703,16 @@ public sealed class Companion : IAsyncDisposable
         return InabilityClaims.Any(r.Contains);
     }
 
+    /// <summary>"The sheep is being sheared", "I have taken a bucket and am now milking the cow": the other ways of saying it is already underway.</summary>
+    private static readonly System.Text.RegularExpressions.Regex InProgress = new(
+        @"\b(?:am now|am still) [a-z]+ing\b|\b(?:is|are) being [a-z]+ed\b|\bi have (?:taken|started|begun|gone|got|grabbed)\b",
+        System.Text.RegularExpressions.RegexOptions.Compiled);
+
     /// <summary>Whether a reply says Vertex is doing (or about to do) something.</summary>
     public static bool ClaimsAction(string reply)
     {
         var r = " " + reply.ToLowerInvariant().Replace('’', '\'') + " ";
-        return ActionClaims.Any(r.Contains) || DoingSomething.IsMatch(r);
+        return ActionClaims.Any(r.Contains) || DoingSomething.IsMatch(r) || InProgress.IsMatch(r);
     }
 
     // ---------------------------------------------------------------- characters
