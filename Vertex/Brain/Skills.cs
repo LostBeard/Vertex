@@ -108,6 +108,9 @@ public sealed partial class Skills(MinecraftClient client)
     {
         var w = Simplify(what.TrimEnd('s'));
         var stacks = slots.Where(s => !s.IsEmpty).ToList();
+        // What people call it is not always what it is called in the inventory: wood is logs ("oak_log"), stone is cobblestone once mined.
+        var alias = w is "wood" or "log" or "tree" ? "log" : w is "stone" or "rock" ? "cobblestone" : null;
+        if (alias != null && stacks.FirstOrDefault(s => Simplify(s.Name.Bare()).Contains(alias)) is { } aliased) return aliased;
         return stacks.FirstOrDefault(s => Simplify(s.Name.Bare()) == w)
             ?? stacks.FirstOrDefault(s => Simplify(s.Name.Bare()).Contains(w))
             ?? stacks.FirstOrDefault(s => s.CustomName != null && Simplify(s.CustomName).Contains(w));
@@ -271,9 +274,17 @@ public sealed partial class Skills(MinecraftClient client)
     public async Task<(bool, string)> GiveAsync(string? playerName, string item, int count, CancellationToken ct)
     {
         var stack = FindItem(item);
-        if (stack == null) return (false, $"I don't have any {item}.");
         var target = FindPlayer(playerName);
         if (target == null) return (false, $"I can't see {playerName ?? "anyone"} to give it to.");
+        // "Bring me ten wood" with none in the pockets: go and get it first (blocks only: wood, stone, ores, sand...), then bring it.
+        var haveNow = stack == null ? 0 : client.Inventory.Count(stack.Name);
+        if (stack == null || (count > 0 && haveNow < count))
+        {
+            var (got, fetchText) = await CollectAsync(item, count > 0 ? count - haveNow : 8, ct);
+            stack = FindItem(item);
+            if (stack == null) return (false, $"I don't have any {item}, and I couldn't get any: {fetchText}");
+            target = FindPlayer(playerName) ?? target;
+        }
         await client.GoToAsync(Goal.Near(target.X, target.Y, target.Z, 2.0), null, ct);
         var name = stack.Name;
         var have = client.Inventory.Count(name);

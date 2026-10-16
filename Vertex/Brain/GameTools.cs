@@ -122,7 +122,7 @@ public static class GameTools
             });
 
         yield return new GameTool("give",
-            "Give items from your inventory to a player (walks over and drops them).",
+            "Give items to a player (walks over and drops them). If you have none, you go and get it first when it is a block like wood, stone or iron ('bring me ten wood').",
             """{"type":"object","properties":{"player":{"type":"string"},"item":{"type":"string"},"count":{"type":"integer"}},"required":["item"]}""",
             a =>
             {

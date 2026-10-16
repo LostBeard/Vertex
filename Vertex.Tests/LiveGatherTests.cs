@@ -90,4 +90,27 @@ public class LiveGatherTests
         Assert.That(ok, Is.False);
         Assert.That(text, Does.Contain("planks").And.Contain("couldn't cut logs"));
     }
+
+    [Test]
+    public async Task BringMeWood_CutsLogsAndHandsThemOver()
+    {
+        const string name = "VertexBringer";
+        var (client, ax, az) = await JoinAsync(name, trees: true);
+        await using var _ = client;
+        // The one who asked stands nearby (and picks things up the way a player does).
+        var aubs = new MinecraftClient(GameProfile.Offline("AubriGets"));
+        using var cts0 = new CancellationTokenSource(Timeout);
+        await Task.Delay(1500);
+        await aubs.ConnectAsync("127.0.0.1", Port, cts0.Token);
+        await using var _a = aubs;
+        await _server.CommandAsync($"tp AubriGets {ax - 3.5} 200 {az + 0.5}");
+        await Wait.UntilAsync(() => client.Entities.Values.Any(e => e.PlayerName == "AubriGets"), Timeout, () => "Vertex sees the player");
+        var skills = new Skills(client);
+
+        using var cts = new CancellationTokenSource(TimeSpan.FromMinutes(3));
+        var (ok, text) = await skills.GiveAsync("AubriGets", "wood", 6, cts.Token);
+        TestContext.Out.WriteLine(text);
+        Assert.That(ok, Is.True, text);
+        await Wait.UntilAsync(() => aubs.Inventory.Slots.Where(s => !s.IsEmpty && s.Name.EndsWith("_log")).Sum(s => s.Count) >= 6, Timeout, () => aubs.Inventory.ToString());
+    }
 }
