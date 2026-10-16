@@ -150,7 +150,9 @@ static async Task<int> PlayAsync(string[] args)
 
 static Microsoft.AspNetCore.Builder.WebApplication BuildControlPanel(string[] args)
 {
-    var builder = Microsoft.AspNetCore.Builder.WebApplication.CreateBuilder();
+    // The content root is the folder Vertex.exe is in, NOT the current directory: Windows starts it at login (the Run key) and from shortcuts with
+    // some other folder current, and then the framework's static files (blazor.web.js) were found by nobody and served as 200 with 0 bytes.
+    var builder = Microsoft.AspNetCore.Builder.WebApplication.CreateBuilder(new Microsoft.AspNetCore.Builder.WebApplicationOptions { ContentRootPath = AppContext.BaseDirectory });
     builder.WebHost.UseUrls(Option(args, "--urls") ?? "http://0.0.0.0:5280");
     // Serve the framework's static files (blazor.web.js) when running from the build output, not only when published
     // or in Development: without them the page renders but nothing on it responds.

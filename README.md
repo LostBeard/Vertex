@@ -34,6 +34,14 @@ Named by Aubriella, who it was built to play with.
 Vertex runs on Windows with an NVIDIA GPU (CUDA; it falls back to OpenCL/CPU, slowly). A 12 GB card carries the whole stack
 (language model, speech, voices and faces together); the measurements in [Docs/Architecture.md](Docs/Architecture.md) are from an RTX 4070.
 
+**Installer (the easy way, for another PC).** `installer\build-installer.bat` publishes a self-contained build (no .NET needed on the target) and
+makes `installer\Output\VertexSetup-<version>.exe` with [Inno Setup](https://jrsoftware.org/isinfo.php) 6.1+. Setup installs for the current user
+(no administrator), adds a Start menu entry, optionally starts Vertex with Windows, warns when there is no NVIDIA driver, and downloads
+`llama3.1:8b` (4.9 GB, SHA-256 checked) into the Ollama cache if it is not there yet. Uninstall keeps the model and asks before deleting what Vertex
+remembers (`%APPDATA%\Vertex`: people, voices, faces, characters).
+
+By hand instead:
+
 1. Install a chat model into the Ollama cache, e.g. `ollama pull llama3.1:8b` (Vertex reads Ollama's model files directly; Ollama
    itself does not need to be running). The speech models download on first use.
 2. Start `Vertex.exe`. It lives in the notification area (the tray); a second launch opens the control panel at
