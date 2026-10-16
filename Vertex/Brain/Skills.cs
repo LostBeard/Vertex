@@ -302,6 +302,7 @@ public sealed class Skills(MinecraftClient client)
             : e.Name.Bare() == w.TrimEnd('s') || e.Name.Bare() == w;
         var kills = 0;
         await EquipWeaponAsync(ct);
+        await EquipShieldAsync(ct);       // a shield, when we carry one, goes to the off hand for any fight
         while (!ct.IsCancellationRequested)
         {
             if (client.Health < 6) return (false, $"I had to back off, I'm hurt (health {client.Health / 2:0} hearts).");
@@ -313,15 +314,58 @@ public sealed class Skills(MinecraftClient client)
         return (true, kills > 0 ? $"I defeated {kills} {what}." : $"I don't see any {what} around.");
     }
 
+    /// <summary>Puts a shield from the inventory into the off hand (true when one is there afterwards). A shield blocks nearly all of what hits us from the front while it is raised.</summary>
+    public async Task<bool> EquipShieldAsync(CancellationToken ct)
+    {
+        if (client.Inventory.OffHandItem.Name == "minecraft:shield") return true;
+        var slot = client.Inventory.Find(s => s.Name == "minecraft:shield").FirstOrDefault(-1);
+        if (slot < 0) return false;
+        await client.ClickAsync(0, slot, 40, 2, ct);        // mode 2 (swap), button 40: the clicked slot swaps with the off hand
+        await client.WaitUntilAsync(() => client.Inventory.OffHandItem.Name == "minecraft:shield", 40, ct);
+        return client.Inventory.OffHandItem.Name == "minecraft:shield";
+    }
+
+    /// <summary>Raises the shield held in the off hand (it stays up until <see cref="ShieldDownAsync"/>); false when there is none.</summary>
+    public async Task<bool> ShieldUpAsync(CancellationToken ct)
+    {
+        if (client.Inventory.OffHandItem.Name != "minecraft:shield") return false;
+        await client.UseItemAsync(Hand.Off, ct);
+        return true;
+    }
+
+    public Task ShieldDownAsync(CancellationToken ct) => client.ReleaseUseItemAsync(ct);
+
     /// <summary>
     /// Fights one mob until it is gone (true), we are hurt, or `keepGoing` says to stop chasing it (false).
     /// </summary>
     private async Task<bool> FightAsync(int id, Func<Entity, bool>? keepGoing, CancellationToken ct)
     {
+        // With a shield in the off hand it is up between swings and down for each one (you cannot swing with it raised).
+        var shield = client.Inventory.OffHandItem.Name == "minecraft:shield";
+        var up = false;
+        try
+        {
+            return await FightLoopAsync(id, keepGoing, shield, v => up = v, () => up, ct);
+        }
+        finally
+        {
+            if (up) await client.ReleaseUseItemAsync(CancellationToken.None);
+        }
+    }
+
+    private async Task<bool> FightLoopAsync(int id, Func<Entity, bool>? keepGoing, bool shield, Action<bool> setUp, Func<bool> isUp, CancellationToken ct)
+    {
         while (client.Entities.TryGetValue(id, out var t) && !ct.IsCancellationRequested)
         {
             if (client.Health < 6 || (keepGoing != null && !keepGoing(t))) return false;
             var d = t.DistanceTo(client.Position.X, client.Position.Y, client.Position.Z);
+            // The shield is up from the moment the mob is coming (hits land while we are still walking up to it) and down only for the swing itself.
+            if (shield)
+            {
+                var swingNow = d <= 2.8 && (client.AttackReady || client.TicksUntilAttackReady <= 1);
+                if (swingNow && isUp()) { await client.ReleaseUseItemAsync(ct); setUp(false); }
+                else if (!swingNow && !isUp()) { await client.UseItemAsync(Hand.Off, ct); setUp(true); }
+            }
             if (d > 2.8)
             {
                 using var hop = CancellationTokenSource.CreateLinkedTokenSource(ct);
@@ -333,7 +377,7 @@ public sealed class Skills(MinecraftClient client)
             client.LookAt(t.X, t.Y + t.Type.Height * 0.5, t.Z);
             // Jump as the charge is about to complete and hit on the way down: a critical hit (x1.5) at no cost
             // in attack rate. Not on creepers (stay mobile) or when up close to several mobs.
-            if (client.OnGround && client.TicksUntilAttackReady <= 7 && t.Name != "minecraft:creeper" && d < 2.6)
+            if (!shield && client.OnGround && client.TicksUntilAttackReady <= 7 && t.Name != "minecraft:creeper" && d < 2.6)
                 await client.CritAttackAsync(t, ct);
             else if (client.AttackReady) await client.AttackAsync(t, ct);
             await client.WaitTicksAsync(1, ct);
@@ -355,6 +399,7 @@ public sealed class Skills(MinecraftClient client)
         var kills = 0;
         var lost = 0;
         await EquipWeaponAsync(ct);
+        await EquipShieldAsync(ct);       // a shield, when we carry one, goes to the off hand for any fight
         while (!ct.IsCancellationRequested)
         {
             var p = Ward();
@@ -1249,7 +1294,7 @@ public sealed class Skills(MinecraftClient client)
         int planted = 0, skipped = 0;
         foreach (var (x, z) in cells)
         {
-            if (ct.IsCancellationRequested || client.Inventory.Count(choice.Seed) == 0) break;
+            if (ct.IsCancellationRequested || client.Inventory.Count(choice.Seed) == 0 || planted >= seeds) break;       // planted >= seeds: the server's inventory update for the last seed can lag, and a ninth block was tilled with no seed left (a flaky test, 2026-10-15)
             if (water && x == cx && z == cz) continue;
             if (!Tillable(x, gy - 1, z)) { skipped++; continue; }
             // Tall grass and flowers on top stop a hoe: break them first (instant).
