@@ -369,6 +369,18 @@ public sealed partial class Skills(MinecraftClient client)
         while (client.Entities.TryGetValue(id, out var t) && !ct.IsCancellationRequested)
         {
             if (client.Health < 6 || (keepGoing != null && !keepGoing(t))) return false;
+            // A creeper whose fuse is burning (it is within 3 blocks of us): run until its fuse stops, then carry on. (The brain's reflex does the same; a fight run on its own needs it too.)
+            // Hit it once first when it is in reach and the sword is ready (the blow knocks it back; the fuse is 1.5 s and a run of eight blocks takes less): hit and run, until it falls.
+            if (LitCreeper(5) is { } lit)
+            {
+                if (lit.DistanceTo(client.Position.X, client.Position.Y, client.Position.Z) < 2.9 && client.AttackReady)
+                {
+                    client.LookAt(lit.X, lit.Y + lit.Type.Height * 0.5, lit.Z);
+                    await client.AttackAsync(lit, ct);
+                }
+                await EscapeCreeperAsync(lit.Id, ct);
+                continue;
+            }
             var d = t.DistanceTo(client.Position.X, client.Position.Y, client.Position.Z);
             // The shield is up from the moment the mob is coming (hits land while we are still walking up to it) and down only for the swing itself.
             if (shield)
@@ -426,6 +438,18 @@ public sealed partial class Skills(MinecraftClient client)
                 .OrderBy(e => e.DistanceTo(p.X, p.Y, p.Z)).FirstOrDefault();
             if (threat != null)
             {
+                // A creeper (it must reach us to hurt) or a skeleton (it shoots) is better dealt with from a distance, when we have the bow for it.
+                var (gx, gy, gz) = client.Position;
+                if (threat.DistanceTo(gx, gy, gz) > 6 && threat.Name is "minecraft:creeper" or "minecraft:skeleton" or "minecraft:stray" or "minecraft:bogged"
+                    && Have(s => s.Name == "minecraft:bow") > 0 && Have(s => s.Name == "minecraft:arrow") > 0)
+                {
+                    using var volley = CancellationTokenSource.CreateLinkedTokenSource(ct);
+                    volley.CancelAfter(TimeSpan.FromSeconds(12));
+                    try { var (_, shot) = await ShootAsync(threat.Name.Bare(), volley.Token); if (shot.Contains("brought down")) kills++; }
+                    catch (OperationCanceledException) when (!ct.IsCancellationRequested) { }
+                    await EquipWeaponAsync(ct);
+                    continue;
+                }
                 if (await FightAsync(threat.Id, e => Ward() is { } w && e.DistanceTo(w.X, w.Y, w.Z) < 16, ct)) kills++;
                 continue;
             }

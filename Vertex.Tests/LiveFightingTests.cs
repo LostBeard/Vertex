@@ -133,4 +133,51 @@ public class LiveFightingTests
         Assert.That(none, Is.False);
         Assert.That(c, Does.Contain("don't see any creeper"));
     }
+
+    [Test]
+    public async Task GuardShootsACreeperComingForItsFriend_BeforeItIsClose() => await GuardAgainstACreeperAsync("VertexGuardArch", bow: true);
+
+    [Test]
+    public async Task GuardWithoutABow_Baseline() => await GuardAgainstACreeperAsync("VertexGuardHand", bow: false);
+
+    private async Task GuardAgainstACreeperAsync(string name, bool bow)
+    {
+        var (client, ax, az) = await JoinOnArenaAsync(name);
+        await using var _ = client;
+        await Task.Delay(1500);
+        var friend = new MinecraftClient(GameProfile.Offline("AubriWard"));
+        using var cts0 = new CancellationTokenSource(Timeout);
+        await friend.ConnectAsync("127.0.0.1", Port, cts0.Token);
+        await using var _f = friend;
+        await _server.CommandAsync($"tp AubriWard {ax + 2.5} 200 {az + 0.5}");
+        if (bow)
+        {
+            await GiveAsync(client, name, "minecraft:bow", 1);
+            await GiveAsync(client, name, "minecraft:arrow", 32);
+        }
+        await GiveAsync(client, name, "minecraft:iron_sword", 1);
+        await Wait.UntilAsync(() => client.Entities.Values.Any(e => e.PlayerName == "AubriWard"), Timeout, () => "Vertex sees its friend");
+        var skills = new Skills(client);
+        var health = client.Health;
+
+        using var guardCts = new CancellationTokenSource();
+        var guard = skills.GuardAsync("AubriWard", guardCts.Token);
+        await _server.CommandAsync($"summon minecraft:creeper {ax - 13.5} 200 {az + 0.5}");
+        await Wait.UntilAsync(() => client.Entities.Values.Any(e => e.Name == "minecraft:creeper"), Timeout, () => "the creeper");
+        // It walks in (13 blocks off: a creeper only notices a player within 16); Vertex should bring it down.
+        var watchStart = DateTime.UtcNow;
+        while (DateTime.UtcNow - watchStart < TimeSpan.FromSeconds(40) && client.Entities.Values.Any(e => e.Name == "minecraft:creeper" && e.Health is not <= 0))
+        {
+            var cr = client.Entities.Values.FirstOrDefault(e => e.Name == "minecraft:creeper");
+            if (cr != null) TestContext.Out.WriteLine($"t+{(DateTime.UtcNow - watchStart).TotalSeconds:0.0}s creeper {cr.DistanceTo(client.Position.X, client.Position.Y, client.Position.Z):0.0} away, swell {(cr.Metadata.TryGetValue(16, out var sw) ? sw : "?")}, hp {cr.Health}; me {client.Health} at {client.Position.X:0.0},{client.Position.Z:0.0}");
+            await Task.Delay(1000);
+        }
+        var lowest = client.Health;
+        guardCts.Cancel();
+        try { await guard; } catch (OperationCanceledException) { }
+        TestContext.Out.WriteLine($"health {health} -> {lowest}; arrows left {client.Inventory.Count("arrow")}");
+        Assert.That(await ServerSaysAsync("execute unless entity @e[type=minecraft:creeper]"), Is.True, "the server has no creeper left");
+        if (bow) Assert.That(client.Inventory.Count("arrow"), Is.LessThan(32), "it shot");
+        Assert.That(client.Health, Is.GreaterThanOrEqualTo(health - 2), "and was not blown up: it never let the creeper close");
+    }
 }
