@@ -329,6 +329,15 @@ public class VertexUnitTests
     }
 
     [Test]
+    public void Brain_NoticesWhenItSaysItCannotWithoutTrying()
+    {
+        foreach (var t in new[] { "I don't have any sheep nearby to shear.", "I need a bucket to milk the cow.", "I couldn't find any wood.", "I don't know how to do that." })
+            Assert.That(Companion.ClaimsInability(t), Is.True, t);
+        foreach (var t in new[] { "Hi Aubri!", "I like the castle.", "That sounds great!" })
+            Assert.That(Companion.ClaimsInability(t), Is.False, t);
+    }
+
+    [Test]
     public void Brain_RequestsEndingInAQuestionMarkAreStillRequests()
     {
         foreach (var q in new[] { "Vertex, can you milk the cow?", "could you get me wood?", "Will you build a house please?" })

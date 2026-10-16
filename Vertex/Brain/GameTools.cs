@@ -254,7 +254,7 @@ public static class GameTools
 
         yield return new GameTool("build_shape",
             "Build near the player: a house (cabin), platform, pyramid or castle. shape 'continue' (and nothing else) when asked to keep building / carry on / finish the last build. Uses the wood or stone we carry most of unless a material is named.",
-            """{"type":"object","properties":{"shape":{"type":"string","description":"house, platform, pyramid, castle, or continue"},"size":{"type":"integer","description":"blocks wide (optional)"},"material":{"type":"string","description":"e.g. cobblestone, wood (optional)"}},"required":["shape"]}""",
+            """{"type":"object","properties":{"shape":{"type":"string","description":"house, platform, pyramid, castle, or continue; with the material in front if one was asked for, e.g. 'stone castle'"}},"required":["shape"]}""",
             a =>
             {
                 var p = Who(a);
@@ -266,6 +266,16 @@ public static class GameTools
                 }
                 int size = Int(a, "size", 0);
                 var material = Str(a, "material");
+                // One argument is all the schema asks for (an 8B model garbled the optional ones: a trailing comma made the call unreadable), so the material comes in the same words
+                // as the shape: "stone castle" is the shape castle in stone.
+                var words = shape.Split([' ', '_', '-'], StringSplitOptions.RemoveEmptyEntries);
+                var kindWord = words.LastOrDefault(w => BuildShapes.Normalize(w) != null);
+                if (kindWord != null && words.Length > 1)
+                {
+                    material ??= string.Join(" ", words.Where(w => !ReferenceEquals(w, kindWord) && w.ToLowerInvariant() is not ("a" or "an" or "the" or "little" or "small" or "big" or "large" or "nice" or "new")));
+                    if (string.IsNullOrWhiteSpace(material)) material = null;
+                    shape = kindWord;
+                }
                 tasks.Start($"building a {shape}", ct => skills.BuildShapeAsync(shape, size, 0, 0, material, null, null, p, ct));
                 return Task.FromResult($"OK: I started building a {shape}. It takes a while; I will say when I am done.");
             });

@@ -466,7 +466,7 @@ public sealed class Companion : IAsyncDisposable
         var askedAQuestion = IsRealQuestion(userMessage);
         // An 8B model sometimes SAYS it is doing something ("I'm on my way") without calling a tool, and then nothing
         // happens (seen 2026-10-11 in BrainTests.ComeHere). Once, tell it so and let it call the tool.
-        if (allowTools && !askedAQuestion && Volatile.Read(ref _toolRuns) == runsBefore && ClaimsAction(reply))
+        if (allowTools && !askedAQuestion && Volatile.Read(ref _toolRuns) == runsBefore && (ClaimsAction(reply) || ClaimsInability(reply)))
         {
             Log?.Invoke("  (said it would act but called no tool: asking again)");
             messages.Add(new AiChatMessage("assistant", reply));
@@ -666,6 +666,23 @@ public sealed class Companion : IAsyncDisposable
     private static readonly System.Text.RegularExpressions.Regex DoingSomething = new(
         @"\bi(?:'m| am| am now| am still) (?!feeling|doing (great|good|fine|well|okay)|having|glad|happy|so |just |not |thinking|looking forward|sorry|sure|afraid)[a-z]+ing\b",
         System.Text.RegularExpressions.RegexOptions.Compiled);
+
+    private static readonly string[] InabilityClaims =
+    [
+        "i don't have any", "i do not have any", "i don't see any", "i do not see any", "i can't find", "i couldn't find", "i need a ", "i need an ", "i'm not able", "i am not able",
+        "i can't do that", "i cannot do that", "i don't know how",
+    ];
+
+    /// <summary>
+    /// Whether a reply says Vertex cannot do what was asked, WITHOUT having tried. An 8B model answers "I don't have any sheep nearby to shear" from the memory of an earlier turn's
+    /// result instead of calling the tool again (MEASURED 2026-10-15: shear and milk, two of the three tool-choice misses). The retry asks it to call the tool, which tells the truth;
+    /// unlike <see cref="ClaimsAction"/> this is never treated as a false claim afterwards, because "I don't have a bow" can be exactly right.
+    /// </summary>
+    public static bool ClaimsInability(string reply)
+    {
+        var r = " " + reply.ToLowerInvariant().Replace('’', '\'') + " ";
+        return InabilityClaims.Any(r.Contains);
+    }
 
     /// <summary>Whether a reply says Vertex is doing (or about to do) something.</summary>
     public static bool ClaimsAction(string reply)
