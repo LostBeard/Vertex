@@ -743,8 +743,12 @@ public sealed partial class Skills(MinecraftClient client)
         };
         var script = BuildShapes.Script(kind, w, d, h, wallName, roof, side,
             windows: Have(s => s.Name == "minecraft:glass") >= 3, door: Have(Blueprints.IsDoor) > 0, torch: Have(s => s.Name == "minecraft:torch") > 0);
+        // Wood or stone that is missing is fetched first (the spot is already chosen, so the walk to the trees does not lose it).
+        var (gathered, gatherNote) = await GatherForBuildAsync(script, ct);
+        if (!gathered) return (false, gatherNote!);
         var (ok, text) = await BuildAtAsync(script, site, ct);
-        if (!ok) return (false, text.Replace("build that", $"build a {w} by {d} {wallPretty} {kind}"));
+        if (!ok) return (false, (gatherNote == null ? "" : gatherNote + " ") + text.Replace("build that", $"build a {w} by {d} {wallPretty} {kind}"));
+        if (gatherNote != null) text = gatherNote + " " + text;
         return (true, $"{text} It is a {wallPretty} {kind}" + (kind is "house" or "castle" ? $", with the {(kind == "castle" ? "gate" : "door")} on the {Name(side)} side." : "."));
     }
 
