@@ -327,7 +327,7 @@ public static class GameTools
             });
 
         yield return new GameTool("animals",
-            "Farm animals. action 'breed' (feeds two adults their food so a baby is born; animal = cow, sheep, pig, chicken...), 'shear' (sheep, needs shears), 'milk' (a cow, needs a bucket).",
+            "Milk a cow, shear a sheep, or breed farm animals. action 'milk' (a cow; needs a bucket), 'shear' (a sheep; needs shears), 'breed' (feeds two adults their food so a baby is born; animal = cow, sheep, pig, chicken...).",
             """{"type":"object","properties":{"action":{"type":"string","enum":["breed","shear","milk"]},"animal":{"type":"string","description":"for breed: cow, sheep, pig, chicken, rabbit or goat"}},"required":["action"]}""",
             a =>
             {
