@@ -55,6 +55,12 @@ public sealed class Companion : IAsyncDisposable
     public const int MaxHistory = 24;
 
     public VertexAi Ai { get; }
+
+    /// <summary>
+    /// The repetition penalty of the reply sampler. It also punishes tokens that are already in the PROMPT, and the prompt holds a 4,000-token tool list full of quotes, braces and
+    /// parameter names: a penalty on those pushes a tool call's arguments toward gibberish (seen 2026-10-15: a correct build_shape call turning into token soup in an optional argument).
+    /// </summary>
+    public float RepetitionPenalty { get; set; } = 1.1f;
     public CharacterStore Characters { get; }
     public Character Character { get; private set; }
     /// <summary>The chat model (an Ollama-cache name such as "llama3.1:8b").</summary>
@@ -614,7 +620,7 @@ public sealed class Companion : IAsyncDisposable
             {
                 Model = Model,
                 Messages = messages,
-                Options = new AiGenerationOptions { MaxOutputTokens = 220, Strategy = "top_p", Temperature = 0.7f, TopP = 0.9f, RepetitionPenalty = 1.1f },
+                Options = new AiGenerationOptions { MaxOutputTokens = 220, Strategy = "top_p", Temperature = 0.7f, TopP = 0.9f, RepetitionPenalty = RepetitionPenalty },
             }, OnDelta, ct);
         }
         finally
