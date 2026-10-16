@@ -82,10 +82,6 @@ public class DevServerScenarioTests
         Assert.That(door, Does.Contain("Test passed"), "the doorway has its door");
     }
 
-    /// <summary>
-    /// KNOWN FAILING on the dev world (2026-10-15): the water hole in the middle of the field ends up one block deeper than the soil and Vertex is stuck swimming in it, so it never reaches the
-    /// pen. The same skill passes on Paper's test arena (LiveFarmingTests); cause not found yet (the column dump below shows what the server has).
-    /// </summary>
     [Test]
     public async Task AFarmWithAPenOnTheDevWorld_FieldIsSownAndTheCowsHaveABaby()
     {
@@ -102,6 +98,7 @@ public class DevServerScenarioTests
         await rcon.CommandAsync("difficulty peaceful");       // hostile mobs (slimes spawn on a flat world's slime chunks) killed Vertex mid-run; restored in the finally below
         await rcon.CommandAsync("kill @e[type=minecraft:cow]");
         await rcon.CommandAsync("fill 30 -60 20 50 -50 40 minecraft:air");
+        await rcon.CommandAsync("fill 30 -63 20 50 -62 40 minecraft:dirt");       // also what the last run left below the soil: its water hole (stale water under the new hole sent Vertex swimming)
         await rcon.CommandAsync("fill 30 -61 20 50 -61 40 minecraft:grass_block");
         // A ring, not a filled box ("hollow" of a box only 2 high is all shell: AubsCraft's viewer showed a lattice of fences with the cows inside the blocks).
         await rcon.CommandAsync("fill 35 -60 33 39 -59 37 minecraft:oak_fence");

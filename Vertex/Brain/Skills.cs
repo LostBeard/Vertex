@@ -1230,8 +1230,6 @@ public sealed class Skills(MinecraftClient client)
             if (await client.DigAsync(cx, gy - 1, cz, ct))
             {
                 await PickUpNearbyAsync(cx, gy - 1, cz, ct);
-                // OPEN (2026-10-15): on the AubsCraft dev world (flat, grass at y -61) the hole ends up one block deeper than the soil, with the water at its bottom and Vertex stuck in it; on
-                // Paper's test arena it is right. Climbing out to the rim before pouring made the Paper runs fail, so it is not in.
                 if (await client.EquipAsync(s => s.Name == "minecraft:water_bucket", ct))
                 {
                     client.LookAt(cx + 0.5, gy - 1.0, cz + 0.5);
