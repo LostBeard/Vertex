@@ -253,7 +253,7 @@ public static class GameTools
             });
 
         yield return new GameTool("build_shape",
-            "Build near the player: a house (cabin), platform, pyramid or castle. shape 'continue' carries on with the last build. Uses the wood or stone we carry most of unless a material is named.",
+            "Build near the player: a house (cabin), platform, pyramid or castle. shape 'continue' (and nothing else) when asked to keep building / carry on / finish the last build. Uses the wood or stone we carry most of unless a material is named.",
             """{"type":"object","properties":{"shape":{"type":"string","description":"house, platform, pyramid, castle, or continue"},"size":{"type":"integer","description":"blocks wide (optional)"},"material":{"type":"string","description":"e.g. cobblestone, wood (optional)"}},"required":["shape"]}""",
             a =>
             {
@@ -283,7 +283,7 @@ public static class GameTools
                 });
 
         yield return new GameTool("trade",
-            "Talk to the nearest villager or trader. With no arguments: look at what it trades. 'want' = what to get (emerald, bread), 'give' = what to hand over (wheat); either or both.",
+            "Talk to the nearest villager or trader. With no arguments: look at what it sells or offers (use this for 'what does the villager sell?'). 'want' = what to get (emerald, bread), 'give' = what to hand over (wheat); either or both.",
             """{"type":"object","properties":{"want":{"type":"string","description":"what to get, e.g. emerald, bread"},"give":{"type":"string","description":"what to hand over, e.g. wheat"},"count":{"type":"integer","description":"how many (0 = sell all)"}}}""",
             a =>
             {

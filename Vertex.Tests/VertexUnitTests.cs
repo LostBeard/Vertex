@@ -322,9 +322,9 @@ public class VertexUnitTests
     [Test]
     public void Brain_NoticesWhenItClaimsAnActionInWords()
     {
-        foreach (var r in new[] { "I'm on my way.", "I'll get you some wood!", "Coming!", "Let me grab that.", "I’m following you, Aubs!", "I remember, Aubri loves pink axolotls.", "I remember that you love pink axolotls.", "Noted!", "I'm collecting wood for Aubri.", "I'm putting torches around us so it's not dark.", "I'm waiting for a sheep to be close by so I can shear it.", "I'm on my way to milk the cow." })
+        foreach (var r in new[] { "I'm on my way.", "I'll get you some wood!", "Coming!", "Let me grab that.", "I’m following you, Aubs!", "I remember, Aubri loves pink axolotls.", "I remember that you love pink axolotls.", "Noted!", "I'm collecting wood for Aubri.", "I am shearing the sheep.", "I am lighting up the area around me with torches.", "I'm putting torches around us so it's not dark.", "I'm waiting for a sheep to be close by so I can shear it.", "I'm on my way to milk the cow." })
             Assert.That(VertexBrain.ClaimsAction(r), r);
-        foreach (var r in new[] { "Hi Aubri!", "I like turtles too.", "It's night time now.", "That was fun!", "Let me know if you need anything.", "I remember the castle we built!", "That is annotated.", "I'm feeling great!", "I'm so happy you are here.", "I'm doing fine, thanks." })
+        foreach (var r in new[] { "Hi Aubri!", "I like turtles too.", "It's night time now.", "That was fun!", "Let me know if you need anything.", "I remember the castle we built!", "That is annotated.", "I'm feeling great!", "I am so glad to see you.", "I am not sure.", "I'm so happy you are here.", "I'm doing fine, thanks." })
             Assert.That(VertexBrain.ClaimsAction(r), Is.False, r);
     }
 

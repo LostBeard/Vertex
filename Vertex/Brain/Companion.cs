@@ -664,7 +664,7 @@ public sealed class Companion : IAsyncDisposable
 
     /// <summary>"I'm putting torches around us", "I'm waiting for a sheep": any "I'm (something)ing" that is not a feeling (the phrase list above cannot name every verb; MEASURED 2026-10-15, ToolChoiceTests).</summary>
     private static readonly System.Text.RegularExpressions.Regex DoingSomething = new(
-        @"\bi'm (?!feeling|doing (great|good|fine|well|okay)|having|glad|happy|so |just |not |thinking|looking forward|sorry|sure|afraid)[a-z]+ing\b",
+        @"\bi(?:'m| am| am now| am still) (?!feeling|doing (great|good|fine|well|okay)|having|glad|happy|so |just |not |thinking|looking forward|sorry|sure|afraid)[a-z]+ing\b",
         System.Text.RegularExpressions.RegexOptions.Compiled);
 
     /// <summary>Whether a reply says Vertex is doing (or about to do) something.</summary>
