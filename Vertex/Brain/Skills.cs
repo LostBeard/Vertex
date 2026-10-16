@@ -204,10 +204,14 @@ public sealed class Skills(MinecraftClient client)
         var broken = 0;
         var failures = 0;
         var tried = new HashSet<(int, int, int)>();
+        var nextToLava = 0;
         while (broken < count && failures < 6 && !ct.IsCancellationRequested)
         {
-            var targets = client.World.FindBlocks(Wanted, client.Position, 48, 32)
-                .Where(p => !tried.Contains(p)).ToList();
+            var found = client.World.FindBlocks(Wanted, client.Position, 48, 32).Where(p => !tried.Contains(p)).ToList();
+            // Opening a block with lava beside it (or lava above it, which falls in) lets the lava out onto whoever is digging: leave it (found 2026-10-15: a diamond ringed with lava took 11 of 20 health).
+            var targets = found.Where(p => !LavaAround(p.Item1, p.Item2, p.Item3)).ToList();
+            nextToLava += found.Count - targets.Count;
+            foreach (var skipped in found.Except(targets)) tried.Add(skipped);
             if (targets.Count == 0) break;
             var (bx, by, bz) = targets[0];
             tried.Add((bx, by, bz));
@@ -233,9 +237,17 @@ public sealed class Skills(MinecraftClient client)
             else failures++;
         }
         var have = InventorySummary();
+        var lavaNote = nextToLava > 0 ? $" {nextToLava} {(nextToLava == 1 ? "was" : "were")} next to lava, so I left {(nextToLava == 1 ? "it" : "them")} alone." : "";
         return broken > 0
-            ? (broken >= count, $"I mined {broken} {what}{(broken < count ? $" (wanted {count}, couldn't find more nearby)" : "")}. I have: {have}.")
-            : (false, $"I couldn't find any {what} I could reach nearby.");
+            ? (broken >= count, $"I mined {broken} {what}{(broken < count ? $" (wanted {count}, couldn't find more nearby)" : "")}. I have: {have}.{lavaNote}")
+            : (false, nextToLava > 0 ? $"I won't mine that {what}: it is next to lava, which would pour out onto me." : $"I couldn't find any {what} I could reach nearby.");
+    }
+
+    /// <summary>Lava beside a block, below it, or above it (two up: it flows down into the hole once the block is gone).</summary>
+    private bool LavaAround(int x, int y, int z)
+    {
+        bool Lava(int dx, int dy, int dz) => client.World.GetState(x + dx, y + dy, z + dz) is var s && s > 0 && (D.StateFlags[s] & GameData.FlagLava) != 0;
+        return Lava(1, 0, 0) || Lava(-1, 0, 0) || Lava(0, 0, 1) || Lava(0, 0, -1) || Lava(0, -1, 0) || Lava(0, 1, 0) || Lava(0, 2, 0);
     }
 
     /// <summary>Walks over the item drops near a spot.</summary>
@@ -246,7 +258,8 @@ public sealed class Skills(MinecraftClient client)
         {
             var drop = client.Entities.Values.Where(e => e.IsItem && e.DistanceTo(x + 0.5, y + 0.5, z + 0.5) < 5).OrderBy(e => e.DistanceTo(x + 0.5, y, z + 0.5)).FirstOrDefault();
             if (drop == null) return;
-            await client.GoToAsync(Goal.Near(drop.X, drop.Y, drop.Z, 0.8), new PathOptions { MaxNodes = 5_000 }, ct);
+            // Digging allowed: a drop from ore reached from a few blocks away lies in the sealed pocket the ore left (found 2026-10-15: a diamond mined from above was never picked up).
+            await client.GoToAsync(Goal.Near(drop.X, drop.Y, drop.Z, 0.8), new PathOptions { MaxNodes = 5_000, CanDig = true }, ct);
             await client.WaitTicksAsync(3, ct);
         }
     }
