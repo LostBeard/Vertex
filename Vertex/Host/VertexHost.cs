@@ -405,7 +405,8 @@ public sealed class VertexHost : IAsyncDisposable
         if (_robot != null) where.Add("Reachy Mini");
         if (_brain != null && _client != null) where.Add($"Minecraft ({_client.Profile.Name} on {Settings.Server})");
         var name = _companion?.Character.Name ?? Settings.Character;
-        return where.Count == 0 ? $"On as {name} (talk to it here)" : $"On as {name}: {string.Join(" + ", where)}";
+        var status = where.Count == 0 ? $"On as {name} (talk to it here)" : $"On as {name}: {string.Join(" + ", where)}";
+        return _rejoinNote == null ? status : $"{status} - {_rejoinNote} ({Settings.Server})";
     }
 
     /// <summary>Loads the AI (GPU) once and lists the chat models.</summary>
@@ -488,6 +489,7 @@ public sealed class VertexHost : IAsyncDisposable
     /// <summary>Joins the Minecraft server while Vertex is on.</summary>
     public Task JoinGameAsync() => WhileOnAsync("Joining the game...", async () =>
     {
+        CancelRejoin(); // a person pressing Join takes over from a pending automatic rejoin
         Settings.Minecraft = true;
         Settings.Save();
         await JoinGameCoreAsync();
@@ -496,6 +498,7 @@ public sealed class VertexHost : IAsyncDisposable
     /// <summary>Leaves the Minecraft server; Vertex stays on (robot, panel).</summary>
     public Task LeaveGameAsync() => WhileOnAsync("Leaving the game...", async () =>
     {
+        CancelRejoin(); // leaving on purpose means staying out
         Settings.Minecraft = false;
         Settings.Save();
         await LeaveGameCoreAsync();
@@ -609,7 +612,7 @@ public sealed class VertexHost : IAsyncDisposable
             _client.ChatReceived += m => Add(LineKind.Chat, m.Text);
             var client = _client;
             // Kicked or the server went away: leave the game, Vertex stays on.
-            _client.Disconnected += r => { Add(LineKind.System, "disconnected: " + r); _ = Task.Run(() => LeftGameAsync(client)); };
+            _client.Disconnected += r => { Add(LineKind.System, "disconnected: " + r); _ = Task.Run(() => LeftGameAsync(client, r)); };
             if (Settings.Voice)
             {
                 _voice = new SimpleVoiceChat(_client, Settings.Server);
@@ -630,7 +633,7 @@ public sealed class VertexHost : IAsyncDisposable
     }
 
     /// <summary>The server dropped Vertex: tidy up the game, if it is still the same one.</summary>
-    private async Task LeftGameAsync(MinecraftClient client)
+    private async Task LeftGameAsync(MinecraftClient client, string? reason)
     {
         await _gate.WaitAsync();
         try
@@ -638,8 +641,70 @@ public sealed class VertexHost : IAsyncDisposable
             if (_client != client) return;
             await LeaveGameCoreAsync();
             if (State == HostState.Playing) SetStatus(HostState.Playing, OnStatus());
+            // The server went away (a restart, a network drop, a proxy cutting the connection) while Vertex was meant to be in the game: go back by itself, instead of waiting for
+            // someone to press Join. Not after a ban, a kick or a missing sign-in, which are the server's answer, and never after a Leave or Stop (they cancel this).
+            if (State == HostState.Playing && Settings.Minecraft && ShouldRejoin(reason)) ScheduleRejoin();
+            else if (Settings.Minecraft) Add(LineKind.System, "not rejoining by itself: " + reason);
         }
         finally { _gate.Release(); }
+    }
+
+    /// <summary>Whether a disconnect reason is worth going back after. A ban, a kick, a whitelist or a sign-in problem is an answer, not an accident.</summary>
+    internal static bool ShouldRejoin(string? reason)
+    {
+        if (string.IsNullOrWhiteSpace(reason)) return true;
+        var r = reason.ToLowerInvariant();
+        string[] answers = ["banned", "ban ", "white-list", "whitelist", "sign in", "online mode", "invalid session", "outdated", "incompatible", "requires", "kicked", "not authorized", "disconnected by client"];
+        return !answers.Any(r.Contains);
+    }
+
+    /// <summary>The wait before rejoin attempt number <c>attempt</c> (0 is the first): 15 s, 30 s, 1 min, 2 min, then every 5 min. Tests shorten it.</summary>
+    internal Func<int, TimeSpan> RejoinDelay { get; set; } = attempt => attempt switch { 0 => TimeSpan.FromSeconds(15), 1 => TimeSpan.FromSeconds(30), 2 => TimeSpan.FromMinutes(1), 3 => TimeSpan.FromMinutes(2), _ => TimeSpan.FromMinutes(5) };
+
+    private CancellationTokenSource? _rejoinCts;
+    private string? _rejoinNote;
+
+    private void CancelRejoin()
+    {
+        Interlocked.Exchange(ref _rejoinCts, null)?.Cancel();
+        _rejoinNote = null;
+    }
+
+    private void ScheduleRejoin()
+    {
+        CancelRejoin();
+        var cts = _rejoinCts = new CancellationTokenSource();
+        _ = Task.Run(async () =>
+        {
+            for (var attempt = 0; !cts.IsCancellationRequested; attempt++)
+            {
+                var delay = RejoinDelay(attempt);
+                _rejoinNote = $"rejoining in {delay.TotalSeconds:0} s";
+                SetStatus(State, OnStatus());
+                try { await Task.Delay(delay, cts.Token); }
+                catch (OperationCanceledException) { return; }
+                try
+                {
+                    await _gate.WaitAsync(cts.Token);
+                    try
+                    {
+                        // Everything may have changed while waiting: Stop, Leave, a person pressing Join.
+                        if (cts.IsCancellationRequested || State != HostState.Playing || !Settings.Minecraft) return;
+                        if (_client != null) return;
+                        _rejoinNote = "rejoining...";
+                        SetStatus(HostState.Playing, OnStatus());
+                        await JoinGameCoreAsync();
+                        _rejoinNote = null;
+                        Add(LineKind.System, "rejoined " + Settings.Server);
+                        SetStatus(HostState.Playing, OnStatus());
+                        return;
+                    }
+                    finally { _gate.Release(); }
+                }
+                catch (OperationCanceledException) { return; }
+                catch (Exception e) { Add(LineKind.System, $"could not rejoin {Settings.Server} yet: {e.Message}"); }
+            }
+        });
     }
 
     private async Task LeaveGameCoreAsync()
@@ -763,6 +828,7 @@ public sealed class VertexHost : IAsyncDisposable
 
     private async Task TearDownAsync()
     {
+        CancelRejoin();
         // The conversation stops first (no more turns, the mouth falls silent), so taking the bodies away does not
         // prefill a prompt for nobody; then the game is left and the robot parked.
         var companion = _companion;
@@ -805,6 +871,7 @@ public sealed class VertexHost : IAsyncDisposable
     public async ValueTask DisposeAsync()
     {
         CancelUnload();
+        CancelRejoin();
         await TearDownAsync();
         if (_ai != null) await _ai.DisposeAsync();
     }
