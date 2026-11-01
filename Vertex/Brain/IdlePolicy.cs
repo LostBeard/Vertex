@@ -9,6 +9,8 @@ public enum IdleAction
     WorkOnGoal,
     /// <summary>Be curious: feel out the unknown blocks nearby.</summary>
     StudyBlocks,
+    /// <summary>Nothing to do and nobody needing it for a good while: pick a small project of its own (self-directed play).</summary>
+    ChooseProject,
 }
 
 /// <summary>
@@ -17,10 +19,15 @@ public enum IdleAction
 /// </summary>
 public static class IdlePolicy
 {
-    public static IdleAction Decide(bool staying, bool busy, bool goalQueued, bool spawned, TimeSpan idleFor, TimeSpan idleBeforeActing, bool hasGoal, bool studyWhenIdle, bool hasUnstudiedBlocks)
+    /// <param name="selfDirected">Self-directed play is on (off by default: it is the person's choice to let Vertex play on its own).</param>
+    /// <param name="idleBeforeProject">How long nothing may have needed Vertex before it chooses a project (longer than for a goal it already has).</param>
+    /// <param name="fit">Healthy, fed, daytime and the project cooldown over: the conditions the brain checks that are not about time idle.</param>
+    public static IdleAction Decide(bool staying, bool busy, bool goalQueued, bool spawned, TimeSpan idleFor, TimeSpan idleBeforeActing, bool hasGoal, bool studyWhenIdle, bool hasUnstudiedBlocks,
+        bool selfDirected = false, TimeSpan idleBeforeProject = default, bool fit = false)
     {
         if (staying || busy || goalQueued || !spawned || idleFor < idleBeforeActing) return IdleAction.Nothing;
         if (hasGoal) return IdleAction.WorkOnGoal;
-        return studyWhenIdle && hasUnstudiedBlocks ? IdleAction.StudyBlocks : IdleAction.Nothing;
+        if (studyWhenIdle && hasUnstudiedBlocks) return IdleAction.StudyBlocks;
+        return selfDirected && fit && idleFor >= idleBeforeProject ? IdleAction.ChooseProject : IdleAction.Nothing;
     }
 }

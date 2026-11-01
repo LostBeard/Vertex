@@ -34,6 +34,11 @@ public sealed class VertexSettings
     public bool Voice { get; set; } = true;
     /// <summary>Join the Minecraft server on start (Vertex runs without a game too: through the robot and this panel).</summary>
     public bool Minecraft { get; set; }
+    /// <summary>
+    /// Let Vertex play on its own in the game: when nobody has needed it for a while and it has no goal, it chooses one small project (build something little, explore, gather, fish, farm)
+    /// and does it. Only in survival, by day, healthy and fed; a person talking to it, "stay" or a goal always outrank it. Off by default.
+    /// </summary>
+    public bool SelfDirectedPlay { get; set; }
     /// <summary>Use the Reachy Mini as Vertex's body at home: its microphone, speaker and body language.</summary>
     public bool Reachy { get; set; } = true;
     /// <summary>The robot's address on the LAN.</summary>
@@ -273,6 +278,15 @@ public sealed class VertexHost : IAsyncDisposable
             Add(LineKind.Error, $"could not install {name}: {e.Message}");
         }
         finally { _installCts = null; Changed?.Invoke(); }
+    }
+
+    /// <summary>Turns self-directed play on or off, now (the brain in the game follows at once) and for next time.</summary>
+    public void SetSelfDirectedPlay(bool on)
+    {
+        Settings.SelfDirectedPlay = on;
+        Settings.Save();
+        if (_brain != null) _brain.SelfDirectedPlay = on;
+        Add(LineKind.System, on ? "playing on my own when nobody needs me" : "not playing on my own any more");
     }
 
     /// <summary>Stops a running model install; the downloaded part is kept.</summary>
@@ -618,7 +632,7 @@ public sealed class VertexHost : IAsyncDisposable
                 _voice = new SimpleVoiceChat(_client, Settings.Server);
                 _voice.Log += m => Add(LineKind.System, "voice: " + m);
             }
-            _brain = new VertexBrain(_client, _voice, _companion, $"{Settings.Server}_{Settings.Port}");
+            _brain = new VertexBrain(_client, _voice, _companion, $"{Settings.Server}_{Settings.Port}") { SelfDirectedPlay = Settings.SelfDirectedPlay };
             _brain.Log += AddLog;
             await _client.ConnectAsync(Settings.Server, Settings.Port);
             _brain.Start();

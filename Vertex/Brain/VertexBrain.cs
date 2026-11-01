@@ -13,6 +13,8 @@ public sealed record TaskEvent(TaskOutcome Outcome) : BrainEvent;
 public sealed record JoinedEvent(PlayerMemory Player, DateTime? LastSeen) : BrainEvent;
 /// <summary>Nobody needs Vertex right now: time to work on a long-running goal.</summary>
 public sealed record GoalEvent(Objective Goal) : BrainEvent;
+/// <summary>Nobody has needed Vertex for a long while and it has no goal: it may choose a small project of its own (self-directed play).</summary>
+public sealed record OwnProjectEvent : BrainEvent;
 
 /// <summary>
 /// Vertex in a Minecraft world: the body the <see cref="Companion"/> plays through there. Hears players' voice and
@@ -57,6 +59,20 @@ public sealed class VertexBrain : IBody
 
     /// <summary>When idle with no goal, study unknown (modded) blocks nearby by touch.</summary>
     public bool StudyWhenIdle { get; set; } = true;
+
+    /// <summary>
+    /// Self-directed play: with no goal and nobody needing it for <see cref="SelfDirectedIdle"/>, Vertex chooses ONE small project of its own (build something little, explore a direction, gather,
+    /// fish, farm) and does it with the same skills and rules as any request. Off by default: letting Vertex play on its own is the household's choice. Only in survival, by day, healthy and fed;
+    /// anyone talking to it, any job running, "stay" or a goal it already has outrank it, and it waits <see cref="ProjectCooldown"/> between projects and does not repeat its last few.
+    /// </summary>
+    public bool SelfDirectedPlay { get; set; }
+    /// <summary>How long nothing may have needed Vertex before it chooses a project of its own.</summary>
+    public TimeSpan SelfDirectedIdle { get; set; } = TimeSpan.FromMinutes(5);
+    /// <summary>The wait after choosing a project before it may choose another.</summary>
+    public TimeSpan ProjectCooldown { get; set; } = TimeSpan.FromMinutes(3);
+    private bool _projectQueued, _choosing;
+    private DateTime _lastProjectAt = DateTime.MinValue;
+    private readonly List<string> _recentProjects = [];
     /// <summary>How often the idle check runs.</summary>
     public TimeSpan IdleCheckEvery { get; set; } = TimeSpan.FromSeconds(10);
     /// <summary>The clock (tests move it).</summary>
@@ -121,7 +137,7 @@ public sealed class VertexBrain : IBody
         }
         client.PlayerAdded += OnPlayerAdded;
         Tasks.Requester = () => _pursuing?.For ?? CurrentSpeaker;
-        Tasks.Starting += _ => Staying = false;      // told to stay, then given something to do: the stay is over
+        Tasks.Starting += name => { Staying = false; if (_choosing) { lock (_recentProjects) { _recentProjects.Add(name); if (_recentProjects.Count > 5) _recentProjects.RemoveAt(0); } } };      // told to stay, then given something to do: the stay is over
         Tasks.GoalOf = () => _pursuing;
         Tasks.Finished += o => companion.Post(new TaskEvent(o));
         companion.Attach(this);
@@ -222,8 +238,45 @@ public sealed class VertexBrain : IBody
             case GoalEvent g:
                 await PursueGoalAsync(g.Goal, ct);
                 return true;
+            case OwnProjectEvent:
+                await ChooseOwnProjectAsync(ct);
+                return true;
         }
         return false;
+    }
+
+    /// <summary>
+    /// The conditions for choosing a project of its own that are not about how long it has been idle: survival (the skills' rules are survival's: breaking a block in creative drops nothing),
+    /// daytime, at least 7 hearts and 6 of 10 food (the reflexes eat and heal first), and the cooldown since the last project.
+    /// </summary>
+    private bool FitForOwnProject(DateTime now)
+        => Client.GameMode == GameMode.Survival
+        && Client.World.DayTime % 24000 is >= 0 and < 12000
+        && Client.Health >= 14 && Client.Food >= 12
+        && now - _lastProjectAt >= ProjectCooldown;
+
+    /// <summary>
+    /// Asks the language model for ONE small project and lets it start it with whichever tool fits (build_shape, explore, collect, fish, farm... or set_goal for something that takes many
+    /// steps): the same tools and rules as any request, so nothing it does on its own is anything a friend could not have asked for.
+    /// </summary>
+    private async Task ChooseOwnProjectAsync(CancellationToken ct)
+    {
+        try
+        {
+            string[] recent; lock (_recentProjects) recent = _recentProjects.ToArray();
+            Log?.Invoke("choosing a project of my own");
+            _choosing = true;
+            await Companion.RespondAsync("[Game update, not a friend talking: nobody needs you right now and you have no goal, so pick ONE small project of your own to do while you wait. "
+                + "Something a friend would enjoy watching: build a little shelter or garden with build_shape, explore one direction (no farther than about 40 blocks) and tell what you find, gather some wood or stone or dirt, "
+                + "go fishing, or plant some crops. Keep it small and safe, in daylight, near where you are. Never break or build on anything that looks like someone's build. "
+                + (recent.Length > 0 ? $"You recently did: {string.Join("; ", recent)}. Pick something different. " : "")
+                + "Call the ONE tool that starts it (set_goal only for something that really takes many steps), then say in one short sentence what you chose.]", ct);
+        }
+        finally
+        {
+            _choosing = false;
+            _projectQueued = false;
+        }
     }
 
     /// <summary>What is going on in the game right now (position, health, nearby, memory of the people here, goals, places).</summary>
@@ -291,7 +344,16 @@ public sealed class VertexBrain : IBody
                 if (Tasks.IsBusy) { _lastActivity = now; continue; }
                 var goal = Memory.ActiveGoals.FirstOrDefault();
                 var unstudied = goal == null && !Staying && StudyWhenIdle && Skills.UnstudiedBlocks(16).Count > 0;     // the scan only when it could matter
-                var action = IdlePolicy.Decide(Staying, Tasks.IsBusy, _goalQueued, Client.IsSpawned, now - _lastActivity, IdleBeforeGoals, goal != null, StudyWhenIdle, unstudied);
+                var action = IdlePolicy.Decide(Staying, Tasks.IsBusy, _goalQueued || _projectQueued, Client.IsSpawned, now - _lastActivity, IdleBeforeGoals, goal != null, StudyWhenIdle, unstudied,
+                    SelfDirectedPlay, SelfDirectedIdle, SelfDirectedPlay && FitForOwnProject(now));
+                if (action == IdleAction.ChooseProject)
+                {
+                    _projectQueued = true;
+                    _lastActivity = now;
+                    _lastProjectAt = now;
+                    Companion.Post(new OwnProjectEvent());
+                }
+                else
                 if (action == IdleAction.StudyBlocks)
                 {
                     // Nothing to do: be curious about the blocks around that Vertex does not know (no language model
