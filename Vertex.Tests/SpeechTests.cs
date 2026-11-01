@@ -55,7 +55,9 @@ public class SpeechTests
     [Test]
     public async Task OneVertexSpeaks_AnotherHearsTheWords()
     {
-        var pluginJar = Path.GetFullPath(Path.Combine(TestContext.CurrentContext.TestDirectory, "..", "..", "..", "..", "..", "..", "AubsCraft", "voicechat-bukkit-2.6.16.jar"));
+        // The same lookup as LiveVoiceTests (VERTEX_VOICECHAT_JAR, the AubsCraft repo, the AubsCraft test servers): a test build outside the repo has no jar six folders up.
+        var pluginJar = LiveVoiceTests.FindPluginJar();
+        Assert.That(File.Exists(pluginJar), "plugin jar not found: " + pluginJar);
         await using var server = await PaperServer.StartAsync("speech", Port, TimeSpan.FromMinutes(4), new Dictionary<string, string> { ["difficulty"] = "peaceful" },
             dir =>
             {

@@ -22,7 +22,7 @@ public class LiveVoiceTests
     /// </summary>
     private static readonly string PluginJar = FindPluginJar();
 
-    private static string FindPluginJar()
+    internal static string FindPluginJar()
     {
         var env = Environment.GetEnvironmentVariable("VERTEX_VOICECHAT_JAR");
         if (!string.IsNullOrEmpty(env) && File.Exists(env)) return env;
