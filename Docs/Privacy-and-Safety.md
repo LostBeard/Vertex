@@ -1,6 +1,6 @@
 # Privacy and safety
 
-Vertex was made for a six-year-old and her family, and it is meant to be usable by others, including clubs and classrooms. Two things follow: what it knows about
+Vertex was made for a child and her family, and it is meant to be usable by others, including clubs and classrooms. Two things follow: what it knows about
 people stays with them, and what it does in a world has to be safe to ask for by mistake.
 
 ## What is kept, and where

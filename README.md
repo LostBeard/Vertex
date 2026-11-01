@@ -24,7 +24,7 @@ Named by Aubriella, who it was built to play with.
   moves with vanilla-accurate physics, and every skill is tested against a real Paper server.
 - **Voice first.** Parakeet speech recognition, an end-of-turn model that tells "finished" from "thinking", and speaker
   identification so it knows who is talking. Text chat always works too.
-- **Safe for children, useful for others.** Vertex was made for a six-year-old and her family, and a skill has to be safe to say
+- **Safe for children, useful for others.** Vertex was made for a child and her family, and a skill has to be safe to say
   wrong (no griefing, no lava, no building on top of someone's build). The same things that make it good for a family (local, private,
   no plugins, teachable) make it a candidate for clubs and classrooms.
 - **Characters.** A character is a name, a personality, a voice and a play style. Make your own, switch in game.
