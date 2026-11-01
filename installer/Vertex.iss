@@ -58,8 +58,15 @@ Filename: "{app}\Vertex.exe"; Description: "Start Vertex"; WorkingDir: "{app}"; 
 
 [Code]
 function InitializeSetup: Boolean;
+var
+  Exe: String;
+  Code: Integer;
 begin
   Result := True;
+  // An update while Vertex is running: ask it to quit first (`Vertex.exe quit` stops it properly: the robot is parked, the game left). Without this a silent setup stops at
+  // "Setup has detected that Vertex is currently running" (exit code 1, nothing installed - seen 2026-11-01). Needs a Vertex that has the quit command; for an older one, close it first.
+  Exe := ExpandConstant('{localappdata}\Programs\Vertex\Vertex.exe');
+  if FileExists(Exe) then Exec(Exe, 'quit', '', SW_HIDE, ewWaitUntilTerminated, Code);
   // Vertex runs its models through CUDA. Without an NVIDIA driver it falls back to OpenCL/CPU, which is far too slow to talk to.
   if not (FileExists(ExpandConstant('{sys}\nvcuda.dll')) or FileExists(ExpandConstant('{win}\sysnative\nvcuda.dll'))) then
     Result := SuppressibleMsgBox('No NVIDIA graphics driver was found on this PC.' + #13#10#13#10 +

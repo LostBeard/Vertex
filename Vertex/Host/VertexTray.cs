@@ -73,8 +73,14 @@ public sealed class VertexTray : ApplicationContext
         _icon.ContextMenuStrip = menu;
     }
 
+    private volatile bool _quitRequested;
+
+    /// <summary>Asks the tray to quit, from any thread (`vertex quit`, an update): the next poll tick, within half a second, does what the menu's Quit does.</summary>
+    public void RequestQuit() => _quitRequested = true;
+
     private void Refresh()
     {
+        if (_quitRequested) { _quitRequested = false; Quit(); return; }
         var activity = _host.Activity;
         var status = _host.Status;
         if (activity != _shown)

@@ -129,7 +129,9 @@ public sealed class VertexSettings
         return settings;
     }
 
-    public static string DefaultFolder => System.IO.Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData), "Vertex");
+    public static string DefaultFolder => Environment.GetEnvironmentVariable("VERTEX_DATA_FOLDER") is { Length: > 0 } own
+        ? own // tests (and a second copy on one PC) keep their settings, people and voices apart from the user's
+        : System.IO.Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData), "Vertex");
 
     public void Save()
     {

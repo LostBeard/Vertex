@@ -24,6 +24,7 @@ if (args.Length == 0 || args[0] is "--background" or "tray")
 // so they get a console window of their own. Everything else prints to the terminal it was run from.
 if (args[0] is "play" or "join") AllocConsole();
 else AttachParentConsole();
+if (args[0] == "quit") return QuitRunning();
 if (args[0] == "ui")
 {
     // The dashboard alone, in this console: http://localhost:5280 (and on the LAN, so it can be opened from another device).
@@ -89,6 +90,27 @@ try
 catch (Exception e)
 {
     Console.WriteLine("error: " + e.Message);
+    return 1;
+}
+
+// Names the tray's mutex and quit event, so a test (or a second copy) can run beside the user's own: VERTEX_INSTANCE=name. Normally empty.
+static string Instance() => Environment.GetEnvironmentVariable("VERTEX_INSTANCE") is { Length: > 0 } s ? "." + s : "";
+
+// vertex quit: asks the running tray app to quit (it stops Vertex first: the robot is parked, the game left) and waits until it is gone. Local to this Windows session.
+static int QuitRunning()
+{
+    EventWaitHandle ask;
+    try { ask = EventWaitHandle.OpenExisting(@"Local\Vertex.Quit" + Instance()); }
+    catch (WaitHandleCannotBeOpenedException) { Console.WriteLine("Vertex is not running"); return 0; }
+    using (ask) ask.Set();
+    var until = DateTime.UtcNow.AddSeconds(90);
+    while (DateTime.UtcNow < until)
+    {
+        try { Mutex.OpenExisting(@"Local\Vertex.Tray" + Instance()).Dispose(); }   // the tray holds this until its process ends
+        catch (WaitHandleCannotBeOpenedException) { Console.WriteLine("Vertex has quit"); return 0; }
+        Thread.Sleep(300);
+    }
+    Console.WriteLine("Vertex did not quit within 90 seconds");
     return 1;
 }
 
@@ -216,7 +238,7 @@ static async Task<int> RunDashboardAsync(string[] args)
 // it again just opens the control panel.
 static async Task<int> RunTrayAsync(string[] args)
 {
-    using var single = new Mutex(initiallyOwned: true, @"Local\Vertex.Tray", out var first);
+    using var single = new Mutex(initiallyOwned: true, @"Local\Vertex.Tray" + Instance(), out var first);
     if (!first)
     {
         // Already running: a person launching it again wants the control panel; a background start wants nothing.
@@ -226,14 +248,20 @@ static async Task<int> RunTrayAsync(string[] args)
     var app = BuildControlPanel(args);
     await app.StartAsync();
     var host = app.Services.GetRequiredService<Vertex.Host.VertexHost>();
+    Vertex.Host.VertexTray? trayContext = null;
     var tray = new Thread(() =>
     {
         System.Windows.Forms.Application.EnableVisualStyles();
         System.Windows.Forms.Application.SetHighDpiMode(System.Windows.Forms.HighDpiMode.PerMonitorV2);
-        System.Windows.Forms.Application.Run(new Vertex.Host.VertexTray(host, () => app.Lifetime.StopApplication()));
+        var context = new Vertex.Host.VertexTray(host, () => app.Lifetime.StopApplication());
+        trayContext = context;
+        System.Windows.Forms.Application.Run(context);
     }) { Name = "Vertex tray" };
     tray.SetApartmentState(ApartmentState.STA); // Windows Forms needs a single-threaded apartment
     tray.Start();
+    // `vertex quit` (and an update) asks through a named event in this Windows session: the tray stops Vertex properly (the robot is parked, the game left) and exits.
+    using var quitEvent = new EventWaitHandle(false, EventResetMode.AutoReset, @"Local\Vertex.Quit" + Instance());
+    ThreadPool.RegisterWaitForSingleObject(quitEvent, (_, _) => trayContext?.RequestQuit(), null, Timeout.Infinite, executeOnlyOnce: false);
     // Started by a person: show the control panel. Started by Windows at login (--background): just the icon.
     if (!args.Contains("--background")) Vertex.Host.VertexTray.OpenControlPanel();
     // "Start Vertex when the app starts" (a PC that is Vertex's own): the same Start the button does, in the background so the panel and the icon are up at once.

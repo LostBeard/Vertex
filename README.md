@@ -43,8 +43,10 @@ makes `installer\Output\VertexSetup-<version>.exe` with [Inno Setup](https://jrs
 (Ollama's installer does not install models either): Vertex fetches its language model itself, the first time it is run (below). Uninstall keeps the models and
 asks before deleting what Vertex remembers (`%APPDATA%\Vertex`: people, voices, faces, characters).
 
-**Updating a PC that already has Vertex:** build the installer again and run it on that PC. It closes the running Vertex, replaces the program and keeps the settings, the people
-Vertex knows and the models. Silent form: `VertexSetup-<version>.exe /VERYSILENT /SUPPRESSMSGBOXES /NORESTART` (add `/TASKS=autostart` to keep or turn on starting with Windows).
+**Updating a PC that already has Vertex:** build the installer again and run it on that PC. It asks a running Vertex to quit (`Vertex.exe quit`: Vertex stops properly, so the robot
+is parked and the game left), replaces the program and keeps the settings, the people Vertex knows and the models. Silent form: `VertexSetup-<version>.exe /VERYSILENT /SUPPRESSMSGBOXES /NORESTART`
+(add `/TASKS=autostart` to keep or turn on starting with Windows). A Vertex older than the `quit` command has to be closed first (tray icon, Quit), or setup stops with exit code 1 and installs nothing.
+Start it again afterwards (`Vertex.exe --background`, or sign out and in).
 
 By hand instead:
 
