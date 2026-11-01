@@ -57,7 +57,9 @@ public sealed class MinecraftChannel : IVoiceChannel
     public async Task ShowTextAsync(string text, CancellationToken ct)
     {
         if (!EchoText || _client.State != ConnectionState.Play) return;
-        foreach (var chunk in Mouth.ChatChunks(text)) await _client.SendChatAsync(chunk, ct);
+        // SayAsync, never SendChatAsync: what Vertex says comes from a language model (and from players asking it to repeat things), and a chunk that began with "/" would run as a
+        // server command with this account's permissions. A slash is only a character here.
+        foreach (var chunk in Mouth.ChatChunks(text)) await _client.SayAsync(chunk, ct);
     }
 
     public ValueTask DisposeAsync()

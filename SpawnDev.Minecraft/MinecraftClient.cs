@@ -814,7 +814,7 @@ public sealed partial class MinecraftClient : IAsyncDisposable
 
     // ---------------------------------------------------------------- outgoing
 
-    /// <summary>Sends a chat message, or a command when it starts with '/'.</summary>
+    /// <summary>Sends a chat message, or a command when it starts with '/' (what a person typing in the game's chat box expects).</summary>
     public async Task SendChatAsync(string message, CancellationToken cancellationToken = default)
     {
         var c = _connection ?? throw new InvalidOperationException("not connected");
@@ -824,6 +824,22 @@ public sealed partial class MinecraftClient : IAsyncDisposable
             await SendCommandAsync(c, message[1..], cancellationToken);
             return;
         }
+        await SendChatMessageAsync(c, message, cancellationToken);
+    }
+
+    /// <summary>
+    /// Sends <paramref name="message"/> as CHAT, always: a leading '/' is just a character, never a command. This is for text nobody typed at a command line (what a language model
+    /// wrote, what a player asked it to repeat): sent through <see cref="SendChatAsync"/> a reply that began with "/op" or "/stop" would run on the server with this account's permissions.
+    /// </summary>
+    public async Task SayAsync(string message, CancellationToken cancellationToken = default)
+    {
+        var c = _connection ?? throw new InvalidOperationException("not connected");
+        if (State != ConnectionState.Play) throw new InvalidOperationException("not in game");
+        await SendChatMessageAsync(c, message, cancellationToken);
+    }
+
+    private async Task SendChatMessageAsync(MinecraftConnection c, string message, CancellationToken cancellationToken)
+    {
         if (message.Length > 256) throw new ArgumentException("chat messages are at most 256 characters", nameof(message));
 
         await WaitForChatSessionAsync(cancellationToken);
