@@ -193,7 +193,10 @@ public class BrainTests
             () => $"never finished: progress [{string.Join("; ", goal.Progress)}]; log: {string.Join(" | ", log)}");
         TestContext.Out.WriteLine("progress: " + string.Join("; ", goal.Progress));
         Assert.That(vertex.Inventory.Count("dirt") + aubs.Inventory.Count("dirt"), Is.GreaterThanOrEqualTo(3), "it did the work (the 6-block pile leaves 3+ after drops)");
-        Assert.That(brain.Memory.People[aubs.Profile.Id].History, Has.Some.Contains("dirt"), "Aubri's history has it");
+        // FinishGoal marks the goal done and THEN writes the line into the person's history, so waiting for Done and reading the history at once raced it (it failed once on 2026-11-01 while
+        // the failure message, printed a moment later, showed the line: the list is live). Wait for the line itself, reading under the lock the writers use.
+        await Wait.UntilAsync(() => { lock (brain.Memory) return brain.Memory.People[aubs.Profile.Id].History.Any(h => h.Contains("dirt")); }, TimeSpan.FromSeconds(10),
+            () => "Aubri's history has no line about dirt: " + string.Join(" | ", brain.Memory.People[aubs.Profile.Id].History.ToArray()));
     }
 
     /// <summary>

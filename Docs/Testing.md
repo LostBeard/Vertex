@@ -32,9 +32,11 @@ Things that have cost time:
 - **Do not run anything else on the GPU or CPU during a GPU test.** A model run while another test runs shows 90-second timeouts that are not failures of the code.
 - **A GPU test that hangs can leave its Paper server running** and holding its log file; the next run then fails to start. Look for a stray `java.exe` on the suite's port.
 - **Do not kill `java.exe` blindly:** other projects (the AubsCraft dev server) run theirs.
-- **Compare models and builds with the tool-choice test run ALONE, never inside a full `TestCategory=GPU` run.** Measured 2026-11-01 on an RTX 2060 12 GB: alone it takes 352 to 421 s and
-  passes on every build tried; inside a full GPU run it took 1,226 s (and 1,645 s) and got more than two of 18 wrong. Not caused by the speech tests running just before it or by GPU memory
-  (351 s right after them, 8.1 to 9.5 GB of 12.3 GB in use); the cause is not found.
+- **Compare models and builds with the tool-choice test run ALONE, not inside a full `TestCategory=GPU` run.** Measured 2026-11-01 on an RTX 2060 12 GB: alone it takes 352 to 421 s and
+  passes on every build tried. Inside a full GPU run it took 1,226 s (and 1,645 s with gemma4) and got more than two of 18 wrong on ML 5.8.0 / 5.8.1-local.1, and did NOT recur on ML 5.8.1-local.3
+  with AI.Server 1.4.0-local.9 (353 s, passed, in a 41-minute full run). It was not the speech tests just before it, not GPU memory (351 s right after them, 8.1 to 9.5 GB of 12.3 GB), and not
+  thermal throttling (a 10-second nvidia-smi sampler over the 41 minutes: no thermal or hardware slowdown flag ever active, 74 C peak, clock 1785 to 1950 MHz of 2145; the software power cap
+  showed in 72 of 247 samples, which is the card at its 184 W limit). The cause of the slow runs is not known; the newer ML/AI packages no longer show it.
 - **A GPU older than Ampere (sm_80) needs SpawnDev.ILGPU.ML 5.8.1 or later:** 5.8.0 failed every ONNX Conv on an RTX 2060 (sm_75) with CUDA_ERROR_INVALID_PTX and nothing could hear.
 
 ## The tool-choice test
