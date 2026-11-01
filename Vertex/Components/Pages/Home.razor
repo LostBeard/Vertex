@@ -173,9 +173,13 @@
                 </div>
                 <label>Account</label>
                 <select @bind="AccountMode" disabled="@InGameOrBusy">
-                    <option value="microsoft">Microsoft account (signed in)</option>
+                    <option value="microsoft">Microsoft account (@(Host.HasSavedSignIn ? "signed in" : "not signed in yet"))</option>
                     <option value="offline">Offline name (local test servers)</option>
                 </select>
+                @if (AccountMode == "microsoft" && !Host.HasSavedSignIn)
+                {
+                    <p class="hint">No sign-in is saved on this PC. Press <b>Start Vertex</b> (Start tab), then <b>Join the game</b> here: a code appears to enter at microsoft.com/link with the account Vertex should play as. It is remembered after that, encrypted for this Windows user.</p>
+                }
                 @if (AccountMode == "offline")
                 {
                     <label>Offline name</label>

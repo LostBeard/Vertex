@@ -388,6 +388,9 @@ public sealed class VertexHost : IAsyncDisposable
         Changed?.Invoke();
     }
 
+    /// <summary>A Microsoft sign-in is saved for this Windows user and can be opened (tokens are encrypted per user, so another PC's or user's file does not count). False for offline play.</summary>
+    public bool HasSavedSignIn => !string.IsNullOrWhiteSpace(Settings.Account) && DpapiAccountStore.ForAccount("Vertex", Settings.Account).CanRead();
+
     /// <summary>"On: Reachy Mini + Minecraft (mc.spawndev.com) as Vertex".</summary>
     private string OnStatus()
     {

@@ -27,6 +27,18 @@ public sealed class DpapiAccountStore(string path) : IAccountStore
     public static DpapiAccountStore ForAccount(string app, string name) => new(System.IO.Path.Combine(
         Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), app, "accounts", name + ".bin"));
 
+    /// <summary>
+    /// Whether a saved sign-in is there AND this Windows account can open it (a file left by another user or another PC does not count: it cannot be decrypted, so a sign-in is
+    /// needed). Says nothing about whether the tokens in it are still valid, and never returns them.
+    /// </summary>
+    public bool CanRead()
+    {
+        if (!File.Exists(Path)) return false;
+        try { ProtectedData.Unprotect(File.ReadAllBytes(Path), Entropy, DataProtectionScope.CurrentUser); return true; }
+        catch (CryptographicException) { return false; }
+        catch (IOException) { return false; }
+    }
+
     public async Task<string?> LoadAsync(CancellationToken cancellationToken = default)
     {
         if (!File.Exists(Path)) return null;
