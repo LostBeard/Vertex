@@ -44,6 +44,8 @@ Name: "autostart"; Description: "Start Vertex when Windows starts (it waits quie
 
 [Files]
 Source: "stage\*"; DestDir: "{app}"; Flags: recursesubdirs createallsubdirs ignoreversion
+; The Llama 3.1 Community License (section 1.b.iii) wants the attribution notice in a Notice text file distributed with the model's copies; its license layer is written next to the model below.
+Source: "..\NOTICE"; DestDir: "{app}"; DestName: "NOTICE.txt"; Flags: ignoreversion
 ; The small layers and the manifest of llama3.1:8b, written next to the downloaded model. dontcopy: extracted by the code below, only when the model is installed.
 Source: "model\manifest-llama3.1-8b.json"; Flags: dontcopy
 Source: "model\sha256-455f34728c9b5dd3376378bfb809ee166c145b0b4c1f1a6feca069055066ef9a"; Flags: dontcopy

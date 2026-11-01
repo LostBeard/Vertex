@@ -1,0 +1,13 @@
+Vertex
+Copyright (c) Todd Tanner (LostBeard). Vertex's own code is MIT licensed (see LICENSE).
+
+Vertex's language model is Meta's Llama 3.1 8B Instruct. It is not part of this repository: it is downloaded on first use, or by the installer, and kept on the user's PC.
+
+Built with Llama.
+
+Llama 3.1 is licensed under the Llama 3.1 Community License, Copyright © Meta Platforms, Inc. All Rights Reserved.
+
+A copy of the Llama 3.1 Community License travels with the model: it is the license layer of the model package (sha256:0ba8f0e314b4264dfd19df045cde9d4c394a52474bf92ed6a3de22a4ca31a177),
+installed next to the model, and hosted with it at https://models.spawndev.com/ollama/llama3.1/8b/ (see the NOTICE file there).
+
+Use of the model must follow Meta's Acceptable Use Policy: https://llama.meta.com/llama3_1/use-policy

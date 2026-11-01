@@ -8,6 +8,9 @@ is yours to pick, and you can switch characters while talking to it.
 
 Named by Aubriella, who it was built to play with.
 
+**Built with Llama.** Vertex thinks with Meta's Llama 3.1 8B Instruct. Llama 3.1 is licensed under the Llama 3.1 Community License, Copyright © Meta Platforms, Inc.
+All Rights Reserved. Use of the model must follow Meta's [Acceptable Use Policy](https://llama.meta.com/llama3_1/use-policy). See [NOTICE](NOTICE).
+
 > **Status: early, playable.** Vertex joins servers (Microsoft accounts, signed chat), moves with vanilla physics, pathfinds, digs,
 > builds, crafts, farms, trades, fights, hears and speaks in proximity voice, lives in a Reachy Mini (hearing, speaking, seeing,
 > body language) and takes requests through a language model that runs on your own GPU. [PLAN.md](PLAN.md) has what is done and what is next.
