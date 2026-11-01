@@ -316,7 +316,7 @@ before it is a Vertex feature.
   more capable). Done 2026-11-01: Tuvok hosts `models.spawndev.com/ollama/llama3.1/8b/`; Data's `OllamaModelInstaller` (SpawnDev.AI.Server 1.4.0-local.7: models.spawndev.com then
   registry.ollama.ai, Range resume, SHA-256, manifest last) does the work; Vertex's `ModelSetup`, the Start tab's Install button with progress and `vertex install-models [model | --list]` sit on it;
   the Inno setup installs Vertex only. Tests: `ModelSetupTests` (real downloads of a 46 MB model through the library and the dashboard host, including stop and resume and a failure) and an
-  Explicit 4.9 GB install from models.spawndev.com alone. Still to do: run that Explicit test once and record its time; the installer script itself has not been built here (Inno Setup).
+  Explicit 4.9 GB install from models.spawndev.com alone (run 2026-11-01 on an RTX 2060 PC: passed, 403 s over a home connection; Data saw 1.7 min on another network). The Start tab's Install box was driven in a real browser engine (headless Edge, 2026-11-01): the missing-model text with Start disabled, Install shows the progress bar and source, Stop says what was kept and leaves the partial file. Still to do: the installer script itself has not been built here (Inno Setup).
 - [ ] Choosing between models: the Start tab lists what models.spawndev.com hosts (today only llama3.1:8b). Comparing a candidate = `ToolChoiceTests` alone with `VERTEX_TEST_MODEL` plus
   `DecodeSpeedTests`; eight test fixtures still hard-code llama3.1 and should honour `VERTEX_TEST_MODEL`.
 
