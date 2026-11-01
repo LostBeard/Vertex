@@ -43,6 +43,9 @@ makes `installer\Output\VertexSetup-<version>.exe` with [Inno Setup](https://jrs
 (Ollama's installer does not install models either): Vertex fetches its language model itself, the first time it is run (below). Uninstall keeps the models and
 asks before deleting what Vertex remembers (`%APPDATA%\Vertex`: people, voices, faces, characters).
 
+**Updating a PC that already has Vertex:** build the installer again and run it on that PC. It closes the running Vertex, replaces the program and keeps the settings, the people
+Vertex knows and the models. Silent form: `VertexSetup-<version>.exe /VERYSILENT /SUPPRESSMSGBOXES /NORESTART` (add `/TASKS=autostart` to keep or turn on starting with Windows).
+
 By hand instead:
 
 1. The language model. A new PC has none, and **Vertex installs it itself**: the **Start** tab says so and has an **Install** button (or run `vertex install-models`). It

@@ -284,6 +284,8 @@ public sealed partial class GameData
     /// item named like one of the server's blocks places that block (a mod's block items share their block's name),
     /// which is how placing one tells Vertex what it just made. Facts we have no data for keep vanilla's defaults.
     /// </summary>
+    /// <param name="itemRawIds">The server's synced item registry: item name -> the raw id it uses on the wire.</param>
+    /// <param name="blockNames">The server's block names, so a modded item named like a block is known to place that block (null: none known).</param>
     /// <param name="catalog">The mods' items as tools/ModDump dumped them (stack sizes, tools, food): used by name.</param>
     public GameData WithServerItems(IReadOnlyDictionary<string, int> itemRawIds, IReadOnlyCollection<string>? blockNames = null, IReadOnlyDictionary<string, ItemType>? catalog = null)
     {

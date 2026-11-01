@@ -53,8 +53,7 @@ public class WakeCallTests
     {
         _ai = TestAi.Create();
         var models = await _ai.ModelNamesAsync();
-        _model = models.FirstOrDefault(m => m.StartsWith("llama3.1")) ?? "";
-        if (_model == "") Assert.Fail("llama3.1 not in the Ollama cache: " + string.Join(", ", models));
+        _model = TestModel.Pick(models);
         await _ai.EnsureChatReadyAsync(_model);
     }
 

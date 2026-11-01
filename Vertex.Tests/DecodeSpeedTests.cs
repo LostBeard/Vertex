@@ -21,7 +21,7 @@ public class DecodeSpeedTests
     {
         _ai = TestAi.Create();
         var models = await _ai.ModelNamesAsync();
-        _model = models.FirstOrDefault(m => m.StartsWith(Environment.GetEnvironmentVariable("VERTEX_TEST_MODEL") ?? "llama3.1")) ?? throw new AssertionException("model not found");
+        _model = TestModel.Pick(models);
         await _ai.EnsureChatReadyAsync(_model);
     }
 

@@ -13,6 +13,10 @@ public sealed class ItemStack
 {
     public static readonly ItemStack Empty = new(0, 0, new Dictionary<string, object?>(), []);
 
+    /// <param name="itemId">The item's id in the server's item registry (0 with a zero count is the empty stack).</param>
+    /// <param name="count">How many are in the stack.</param>
+    /// <param name="components">The data components the server set on this stack, by name ("damage", "enchantments").</param>
+    /// <param name="removedComponents">Names of default components the server removed from this stack.</param>
     /// <param name="type">The item's type when the vanilla table does not say (a modded server's items, by its registry).</param>
     public ItemStack(int itemId, int count, IReadOnlyDictionary<string, object?> components, IReadOnlyList<string> removedComponents, ItemType? type = null)
     {
@@ -58,6 +62,7 @@ public sealed class ItemStack
     public override string ToString() => IsEmpty ? "empty" : $"{Count}x {Name}" + (CustomName is string n ? $" \"{n}\"" : "");
 
     /// <summary>Reads a Slot (protocol 770 item stack with components).</summary>
+    /// <param name="r">The packet being read, positioned at the slot.</param>
     /// <param name="types">Item id -> type on a server that numbers items its own way (null: the vanilla table).</param>
     public static ItemStack Read(ref PacketReader r, Func<int, ItemType?>? types = null)
     {

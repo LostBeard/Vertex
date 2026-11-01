@@ -32,7 +32,7 @@ public class AiSessionTests
         if (!ai.Accelerator.TryGetFreeMemory(out var freeAtStart))
             Assert.Ignore($"{ai.Accelerator.AcceleratorType} cannot report free device memory");
         var models = await ai.ModelNamesAsync();
-        var model = models.FirstOrDefault(m => m.StartsWith("llama3.1")) ?? throw new AssertionException("llama3.1 not in the Ollama cache");
+        var model = TestModel.Pick(models);
         await ai.EnsureChatReadyAsync(model);
         await ai.LoadIntentsAsync();
         await ai.WarmUpAsync("kokoro:af_heart");

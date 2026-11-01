@@ -73,7 +73,8 @@ public sealed partial class MinecraftClient
             await ClickAsync(window.Id, target, 0, 0, cancellationToken);
             // The cursor cannot be waited on: a click says (to the server) that the cursor is empty afterwards, and when it really is, the server has nothing to correct and sends nothing. The
             // slot it went into is the proof.
-            if (!await WaitUntilAsync(() => OpenWindow?.StateId != state && OpenWindow.Slots[target].Count == inSlotBefore + held.Count, 20, cancellationToken))
+            // OpenWindow is null if the server closed the screen meanwhile: that is "has not arrived" (the wait times out and the log line below says so), not a null dereference.
+            if (!await WaitUntilAsync(() => OpenWindow is { } w && w.StateId != state && w.Slots[target].Count == inSlotBefore + held.Count, 20, cancellationToken))
             {
                 Log($"trade {tradeIndex}: put the result in slot {target} but it did not arrive there (it holds {OpenWindow?.Slots[target]}; state {state} -> {OpenWindow?.StateId})");
                 break;

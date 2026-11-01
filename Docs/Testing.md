@@ -42,7 +42,7 @@ starts: it tests the choice, not the doing). It is the measure behind most of [A
 
 | Switch | Effect |
 |---|---|
-| `VERTEX_TEST_MODEL=qwen3:8b` | the model to use (a prefix of an Ollama model name; default `llama3.1`) |
+| `VERTEX_TEST_MODEL=qwen3:8b` | the model to use, for every suite that loads the language model (`TestModel.cs`; a prefix of an Ollama model name; default `llama3.1`) |
 | `VERTEX_TEST_INSTINCT=0` | no instinct hint (the A/B) |
 | `VERTEX_FULL_TOOLS=1` | full tool definitions instead of the compact ones |
 | `VERTEX_FAST_KERNELS=0` or `VERTEX_NO_FK=warp,dp4a,grouped,lastpos` | the library's fast kernels off, all or some |
