@@ -91,8 +91,18 @@ public sealed class MinecraftConnection : IAsyncDisposable
 
     // ---------------------------------------------------------------- receive
 
+    /// <summary>What this connection has done lately (packets, ages, keep-alive timing): see <see cref="ConnectionTrace.Describe"/>.</summary>
+    public ConnectionTrace Trace { get; } = new();
+
     /// <summary>Reads the next packet. Returns null when the server closed the connection.</summary>
     public async ValueTask<ReceivedPacket?> ReceiveAsync(CancellationToken cancellationToken = default)
+    {
+        var packet = await ReceiveCoreAsync(cancellationToken);
+        if (packet is { } received) Trace.Received(received.Id, received.Length);
+        return packet;
+    }
+
+    private async ValueTask<ReceivedPacket?> ReceiveCoreAsync(CancellationToken cancellationToken)
     {
         // Frame length: up to 3 VarInt bytes for 2^21.
         int frameLength, used;
@@ -201,6 +211,7 @@ public sealed class MinecraftConnection : IAsyncDisposable
             var sent = 0;
             while (sent < length)
                 sent += await _socket.SendAsync(frame.AsMemory(sent, length - sent), SocketFlags.None, cancellationToken);
+            Trace.Sent(packet.PacketId);
         }
         finally
         {

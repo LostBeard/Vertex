@@ -224,6 +224,8 @@ public sealed partial class MinecraftClient : IAsyncDisposable
         FailTickWaiters();
         _cts?.Cancel();
         Log("disconnected: " + DisconnectReason);
+        // How the connection looked just before it ended: with a bare "connection forcibly closed" this is the only evidence of whose side went quiet.
+        if (_connection != null) Log("disconnected detail: " + _connection.Trace.Describe());
         Disconnected?.Invoke(DisconnectReason);
     }
 
@@ -1010,8 +1012,10 @@ public sealed partial class MinecraftClient : IAsyncDisposable
         PluginMessage.Invoke(channel, r.ReadRest().ToArray()); // the packet buffer is reused; handlers get their own copy
     }
 
+    // Only keep-alives are echoed this way: how long the reply took is what shows a client too slow for its server's (or its proxy's) read timeout.
     private async ValueTask EchoLongAsync(ReceivedPacket packet, int replyId, CancellationToken ct)
     {
+        var arrived = System.Diagnostics.Stopwatch.GetTimestamp();
         long id;
         {
             var r = packet.Reader();
@@ -1020,6 +1024,7 @@ public sealed partial class MinecraftClient : IAsyncDisposable
         using var reply = new PacketWriter(replyId);
         reply.WriteLong(id);
         await _connection!.SendAsync(reply, ct);
+        _connection.Trace.KeepAlive(System.Diagnostics.Stopwatch.GetElapsedTime(arrived));
     }
 
     private async ValueTask EchoIntAsync(ReceivedPacket packet, int replyId, CancellationToken ct)

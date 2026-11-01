@@ -15,9 +15,13 @@ public sealed class PacketWriter : IDisposable
 
     public PacketWriter(int packetId, int capacity = 256)
     {
+        PacketId = packetId;
         _buffer = ArrayPool<byte>.Shared.Rent(Math.Max(capacity, 16));
         WriteVarInt(packetId);
     }
+
+    /// <summary>The id this packet was started with (for the connection's trace).</summary>
+    public int PacketId { get; }
 
     /// <summary>The packet so far: VarInt id followed by the fields.</summary>
     public ReadOnlySpan<byte> Written => _buffer.AsSpan(0, _length);
