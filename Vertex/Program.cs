@@ -7,6 +7,7 @@ using Vertex.Brain;
 // Vertex command line.
 //   vertex play <host[:port]> [--offline <name>] [--character <name>] [--model <ollama model>] [--account <name>]
 //                                               play: brain, voice, reflexes. Lines typed here are said to Vertex.
+//   vertex install-models [model | --list]      install the language model (default llama3.1:8b) from models.spawndev.com; no Ollama needed
 //   vertex login [account]                      sign a Microsoft account in (device code), cache it encrypted
 //   vertex logout [account]                     forget the cached account
 //   vertex ping <host[:port]>                   server list ping
@@ -30,7 +31,7 @@ if (args[0] == "ui")
 }
 if (args[0] is "help" or "--help" or "-h")
 {
-    Console.WriteLine("usage: vertex [ui] | play <host[:port]> [--offline <name>] [--character <name>] [--model <model>] | login|logout [account] | ping <host[:port]> | join <host[:port]> [account | --offline <name>]");
+    Console.WriteLine("usage: vertex [ui] | play <host[:port]> [--offline <name>] [--character <name>] [--model <model>] | install-models [model | --list] | login|logout [account] | ping <host[:port]> | join <host[:port]> [account | --offline <name>]");
     return 0;
 }
 
@@ -78,6 +79,8 @@ try
         }
         case "play":
             return await PlayAsync(args);
+        case "install-models":
+            return await InstallModelsAsync(args);
         default:
             Console.WriteLine("unknown command " + args[0]);
             return 2;
@@ -87,6 +90,39 @@ catch (Exception e)
 {
     Console.WriteLine("error: " + e.Message);
     return 1;
+}
+
+// vertex install-models [model | --list]: installs the language model (default llama3.1:8b) from models.spawndev.com, then registry.ollama.ai, with no Ollama needed.
+static async Task<int> InstallModelsAsync(string[] args)
+{
+    if (args.Contains("--list"))
+    {
+        var have = ModelSetup.Installed();
+        foreach (var m in await ModelSetup.ListInstallableAsync())
+            Console.WriteLine($"{m.Name,-30} {ModelSetup.Size(m.SizeBytes),8}  {(have.Contains(m.Name) ? "installed" : ""),-9} {m.Description}");
+        return 0;
+    }
+    var name = args.Skip(1).FirstOrDefault(a => !a.StartsWith("--")) ?? ModelSetup.DefaultModel;
+    using var cts = new CancellationTokenSource();
+    Console.CancelKeyPress += (_, e) => { e.Cancel = true; cts.Cancel(); };
+    var last = "";
+    try
+    {
+        var model = await ModelSetup.InstallAsync(name, p =>
+        {
+            var text = ModelSetup.Describe(p);
+            if (text != last) { last = text; Console.Write("\r" + text.PadRight(110)); }
+        }, cts.Token);
+        Console.WriteLine();
+        Console.WriteLine($"installed {model.Name}");
+        return 0;
+    }
+    catch (OperationCanceledException)
+    {
+        Console.WriteLine();
+        Console.WriteLine("stopped; what was downloaded is kept, run the same command again to carry on");
+        return 130;
+    }
 }
 
 static MicrosoftAuth Auth(string account) => new(DpapiAccountStore.ForAccount(App, account), prompt =>
@@ -118,7 +154,7 @@ static async Task<int> PlayAsync(string[] args)
     await using var ai = new VertexAi(Log);
     var models = await ai.ModelNamesAsync();
     var model = Option(args, "--model") ?? models.FirstOrDefault(m => m.StartsWith("llama3.1")) ?? models.FirstOrDefault()
-        ?? throw new InvalidOperationException("no chat model found in the Ollama cache (ollama pull llama3.1:8b)");
+        ?? throw new InvalidOperationException($"no language model is installed yet: run `vertex install-models` ({ModelSetup.DefaultModel}, from models.spawndev.com)");
     Log($"models: {string.Join(", ", models)}; using {model}");
     await ai.EnsureChatReadyAsync(model);
     try { await ai.LoadIntentsAsync(); }

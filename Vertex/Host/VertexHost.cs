@@ -8,6 +8,9 @@ using Vertex.Reachy;
 
 namespace Vertex.Host;
 
+/// <summary>Where a language-model install is, for the dashboard: what to say, how far along (0 to 1), whether it is still running, and why it failed (null if it did not).</summary>
+public sealed record ModelInstallStatus(string Model, string Text, double Fraction, bool Running, string? Error);
+
 /// <summary>What the dashboard remembers between runs (%APPDATA%\Vertex\settings.json).</summary>
 public sealed class VertexSettings
 {
@@ -183,7 +186,85 @@ public sealed class VertexHost : IAsyncDisposable
         _dataFolder = dataFolder ?? VertexSettings.DefaultFolder;
         Settings = VertexSettings.Load(dataFolder);
         Characters = new CharacterStore(System.IO.Path.Combine(dataFolder ?? VertexSettings.DefaultFolder, "characters"));
+        // The models are known before the AI (and the GPU) is loaded, so the dashboard can say at once that one has to be installed.
+        RefreshModels();
     }
+
+    /// <summary>Tests: the Ollama-layout model cache to read and install into (default: the user's, the one VertexAi reads).</summary>
+    internal string? ModelsRoot { get; set; }
+
+    /// <summary>Tests: where the language model may be fetched from (default: models.spawndev.com, then registry.ollama.ai).</summary>
+    internal IReadOnlyList<SpawnDev.AI.Server.OllamaModelSource>? ModelSources { get; set; }
+
+    /// <summary>Reads the chat models in the cache again; picks the default model when none is chosen (or the chosen one is gone).</summary>
+    internal void RefreshModels()
+    {
+        Models = ModelSetup.Installed(ModelsRoot);
+        if (Models.Count > 0 && (string.IsNullOrEmpty(Settings.Model) || !Models.Contains(Settings.Model)))
+            Settings.Model = Models.FirstOrDefault(m => m == ModelSetup.DefaultModel) ?? Models.FirstOrDefault(m => m.StartsWith("llama3.1")) ?? Models[0];
+    }
+
+    /// <summary>Where the language-model install is (null: none started in this run).</summary>
+    public ModelInstallStatus? ModelInstall { get; private set; }
+    private CancellationTokenSource? _installCts;
+    private IReadOnlyList<SpawnDev.AI.Server.OllamaInstallableModel> _installable = [];
+
+    /// <summary>The models that can be installed (what models.spawndev.com lists), the default first. Falls back to just the default when the list cannot be reached.</summary>
+    public IReadOnlyList<string> Installable => _installable.Count == 0
+        ? [ModelSetup.DefaultModel]
+        : _installable.Select(m => m.Name).OrderBy(n => n == ModelSetup.DefaultModel ? 0 : 1).ThenBy(n => n, StringComparer.OrdinalIgnoreCase).ToList();
+
+    /// <summary>The size of an installable model, or 0 when the list does not give one.</summary>
+    public long InstallableSize(string name) => _installable.FirstOrDefault(m => m.Name == name)?.SizeBytes ?? 0;
+
+    /// <summary>No chat model is installed at all: the first thing to do is install one.</summary>
+    public bool NeedsModel => Models.Count == 0;
+
+    /// <summary>Reads the list of installable models (a few KB). A failure leaves the default as the only choice.</summary>
+    public async Task LoadInstallableAsync()
+    {
+        try { _installable = await ModelSetup.ListInstallableAsync(modelsRoot: ModelsRoot, sources: ModelSources); }
+        catch (Exception e) { Add(LineKind.System, $"could not read the list of installable models: {e.Message}"); }
+        Changed?.Invoke();
+    }
+
+    /// <summary>
+    /// Installs a language model into the Ollama-layout cache (default llama3.1:8b) from models.spawndev.com, then registry.ollama.ai, without Ollama. Progress is on
+    /// <see cref="ModelInstall"/>; <see cref="CancelModelInstall"/> stops it and keeps the partial file, so the next call resumes. Runs one install at a time.
+    /// </summary>
+    public async Task InstallModelAsync(string? name = null)
+    {
+        name = string.IsNullOrWhiteSpace(name) ? ModelSetup.DefaultModel : name.Trim();
+        if (ModelInstall is { Running: true }) return;
+        using var cts = _installCts = new CancellationTokenSource();
+        ModelInstall = new ModelInstallStatus(name, $"Looking up {name}...", 0, true, null);
+        Changed?.Invoke();
+        try
+        {
+            var model = await Task.Run(() => ModelSetup.InstallAsync(name,
+                p => { ModelInstall = new ModelInstallStatus(name, ModelSetup.Describe(p), ModelSetup.Fraction(p), true, null); Changed?.Invoke(); },
+                cts.Token, ModelsRoot, ModelSources));
+            RefreshModels();
+            if (_ai != null) Models = await _ai.ModelNamesAsync();
+            if (!Models.Contains(Settings.Model)) Settings.Model = model.Name;
+            Settings.Save();
+            ModelInstall = new ModelInstallStatus(name, $"{model.Name} is installed.", 1, false, null);
+            Add(LineKind.System, $"installed {model.Name}");
+        }
+        catch (OperationCanceledException)
+        {
+            ModelInstall = new ModelInstallStatus(name, "Stopped. What was downloaded is kept; Install carries on from there.", ModelInstall?.Fraction ?? 0, false, null);
+        }
+        catch (Exception e)
+        {
+            ModelInstall = new ModelInstallStatus(name, "", ModelInstall?.Fraction ?? 0, false, e.Message);
+            Add(LineKind.Error, $"could not install {name}: {e.Message}");
+        }
+        finally { _installCts = null; Changed?.Invoke(); }
+    }
+
+    /// <summary>Stops a running model install; the downloaded part is kept.</summary>
+    public void CancelModelInstall() => _installCts?.Cancel();
     /// <summary>Where the robot's heard utterances are kept when <see cref="VertexSettings.ReachySaveHeard"/> is on.</summary>
     public string HeardFolder => System.IO.Path.Combine(_dataFolder, "heard");
 
@@ -333,7 +414,7 @@ public sealed class VertexHost : IAsyncDisposable
             Settings.Save();
             SetStatus(HostState.Starting, "Loading the AI...");
             await EnsureAiAsync();
-            if (string.IsNullOrEmpty(Settings.Model)) throw new InvalidOperationException("no chat model in the Ollama cache (ollama pull llama3.1:8b)");
+            if (string.IsNullOrEmpty(Settings.Model)) throw new InvalidOperationException($"the language model is not installed yet: press Install on the Start tab, or run `vertex install-models` ({ModelSetup.DefaultModel}, from models.spawndev.com)");
             SetStatus(HostState.Starting, $"Loading {Settings.Model}...");
             await _ai!.EnsureChatReadyAsync(Settings.Model);
             await LoadIntentsAsync();

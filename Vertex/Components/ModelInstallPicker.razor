@@ -1,0 +1,16 @@
+@* Picks a language model and installs it (Home.razor's Start tab). The default is first; what is listed is what models.spawndev.com hosts. *@
+<div class="row" style="margin-top:6px">
+    <select @bind="Choice">
+        @foreach (var name in Host.Installable)
+        {
+            var size = Host.InstallableSize(name);
+            <option value="@name">@name@(size > 0 ? $" ({Vertex.AI.ModelSetup.Size(size)})" : "")@(Host.Models.Contains(name) ? " - installed" : "")</option>
+        }
+    </select>
+    <button @onclick="() => Host.InstallModelAsync(Choice)">Install</button>
+</div>
+
+@code {
+    [Parameter, EditorRequired] public VertexHost Host { get; set; } = default!;
+    private string Choice { get; set; } = Vertex.AI.ModelSetup.DefaultModel;
+}

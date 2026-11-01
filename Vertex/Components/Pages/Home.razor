@@ -27,12 +27,41 @@
                     @if (Host.Models.Count == 0) { <option value="@Host.Settings.Model">@(string.IsNullOrEmpty(Host.Settings.Model) ? "(loads on start)" : Host.Settings.Model)</option> }
                     @foreach (var m in Host.Models) { <option value="@m" selected="@(m == Host.Settings.Model)">@m</option> }
                 </select>
+                @if (Host.ModelInstall is { } install)
+                {
+                    @if (install.Running)
+                    {
+                        <progress value="@Math.Round(install.Fraction * 100)" max="100" style="width:100%"></progress>
+                        <p class="hint">@install.Text</p>
+                        <div class="row"><button class="secondary" @onclick="Host.CancelModelInstall">Stop</button></div>
+                    }
+                    else if (install.Error != null)
+                    {
+                        <p class="hint" style="color:#e66">Could not install @install.Model: @install.Error</p>
+                    }
+                    else
+                    {
+                        <p class="hint">@install.Text</p>
+                    }
+                }
+                @if (Host.ModelInstall is not { Running: true })
+                {
+                    @if (Host.NeedsModel)
+                    {
+                        <p class="hint"><b>The language model is not installed yet.</b> Vertex downloads it once (@Vertex.AI.ModelSetup.DefaultModel is about 4.9 GB) from models.spawndev.com and keeps it. Needs an internet connection and about 6 GB free.</p>
+                        <ModelInstallPicker Host="Host" />
+                    }
+                    else
+                    {
+                        <details><summary class="hint">Install another model</summary><ModelInstallPicker Host="Host" /></details>
+                    }
+                }
                 <Check @bind-Value="Host.Settings.Reachy" Disabled="@Busy" Title="Reachy Mini">Vertex's body at home. Its settings are on the Robot tab.</Check>
                 <Check @bind-Value="Host.Settings.Minecraft" Disabled="@Busy" Title="Join Minecraft on start">Its settings are on the Minecraft tab.</Check>
                 <div class="row" style="margin-top:12px">
                     @if (Host.State == HostState.Idle)
                     {
-                        <button @onclick="Host.StartAsync">Start Vertex</button>
+                        <button @onclick="Host.StartAsync" disabled="@(Host.NeedsModel || Host.ModelInstall is { Running: true })">Start Vertex</button>
                     }
                     else
                     {
@@ -304,6 +333,8 @@
         Characters = Host.Characters.All();
         Editing = Host.Characters.Find(Host.Settings.Character) ?? Characters.FirstOrDefault();
         Host.Changed += OnChanged;
+        // What can be installed (a few KB from models.spawndev.com); until it arrives the default is the only choice.
+        _ = Host.LoadInstallableAsync();
         // Health, position and the current task change without an event: refresh twice a second.
         _timer = new Timer(_ => InvokeAsync(StateHasChanged), null, 500, 500);
     }

@@ -17,7 +17,8 @@ dotnet test /tmp/vt/Vertex.Tests.dll --filter "Name~LiveBuildTests"            #
 | Unit tests | `VertexUnitTests`, `BuildScriptTests`, `BuildShapesTests`, `BallisticsTests`, `InstinctTests`, `IdlePolicyTests`, ... | nothing |
 | Live (real Paper) | `Live*Tests` (trading, building, farming, animals, fishing, fighting, shield, mining, gathering, voice, companion) | Java is downloaded and cached next to the AubsCraft tests; the Simple Voice Chat plugin jar (found from `VERTEX_VOICECHAT_JAR`, the AubsCraft repo, or the AubsCraft test servers) for the voice test |
 | GPU (`[Category("GPU")]`) | `ToolChoiceTests`, `BrainEndToEndTests`, `CompanionTests`, the speech tests | the GPU to itself, the models in the Ollama cache |
-| Explicit | `DecodeSpeedTests`, `DevServerScenarioTests` | run by name; the second needs the AubsCraft dev server on localhost (`VERTEX_DEV_RCON_PASSWORD`) |
+| Model install (`[Category("Models")]`) | `ModelSetupTests`: Vertex installs its own language model, in the library and through the dashboard host (progress, stop and resume, a clear error) | the internet; they install `all-minilm:22m` (about 46 MB) into a throwaway cache, from the real hosts (models.spawndev.com does not have it, so they also prove the fall-back to registry.ollama.ai) |
+| Explicit | `DecodeSpeedTests`, `DevServerScenarioTests`, `ModelSetupTests.TheDefaultModel_InstallsFromModelsSpawndevCom_Alone` | run by name; the second needs the AubsCraft dev server on localhost (`VERTEX_DEV_RCON_PASSWORD`); the last downloads the 4.9 GB default model from models.spawndev.com alone and needs about 6 GB free in the temp folder |
 
 Live tests start their own server on **a unique port per suite** (25932 voice, 25952 trading, 25954 building, 25956 farming, 25958 animals, 25960 tool choice, 25962
 companion, 25964 fighting, 25966 mining, 25968 shield, 25970 fishing, 25972 gathering, 25974 end to end): two suites never share one, but do not run the same suite twice at once.
@@ -28,6 +29,10 @@ Things that have cost time:
 - **Do not run anything else on the GPU or CPU during a GPU test.** A model run while another test runs shows 90-second timeouts that are not failures of the code.
 - **A GPU test that hangs can leave its Paper server running** and holding its log file; the next run then fails to start. Look for a stray `java.exe` on the suite's port.
 - **Do not kill `java.exe` blindly:** other projects (the AubsCraft dev server) run theirs.
+- **Compare models and builds with the tool-choice test run ALONE, never inside a full `TestCategory=GPU` run.** Measured 2026-11-01 on an RTX 2060 12 GB: alone it takes 352 to 421 s and
+  passes on every build tried; inside a full GPU run it took 1,226 s (and 1,645 s) and got more than two of 18 wrong. Not caused by the speech tests running just before it or by GPU memory
+  (351 s right after them, 8.1 to 9.5 GB of 12.3 GB in use); the cause is not found.
+- **A GPU older than Ampere (sm_80) needs SpawnDev.ILGPU.ML 5.8.1 or later:** 5.8.0 failed every ONNX Conv on an RTX 2060 (sm_75) with CUDA_ERROR_INVALID_PTX and nothing could hear.
 
 ## The tool-choice test
 

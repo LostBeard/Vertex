@@ -311,11 +311,14 @@ before it is a Vertex feature.
 ## M7 - App
 - [x] Dashboard (Vertex.exe, Blazor Server at http://localhost:5280): accounts, server, characters, model, voice,
   live status and transcript
-- [ ] Installable with no Ollama (TJ 2026-11-01: "installable through Vertex from models.spawndev.com when it is not already there"). Default language model: llama3.1:8b (the
-  tests are calibrated to it). Today only the Inno installer fetches it, from registry.ollama.ai; Vertex cannot install a missing model itself. Plan: Tuvok hosts
-  `models.spawndev.com/ollama/llama3.1/8b/`; Data adds an Ollama-layout installer to SpawnDev.AI.Server (sources in order: models.spawndev.com, registry.ollama.ai; Range resume;
-  SHA-256; manifest written last); Vertex shows "language model missing - Install" on the dashboard with progress, adds `vertex install-models`, and its installer tries the
-  new host first. Spec and asks: `_DevComms/2026-11-01-1140-Seven-TO-Tuvok-and-Data-vertex-installable-model-hosting.md`. Test: a real download, once, as an explicit heavy test.
+- [x] Installable with no Ollama (TJ 2026-11-01: "installable through Vertex from models.spawndev.com when it is not already there"; and the setup program should not install models,
+  "Ollama doesn't install models in its installer"). Default language model: llama3.1:8b (the tests are calibrated to it; TJ is open to other models and to ML features that make them
+  more capable). Done 2026-11-01: Tuvok hosts `models.spawndev.com/ollama/llama3.1/8b/`; Data's `OllamaModelInstaller` (SpawnDev.AI.Server 1.4.0-local.7: models.spawndev.com then
+  registry.ollama.ai, Range resume, SHA-256, manifest last) does the work; Vertex's `ModelSetup`, the Start tab's Install button with progress and `vertex install-models [model | --list]` sit on it;
+  the Inno setup installs Vertex only. Tests: `ModelSetupTests` (real downloads of a 46 MB model through the library and the dashboard host, including stop and resume and a failure) and an
+  Explicit 4.9 GB install from models.spawndev.com alone. Still to do: run that Explicit test once and record its time; the installer script itself has not been built here (Inno Setup).
+- [ ] Choosing between models: the Start tab lists what models.spawndev.com hosts (today only llama3.1:8b). Comparing a candidate = `ToolChoiceTests` alone with `VERTEX_TEST_MODEL` plus
+  `DecodeSpeedTests`; eight test fixtures still hard-code llama3.1 and should honour `VERTEX_TEST_MODEL`.
 
 ## M8 - Modded servers
 - [x] Fabric registry sync (fabric:registry/sync/direct + complete) - joins AubsCraft's "spooky" Fabric server

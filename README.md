@@ -39,14 +39,16 @@ Vertex runs on Windows with an NVIDIA GPU (CUDA; it falls back to OpenCL/CPU, sl
 
 **Installer (the easy way, for another PC).** `installer\build-installer.bat` publishes a self-contained build (no .NET needed on the target) and
 makes `installer\Output\VertexSetup-<version>.exe` with [Inno Setup](https://jrsoftware.org/isinfo.php) 6.1+. Setup installs for the current user
-(no administrator), adds a Start menu entry, optionally starts Vertex with Windows, warns when there is no NVIDIA driver, and downloads
-`llama3.1:8b` (4.9 GB, SHA-256 checked) into the Ollama cache if it is not there yet. Uninstall keeps the model and asks before deleting what Vertex
-remembers (`%APPDATA%\Vertex`: people, voices, faces, characters).
+(no administrator), adds a Start menu entry, optionally starts Vertex with Windows, and warns when there is no NVIDIA driver. It installs Vertex only, not models
+(Ollama's installer does not install models either): Vertex fetches its language model itself, the first time it is run (below). Uninstall keeps the models and
+asks before deleting what Vertex remembers (`%APPDATA%\Vertex`: people, voices, faces, characters).
 
 By hand instead:
 
-1. Install a chat model into the Ollama cache, e.g. `ollama pull llama3.1:8b` (Vertex reads Ollama's model files directly; Ollama
-   itself does not need to be running). The speech models download on first use.
+1. The language model. A new PC has none, and **Vertex installs it itself**: the **Start** tab says so and has an **Install** button (or run `vertex install-models`). It
+   downloads `llama3.1:8b` (4.9 GB, every file checked against its SHA-256, resumable if stopped) from models.spawndev.com, then from registry.ollama.ai if that fails,
+   into the Ollama model cache; Ollama does not have to be installed. If the cache already holds models (from Ollama or an earlier install) Vertex uses those.
+   `vertex install-models --list` shows the other models that can be installed. The speech, voice and face models download on first use.
 2. Start `Vertex.exe`. It lives in the notification area (the tray); a second launch opens the control panel at
    http://localhost:5280 (also reachable from other devices on your network). The panel has five tabs:
    **Start** (what to turn on), **Robot** (the Reachy Mini and its listening, seeing and speaking settings),
@@ -56,7 +58,7 @@ By hand instead:
 4. Talk to it: say its name ("Vertex, follow me", "Vertex, build me a little house"), in proximity voice (Simple Voice Chat) or in chat,
    or to the robot in the room. You can also type to it on the panel.
 
-Command line: `vertex login`, `vertex play <host> [--character Pixel] [--model llama3.1:8b] [--offline Name]`, `vertex ping <host>`.
+Command line: `vertex install-models [model | --list]`, `vertex login`, `vertex play <host> [--character Pixel] [--model llama3.1:8b] [--offline Name]`, `vertex ping <host>`.
 
 Characters live in `%APPDATA%\Vertex\characters\*.json` and can be edited on the panel. Built in: Vertex, Pixel, Captain, Bolt.
 
