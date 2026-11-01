@@ -26,6 +26,11 @@ public sealed class VertexSettings
     /// name if one is set, otherwise "Someone".
     /// </summary>
     public string OperatorName { get; set; } = "";
+    /// <summary>
+    /// Start Vertex (load the AI, connect the robot, join the game if that is on) as soon as the app starts, without anyone pressing Start: for a PC that is Vertex's own, started by
+    /// Windows at login. Off by default, because a started Vertex holds most of the GPU.
+    /// </summary>
+    public bool StartOnLaunch { get; set; }
     public bool Voice { get; set; } = true;
     /// <summary>Join the Minecraft server on start (Vertex runs without a game too: through the robot and this panel).</summary>
     public bool Minecraft { get; set; }
@@ -410,6 +415,22 @@ public sealed class VertexHost : IAsyncDisposable
         if (string.IsNullOrEmpty(Settings.Model) || !Models.Contains(Settings.Model))
             Settings.Model = Models.FirstOrDefault(m => m.StartsWith("llama3.1")) ?? Models.FirstOrDefault() ?? "";
         Changed?.Invoke();
+    }
+
+    /// <summary>
+    /// The tray app calls this once when it starts. With <see cref="VertexSettings.StartOnLaunch"/> on it does what the Start button does, so a PC that is Vertex's own comes up
+    /// running by itself. It says in the log why it did not (no language model installed yet) instead of failing, and a failed start is a log line, never an exception.
+    /// </summary>
+    public async Task StartOnLaunchAsync()
+    {
+        if (!Settings.StartOnLaunch) return;
+        if (NeedsModel)
+        {
+            Add(LineKind.System, "not starting by itself: the language model is not installed yet (press Install on the Start tab)");
+            return;
+        }
+        try { await StartAsync(); }
+        catch (Exception e) { Add(LineKind.Error, $"could not start by itself: {e.Message}"); }
     }
 
     /// <summary>Turns Vertex on: the AI, then the robot and the game as the settings say.</summary>

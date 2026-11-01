@@ -56,6 +56,7 @@
                         <details><summary class="hint">Install another model</summary><ModelInstallPicker Host="Host" /></details>
                     }
                 }
+                <Check @bind-Value="Host.Settings.StartOnLaunch" @bind-Value:after="Host.Settings.Save" Title="Start Vertex when this app starts">For a PC that is Vertex's own: it comes up running by itself, without anyone pressing Start. A started Vertex holds most of the GPU.</Check>
                 <Check @bind-Value="Host.Settings.Reachy" Disabled="@Busy" Title="Reachy Mini">Vertex's body at home. Its settings are on the Robot tab.</Check>
                 <Check @bind-Value="Host.Settings.Minecraft" Disabled="@Busy" Title="Join Minecraft on start">Its settings are on the Minecraft tab.</Check>
                 <div class="row" style="margin-top:12px">

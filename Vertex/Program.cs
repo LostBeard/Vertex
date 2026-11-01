@@ -236,6 +236,8 @@ static async Task<int> RunTrayAsync(string[] args)
     tray.Start();
     // Started by a person: show the control panel. Started by Windows at login (--background): just the icon.
     if (!args.Contains("--background")) Vertex.Host.VertexTray.OpenControlPanel();
+    // "Start Vertex when the app starts" (a PC that is Vertex's own): the same Start the button does, in the background so the panel and the icon are up at once.
+    _ = host.StartOnLaunchAsync();
     await app.WaitForShutdownAsync();
     await host.DisposeAsync();
     await app.DisposeAsync();
