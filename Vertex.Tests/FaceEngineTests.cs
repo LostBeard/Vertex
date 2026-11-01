@@ -24,7 +24,7 @@ public class FaceEngineTests
     public async Task AnIntroducedFaceIsRecognisedInAnotherPhoto_AndAnotherPersonIsNot()
     {
         using var context = MLContext.Create().ToContext();
-        using var accelerator = context.Devices.First(d => d.AcceleratorType == AcceleratorType.CPU).CreateAccelerator(context);
+        using var accelerator = MLContext.CreateCpuAccelerator(context);
         using var http = new HttpClient { Timeout = Timeout.InfiniteTimeSpan };
         using var engine = new AiFaceEngine(new HttpClientModelSource(http, FileModelStore.Default()), accelerator);
         var watcher = new FaceWatcher(engine.Registry, log: m => TestContext.Out.WriteLine("[faces] " + m));

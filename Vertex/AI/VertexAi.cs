@@ -24,7 +24,7 @@ public sealed class VertexAi : IAsyncDisposable
     /// A CPU accelerator of its own, for the small models that must never wait for the GPU lane: the voice detector has to hear the next sentence WHILE the language model
     /// prefills the answer to the last one (about 1.5 s, GPU held), or a person who carries on cannot be told from one who stopped.
     /// </summary>
-    public Accelerator CpuAccelerator => _cpu ??= _context.Devices.First(d => d.AcceleratorType == AcceleratorType.CPU).CreateAccelerator(_context);
+    public Accelerator CpuAccelerator => _cpu ??= SpawnDev.ILGPU.ML.MLContext.CreateCpuAccelerator(_context);
     public ModelRegistry Registry { get; }
     public AiChatEngine Chat { get; }
     public AiSpeechEngine Speech { get; }
@@ -89,7 +89,7 @@ public sealed class VertexAi : IAsyncDisposable
         // CUDA first: the desktop path. OpenCL/CPU keep it working anywhere, slowly.
         Accelerator = _context.Devices.FirstOrDefault(d => d.AcceleratorType == AcceleratorType.Cuda)?.CreateAccelerator(_context)
             ?? _context.Devices.FirstOrDefault(d => d.AcceleratorType == AcceleratorType.OpenCL)?.CreateAccelerator(_context)
-            ?? _context.Devices.First(d => d.AcceleratorType == AcceleratorType.CPU).CreateAccelerator(_context);
+            ?? SpawnDev.ILGPU.ML.MLContext.CreateCpuAccelerator(_context); // Velocity (SIMD) is the CPU compute backend; the plain CPU device is a debugging backend only
         Log?.Invoke($"accelerator: {Accelerator.Name} ({Accelerator.AcceleratorType})");
 
         var modelStore = SpawnDev.ILGPU.ML.Hub.FileModelStore.Default();
