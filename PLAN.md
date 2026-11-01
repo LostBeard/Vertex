@@ -311,6 +311,11 @@ before it is a Vertex feature.
 ## M7 - App
 - [x] Dashboard (Vertex.exe, Blazor Server at http://localhost:5280): accounts, server, characters, model, voice,
   live status and transcript
+- [ ] Installable with no Ollama (TJ 2026-11-01: "installable through Vertex from models.spawndev.com when it is not already there"). Default language model: llama3.1:8b (the
+  tests are calibrated to it). Today only the Inno installer fetches it, from registry.ollama.ai; Vertex cannot install a missing model itself. Plan: Tuvok hosts
+  `models.spawndev.com/ollama/llama3.1/8b/`; Data adds an Ollama-layout installer to SpawnDev.AI.Server (sources in order: models.spawndev.com, registry.ollama.ai; Range resume;
+  SHA-256; manifest written last); Vertex shows "language model missing - Install" on the dashboard with progress, adds `vertex install-models`, and its installer tries the
+  new host first. Spec and asks: `_DevComms/2026-11-01-1140-Seven-TO-Tuvok-and-Data-vertex-installable-model-hosting.md`. Test: a real download, once, as an explicit heavy test.
 
 ## M8 - Modded servers
 - [x] Fabric registry sync (fabric:registry/sync/direct + complete) - joins AubsCraft's "spooky" Fabric server
