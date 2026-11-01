@@ -21,6 +21,11 @@ public sealed class VertexSettings
     public string OfflineName { get; set; } = "Vertex";
     public string Character { get; set; } = "Vertex";
     public string Model { get; set; } = "";
+    /// <summary>
+    /// Who is typing on the dashboard (its chat box, from a PC or a tablet), by name: what is typed there is said to Vertex as this person. Blank: the robot's "Who talks to it"
+    /// name if one is set, otherwise "Someone".
+    /// </summary>
+    public string OperatorName { get; set; } = "";
     public bool Voice { get; set; } = true;
     /// <summary>Join the Minecraft server on start (Vertex runs without a game too: through the robot and this panel).</summary>
     public bool Minecraft { get; set; }
@@ -411,6 +416,7 @@ public sealed class VertexHost : IAsyncDisposable
         try
         {
             if (State != HostState.Idle) return;
+            CancelUnload(); // started again within the grace period: the models are still loaded, this start is quick
             Settings.Save();
             SetStatus(HostState.Starting, "Loading the AI...");
             await EnsureAiAsync();
@@ -682,6 +688,49 @@ public sealed class VertexHost : IAsyncDisposable
             SetStatus(HostState.Stopping, "Stopping...");
             await TearDownAsync();
             SetStatus(HostState.Idle, "Off");
+            ScheduleUnload();
+        }
+        finally { _gate.Release(); }
+    }
+
+    /// <summary>
+    /// How long the AI (the language model, speech, voice and face models: about 11 GB of an RTX 2060's 12) stays loaded on the GPU after Stop. A Stop followed by a Start within this time
+    /// is quick; after it Vertex gives the GPU back, so "off" really is off on a PC that plays games too (measured 2026-11-01: after Stop the card still held 11.3 GB until the app quit).
+    /// <see cref="Timeout.InfiniteTimeSpan"/> keeps it loaded until the app quits (the old behaviour).
+    /// </summary>
+    internal TimeSpan UnloadAfterStop { get; set; } = TimeSpan.FromMinutes(2);
+
+    private CancellationTokenSource? _unloadCts;
+
+    private void ScheduleUnload()
+    {
+        CancelUnload();
+        if (UnloadAfterStop == Timeout.InfiniteTimeSpan || _ai == null) return;
+        var cts = _unloadCts = new CancellationTokenSource();
+        var delay = UnloadAfterStop;
+        _ = Task.Run(async () =>
+        {
+            try { await Task.Delay(delay, cts.Token); await UnloadAiAsync(cts.Token); }
+            catch (OperationCanceledException) { }
+            catch (Exception e) { Add(LineKind.Error, $"could not give the GPU back: {e.Message}"); }
+        });
+    }
+
+    private void CancelUnload() => Interlocked.Exchange(ref _unloadCts, null)?.Cancel();
+
+    /// <summary>Disposes the AI while Vertex is off. Shown as "Stopping" so a Start cannot begin halfway through; a Start that wins the gate first cancels it.</summary>
+    private async Task UnloadAiAsync(CancellationToken ct)
+    {
+        await _gate.WaitAsync(ct);
+        try
+        {
+            if (State != HostState.Idle || _ai == null || ct.IsCancellationRequested) return;
+            var ai = _ai;
+            SetStatus(HostState.Stopping, "Giving the GPU back...");
+            _ai = null;
+            await ai.DisposeAsync();
+            SetStatus(HostState.Idle, "Off");
+            Add(LineKind.System, "gave the GPU back (Vertex is off); the next Start loads the models again");
         }
         finally { _gate.Release(); }
     }
@@ -697,12 +746,18 @@ public sealed class VertexHost : IAsyncDisposable
         _companion = null;
     }
 
+    /// <summary>The name what is typed on the dashboard is said under: the operator's own name, else the robot's usual speaker, else "Someone". (It was hard-coded to a person's name.)</summary>
+    internal static string OperatorLabel(VertexSettings settings)
+        => !string.IsNullOrWhiteSpace(settings.OperatorName) ? settings.OperatorName.Trim()
+         : !string.IsNullOrWhiteSpace(settings.ReachySpeaker) ? settings.ReachySpeaker.Trim()
+         : "Someone";
+
     /// <summary>The operator talks to Vertex (as if in chat, always addressed).</summary>
     public void Tell(string text)
     {
         if (_companion == null || string.IsNullOrWhiteSpace(text)) return;
         Add(LineKind.Chat, "You: " + text);
-        _companion.Post(new SaidEvent(Guid.Empty, "TJ", text, false));
+        _companion.Post(new SaidEvent(Guid.Empty, OperatorLabel(Settings), text, false));
     }
 
     public void StopTask()
@@ -723,6 +778,7 @@ public sealed class VertexHost : IAsyncDisposable
 
     public async ValueTask DisposeAsync()
     {
+        CancelUnload();
         await TearDownAsync();
         if (_ai != null) await _ai.DisposeAsync();
     }
