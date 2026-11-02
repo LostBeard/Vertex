@@ -65,6 +65,8 @@ public class ToolChoiceTests
         ("Vertex, follow me", "follow_player", []),
         ("Vertex, get me ten wood", "collect", []),
         ("Vertex, let's go fishing!", "fish", []),
+        ("Vertex, look around, what do you see?", "look_around", []),
+        ("Vertex, can you see any land from here?", "look_around", []),
     ];
 
     private static readonly Regex ToolLine = new(@"^\s+tool (\w+)\((.*)\) ->", RegexOptions.Compiled);

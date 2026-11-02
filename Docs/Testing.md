@@ -48,7 +48,7 @@ Things that have cost time:
 
 ## The tool-choice test
 
-`ToolChoiceTests` asks the real model 18 things a child might say and checks the first tool it calls and what its arguments contain (the test stops each task as soon as it
+`ToolChoiceTests` asks the real model 20 things a child might say and checks the first tool it calls and what its arguments contain (the test stops each task as soon as it
 starts: it tests the choice, not the doing). It is the measure behind most of [Architecture.md](Architecture.md): run it alone, it takes about four to seven minutes.
 
 **Where its time goes** (measured 2026-11-02, RTX 2060 12 GB, SpawnDev.AI.Server 1.4.0-local.15, llama3.1:8b on the batch decoder, GPU otherwise idle, the test took 7 m 24 s; every
@@ -61,6 +61,10 @@ Decode: 2,255 tokens in 125 s, median 17.7 tokens a second (16.1 to 18.9), at ab
 the 54 tokens a second Data measured on a 4070 on the same package: that was at a prompt of about 40 tokens, and every decode step reads the whole context's cache, so decode slows with
 context on any card. Data then measured the 4070 at 5,109 tokens: 28.1 tokens a second on the batch decoder, 33.0 on the session engine; the 2060's 17.7 is 0.63 of 28.1, the ratio of the
 cards' memory bandwidths, so the 2060 is performing as expected and the cost is the batch decoder's attention at long context (a library item).
+
+**On SpawnDev.AI.Server 1.4.0-local.17** (2026-11-02, the same card and test, one run, replies after the first): decode median 23.8 tokens a second (20.6 to 25.7) against 18.4 and 18.6 on
+local.15; the wait for the first word (PromptEvalMs) median 1.9 s against 2.5 to 2.7 s; the rate on the NEW prompt tokens median 101 a second against 43 to 86. The whole GPU category on that
+package: 77 passed, 0 failed, 8 not executed by design (85 tests, 57 minutes). One run each, and the second run of anything here is faster than the first, so these are indications.
 
 **Engine A/B on Vertex's own work: inconclusive** (2026-11-02, same card, `VERTEX_ENGINE=batch` or `session`, this test, one run each way in each order). Batch decoder: 6 m 55 s (first
 in its pair), then 5 m 39 s (second). Session engine: 4 m 32 s (second in its pair), then 6 m 13 s (first). The second run of a pair was faster in both pairs whichever engine it was, and
