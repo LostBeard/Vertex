@@ -55,7 +55,13 @@ reply logs one `reply:` line from the engine's own timers, the LAST generation p
 2.7 s per reply, about 1,570 prompt tokens a second; the first reply of the process took 32 s (kernels compiled on first use); all 32 summed 161 s, 129 s without that first one.
 Decode: 2,255 tokens in 125 s, median 17.7 tokens a second (16.1 to 18.9), at about 4,400 tokens of context. So prefill and decode cost about the same. This is NOT comparable with
 the 54 tokens a second Data measured on a 4070 on the same package: that was at a prompt of about 40 tokens, and every decode step reads the whole context's cache, so decode slows with
-context on any card. Data is measuring the 4070 at 4,400 tokens to separate the context cost from the card; until then there is no claim that the 2060 is slow.
+context on any card. Data then measured the 4070 at 5,109 tokens: 28.1 tokens a second on the batch decoder, 33.0 on the session engine; the 2060's 17.7 is 0.63 of 28.1, the ratio of the
+cards' memory bandwidths, so the 2060 is performing as expected and the cost is the batch decoder's attention at long context (a library item).
+
+**Engine A/B on Vertex's own work: inconclusive** (2026-11-02, same card, `VERTEX_ENGINE=batch` or `session`, this test, one run each way in each order). Batch decoder: 6 m 55 s (first
+in its pair), then 5 m 39 s (second). Session engine: 4 m 32 s (second in its pair), then 6 m 13 s (first). The second run of a pair was faster in both pairs whichever engine it was, and
+the same engine varied by 30 to 40 percent between runs; both engines chose the same tools. The first pair alone looked like a 34 percent win for the session engine: it was the order. So
+no engine is claimed faster for Vertex, the default stays `auto` (the batch decoder), and a one-run comparison of anything in this suite should not be believed. Why a second run is faster is not known.
 
 | Switch | Effect |
 |---|---|

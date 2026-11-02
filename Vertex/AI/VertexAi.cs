@@ -86,6 +86,18 @@ public sealed class VertexAi : IAsyncDisposable
         SpawnDev.ILGPU.ML.GGUF.GGUFGraphBuilder.EnableLastPositionLogits = !off.Contains("lastpos");
     }
 
+    /// <summary>
+    /// Which decoder runs the language model. VERTEX_ENGINE=session (the generator over the graph session) or batch (the batch decoder); anything else: the library's own choice (auto). Measured
+    /// 2026-11-02 by the library's author on a 4070: at a 5,100-token prompt decode is 28.1 tok/s on the batch decoder and 33.0 on the session engine (at 24 tokens 59.2 and 51.5), and Vertex's
+    /// prompts are 3,000 to 5,000 tokens. The switch exists to measure that on Vertex's own work.
+    /// </summary>
+    internal static SpawnDev.ILGPU.ML.Pipelines.GgufEngine EngineFromEnvironment() => Environment.GetEnvironmentVariable("VERTEX_ENGINE")?.Trim().ToLowerInvariant() switch
+    {
+        "session" or "generator" => SpawnDev.ILGPU.ML.Pipelines.GgufEngine.Generator,
+        "batch" or "batchdecoder" => SpawnDev.ILGPU.ML.Pipelines.GgufEngine.BatchDecoder,
+        _ => SpawnDev.ILGPU.ML.Pipelines.GgufEngine.Auto,
+    };
+
     public VertexAi(Action<string>? log = null, string? voicesFile = null)
     {
         EnableFastKernels();
@@ -100,7 +112,7 @@ public sealed class VertexAi : IAsyncDisposable
         var modelStore = SpawnDev.ILGPU.ML.Hub.FileModelStore.Default();
         var modelSource = new SpawnDev.ILGPU.ML.Hub.HttpClientModelSource(_http, modelStore);
         _models = modelSource;
-        Registry = new ModelRegistry(new OllamaCacheModelProvider(new OllamaModelStore()), Accelerator);
+        Registry = new ModelRegistry(new OllamaCacheModelProvider(new OllamaModelStore()) { Engine = EngineFromEnvironment() }, Accelerator);
         Chat = new AiChatEngine(Registry)
         {
             Tools = Tools,
