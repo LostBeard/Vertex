@@ -51,8 +51,11 @@ Things that have cost time:
 starts: it tests the choice, not the doing). It is the measure behind most of [Architecture.md](Architecture.md): run it alone, it takes about four to seven minutes.
 
 **Where its time goes** (measured 2026-11-02, RTX 2060 12 GB, SpawnDev.AI.Server 1.4.0-local.15, llama3.1:8b on the batch decoder, GPU otherwise idle, the test took 7 m 24 s; every
-reply logs one `reply:` line from the engine's own timers, the LAST generation pass of each call): 32 replies, prompts of 3,105 to 5,081 tokens (median 4,431). Prefill: median
-2.7 s per reply, about 1,570 prompt tokens a second; the first reply of the process took 32 s (kernels compiled on first use); all 32 summed 161 s, 129 s without that first one.
+reply logs one `reply:` line from the engine's own timers, the LAST generation pass of each call): 32 replies, prompts of 3,105 to 5,081 tokens (median 4,431). Prefill (the wait for the
+first word): median 2.7 s per reply; the first reply of the process took 32 s (kernels compiled on first use); all 32 summed 161 s, 129 s without that first one. **Correction (same day):**
+this was first written as "about 1,570 prompt tokens a second", which counted tokens the cache REUSES. About 95 percent of each prompt is reused; only about 100 to 350 tokens per pass
+are new (median 104 to 346 over four runs, at most 1,072), and the first word waited 2.2 to 5.6 s for them: a real prefill speed of about 43 to 86 NEW tokens a second, only two to five
+times the decode speed (reported to Data; a batched prefill of a hundred tokens should take a fraction of that).
 Decode: 2,255 tokens in 125 s, median 17.7 tokens a second (16.1 to 18.9), at about 4,400 tokens of context. So prefill and decode cost about the same. This is NOT comparable with
 the 54 tokens a second Data measured on a 4070 on the same package: that was at a prompt of about 40 tokens, and every decode step reads the whole context's cache, so decode slows with
 context on any card. Data then measured the 4070 at 5,109 tokens: 28.1 tokens a second on the batch decoder, 33.0 on the session engine; the 2060's 17.7 is 0.63 of 28.1, the ratio of the
@@ -61,7 +64,11 @@ cards' memory bandwidths, so the 2060 is performing as expected and the cost is 
 **Engine A/B on Vertex's own work: inconclusive** (2026-11-02, same card, `VERTEX_ENGINE=batch` or `session`, this test, one run each way in each order). Batch decoder: 6 m 55 s (first
 in its pair), then 5 m 39 s (second). Session engine: 4 m 32 s (second in its pair), then 6 m 13 s (first). The second run of a pair was faster in both pairs whichever engine it was, and
 the same engine varied by 30 to 40 percent between runs; both engines chose the same tools. The first pair alone looked like a 34 percent win for the session engine: it was the order. So
-no engine is claimed faster for Vertex, the default stays `auto` (the batch decoder), and a one-run comparison of anything in this suite should not be believed. Why a second run is faster is not known.
+no engine is claimed faster for Vertex, the default stays `auto` (the batch decoder), and a one-run comparison of anything in this suite should not be believed. Data's explanation of the
+second-run effect: the NVIDIA driver caches compiled kernels on disk between processes and the OS caches the 4.9 GB model file, so the first run after a change pays for both (neither affects
+decode once loaded). Compared the way he advised, per reply after the first, the order effect disappears and the engines differ consistently in both orders: decode 18.4 and 18.6 tokens a
+second on the batch decoder against 13.4 and 13.8 on the session engine (35 percent more; the ranges do not overlap), while the session engine's wait for the first word per new prompt
+token was 35 to 40 percent shorter. So on this card each engine wins one half, and neither wins overall.
 
 | Switch | Effect |
 |---|---|
