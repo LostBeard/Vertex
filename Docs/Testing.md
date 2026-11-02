@@ -67,8 +67,9 @@ the same engine varied by 30 to 40 percent between runs; both engines chose the 
 no engine is claimed faster for Vertex, the default stays `auto` (the batch decoder), and a one-run comparison of anything in this suite should not be believed. Data's explanation of the
 second-run effect: the NVIDIA driver caches compiled kernels on disk between processes and the OS caches the 4.9 GB model file, so the first run after a change pays for both (neither affects
 decode once loaded). Compared the way he advised, per reply after the first, the order effect disappears and the engines differ consistently in both orders: decode 18.4 and 18.6 tokens a
-second on the batch decoder against 13.4 and 13.8 on the session engine (35 percent more; the ranges do not overlap), while the session engine's wait for the first word per new prompt
-token was 35 to 40 percent shorter. So on this card each engine wins one half, and neither wins overall.
+second on the batch decoder against 13.4 and 13.8 on the session engine (35 percent more; the ranges do not overlap), while the session engine's wait for the first word, for prompts of
+about the same size and the same share reused from the cache, was 35 to 40 percent shorter (prompt tokens per millisecond of prefill: 2,077 and 2,227 against 1,652 and 1,592). So on this
+card each engine wins one half, and neither wins overall.
 
 | Switch | Effect |
 |---|---|
