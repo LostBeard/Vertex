@@ -26,7 +26,7 @@ public class LiveGatherTests
         if (_server != null) await _server.DisposeAsync();
     }
 
-    private async Task<(MinecraftClient Client, int X, int Z)> JoinAsync(string name, bool trees)
+    private async Task<(MinecraftClient Client, int X, int Z)> JoinAsync(string name, bool trees, bool leftoverTrunk = false)
     {
         var client = new MinecraftClient(GameProfile.Offline(name), new ClientOptions { Log = m => TestContext.Out.WriteLine($"[{name}] {m}") });
         using var cts = new CancellationTokenSource(Timeout);
@@ -35,12 +35,26 @@ public class LiveGatherTests
         int ax = (int)Math.Floor(px), az = (int)Math.Floor(pz);
         const int r = 20;
         await _server.CommandAsync("kill @e[type=!minecraft:player]");
+        if (leftoverTrunk)
+        {
+            // What an earlier test in this world leaves behind: a trunk 35 blocks off (outside the 20 cleared below, inside the 48 the log search covers) on floor that joins this arena's.
+            await _server.CommandAsync($"fill {ax + r + 1} 199 {az - 2} {ax + 38} 199 {az + 2} minecraft:stone");
+            await _server.CommandAsync($"fill {ax + 35} 200 {az} {ax + 35} 203 {az} minecraft:oak_log");
+        }
         await _server.CommandAsync($"fill {ax - r} 200 {az - r} {ax + r} 215 {az + r} minecraft:air");
         await _server.CommandAsync($"fill {ax - r} 199 {az - r} {ax + r} 199 {az + r} minecraft:stone");
         if (trees)
             // Five trunks of oak logs, four high, off to one side: 20 logs, 80 planks.
             for (var i = 0; i < 5; i++)
                 await _server.CommandAsync($"fill {ax + 12} 200 {az - 6 + i * 3} {ax + 12} 203 {az - 6 + i * 3} minecraft:oak_log");
+        else
+        {
+            // No trees means NO trees within the 48 blocks the log search covers. Every test in this world builds trunks in the sky near where ITS player spawned, and players spawn at
+            // different spots, so an earlier test's trunks can lie just outside the 20 blocks cleared above and be found (seen 2026-11-02: "I cut logs but couldn't make planks of them:
+            // I need 11 more oak log", twice, in full runs). The trunks are all at y 200 to 203: clear that band 60 blocks around, in two strips (a fill is limited to 32768 blocks).
+            await _server.CommandAsync($"fill {ax - 60} 200 {az - 60} {ax + 60} 203 {az} minecraft:air");
+            await _server.CommandAsync($"fill {ax - 60} 200 {az + 1} {ax + 60} 203 {az + 60} minecraft:air");
+        }
         await _server.CommandAsync($"clear {name}");
         await Task.Delay(1500);
         await _server.CommandAsync($"tp {name} {ax + 0.5} 200 {az + 0.5} -90 0");
@@ -139,11 +153,11 @@ public class LiveGatherTests
     public async Task WithNoTreesToCut_ItSaysSo()
     {
         const string name = "VertexNoTrees";
-        var (client, ax, az) = await JoinAsync(name, trees: false);
+        // A trunk an earlier test left (the server is shared) 35 blocks away: JoinAsync takes it down with the rest of the band. (This line used to try it with one fill of 81 x 7 x 81 = 45,927
+        // blocks, over the 32,768 a fill may touch: the server refused it and the trees stayed, so the test failed whenever a leftover trunk was in the 48 blocks the log search covers.)
+        var (client, ax, az) = await JoinAsync(name, trees: false, leftoverTrunk: true);
         await using var _ = client;
-        // The trees an earlier test planted nearby (the server is shared) are still standing: take them down.
-        await _server.CommandAsync($"fill {ax - 40} 200 {az - 40} {ax + 40} 206 {az + 40} minecraft:air replace minecraft:oak_log");
-        await Wait.UntilAsync(() => client.World.GetBlock(ax + 12, 202, az - 6)?.Name != "minecraft:oak_log", Timeout, () => "no trees");
+        await Wait.UntilAsync(() => client.World.GetBlock(ax + 35, 202, az)?.Name != "minecraft:oak_log", Timeout, () => "the leftover trunk is still standing");
         await client.WaitTicksAsync(20);
         var skills = new Skills(client);
 
