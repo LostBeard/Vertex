@@ -471,11 +471,12 @@ public sealed class VertexHost : IAsyncDisposable
             _companion = new Companion(_ai, Characters, character, Settings.Model);
             _companion.Log += AddLog;
             if (Settings.Reachy) await ConnectRobotCoreAsync();
+            string? joinFailure = null;
             if (Settings.Minecraft)
             {
                 // A game that cannot be joined leaves Vertex on without it (the robot, this panel): say why.
                 try { await JoinGameCoreAsync(); }
-                catch (Exception e) { SignInPrompt = null; Add(LineKind.Error, $"could not join {Settings.Server}: {e.Message}"); }
+                catch (Exception e) { SignInPrompt = null; joinFailure = e.Message; Add(LineKind.Error, $"could not join {Settings.Server}: {e.Message}"); }
             }
             // Started once its bodies are attached: the prompt and every body's tools are prefilled once, not again per
             // body (each Attach to a running companion prefills again).
@@ -485,6 +486,9 @@ public sealed class VertexHost : IAsyncDisposable
             SetStatus(HostState.Starting, "Getting the language model ready (the first time takes about a minute)...");
             await Task.WhenAny(_companion.WhenPrimed, Task.Delay(TimeSpan.FromMinutes(6)));
             SetStatus(HostState.Playing, OnStatus());
+            // The first join failed for a reason that may pass (live 2026-11-02: the server answered "An internal error occurred in your connection" a few seconds after he had been
+            // disconnected, and he stayed out until someone looked): try again by the same schedule as a dropped game. Scheduled only now, once he is Playing, which the retry requires.
+            if (joinFailure != null && Settings.Minecraft && ShouldRejoin(joinFailure)) ScheduleRejoin();
             if (_robot != null && _brain == null) _companion.Say($"Hi! It's {character.Name}. I'm here.");
         }
         catch (Exception e)

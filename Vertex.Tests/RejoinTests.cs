@@ -85,4 +85,41 @@ public class HostRejoinTests
             try { Directory.Delete(folder, true); } catch (IOException) { }
         }
     }
+
+    /// <summary>
+    /// Live 2026-11-02: he was restarted and the server answered his first login with "An internal error occurred in your connection". The first join failed, nothing retried it, and he sat on
+    /// in the tray, out of the game, for minutes. A first join that fails for a reason that may pass is now retried like a dropped game. Here the server is simply not there at first.
+    /// </summary>
+    [Test]
+    public async Task WhenTheFirstJoinFails_VertexTriesAgainByItself_AndGetsIn()
+    {
+        PaperServer? server = null;
+        var folder = Path.Combine(Path.GetTempPath(), "vertex-firstjoin-" + Guid.NewGuid().ToString("N"));
+        await using var host = new VertexHost(folder) { RejoinDelay = _ => TimeSpan.FromSeconds(5), UnloadAfterStop = Timeout.InfiniteTimeSpan };
+        try
+        {
+            host.Settings.Server = "127.0.0.1";
+            host.Settings.Port = Port;
+            host.Settings.Account = "";
+            host.Settings.OfflineName = "VertexFirstJoin";
+            host.Settings.Voice = false;
+            host.Settings.Minecraft = true;
+            host.Settings.Reachy = false;
+            await host.StartAsync().WaitAsync(Slow);
+            Assert.That(host.State, Is.EqualTo(HostState.Playing), host.Status);
+            Assert.That(host.InGame, Is.False, "there is no server to join yet");
+            Assert.That(host.Lines.Any(l => l.Text.StartsWith("could not join")), Is.True, "and it said so");
+            await Wait.UntilAsync(() => host.Status.Contains("rejoining"), TimeSpan.FromSeconds(30), () => host.Status + " | " + string.Join(" | ", host.Lines.TakeLast(4).Select(l => l.Text)));
+
+            server = await PaperServer.StartAsync("firstjoin", Port, TimeSpan.FromMinutes(4), Peaceful);
+            await Wait.UntilAsync(() => host.Lines.Any(l => l.Text.StartsWith("rejoined")), TimeSpan.FromMinutes(3), () => host.Status + " | " + string.Join(" | ", host.Lines.TakeLast(4).Select(l => l.Text)));
+            Assert.That(host.Client?.State, Is.EqualTo(SpawnDev.Minecraft.ConnectionState.Play), "really in the game");
+            await host.StopAsync();
+        }
+        finally
+        {
+            if (server != null) { try { await server.DisposeAsync(); } catch { } }
+            try { Directory.Delete(folder, true); } catch (IOException) { }
+        }
+    }
 }
