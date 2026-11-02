@@ -40,6 +40,28 @@ public class OutcomeReportTests
     }
 
     [Test]
+    public async Task AReflexJob_IsQuiet_AndIsNotTheBrainBeingGivenSomethingToDo()
+    {
+        var runner = new TaskRunner();
+        var started = new List<string>();
+        runner.Starting += started.Add;
+        var done = new TaskCompletionSource<TaskOutcome>();
+        runner.Finished += o => done.TrySetResult(o);
+        runner.StartReflex("stepping away from monsters", _ => Task.FromResult((false, "I could not get away from the monsters.")));
+        var outcome = await done.Task.WaitAsync(TimeSpan.FromSeconds(10));
+        Assert.That(outcome.Quiet, Is.True, "a reflex's ending is not spoken about");
+        Assert.That(outcome.For, Is.Null, "done for nobody in particular");
+        Assert.That(outcome.Goal, Is.Null, "and it is no step of a goal");
+        Assert.That(started, Is.Empty, "and it is not 'being given something to do', so a 'stay here' stays in force");
+
+        var normal = new TaskCompletionSource<TaskOutcome>();
+        var runner2 = new TaskRunner();
+        runner2.Finished += o => normal.TrySetResult(o);
+        runner2.Start("building a house", _ => Task.FromResult((false, "no")));
+        Assert.That((await normal.Task.WaitAsync(TimeSpan.FromSeconds(10))).Quiet, Is.False, "an ordinary job is still reported");
+    }
+
+    [Test]
     public void TheProjectsOffered_AreOnlyOnesHeCanDoWithWhatHeCarries()
     {
         var empty = VertexBrain.OwnProjectIdeas(_ => 0);
@@ -113,5 +135,35 @@ public class HonestReportTests
         var said = string.Join(" ", heard.Where(m => m.SenderId == client.Profile.Id).Select(m => m.Content));
         TestContext.Out.WriteLine("HE SAID: " + said);
         Assert.That(ClaimsDone.IsMatch(said), Is.False, "he told his friends it was done when the job failed: " + said);
+    }
+
+    /// <summary>
+    /// Live on AubsCraft 2026-11-02: a reflex's failed step away from a monster was announced aloud ("I couldn't get away from the monster!") every ten seconds. The sibling test above is the control:
+    /// an ordinary failed job IS spoken about within about ten seconds of ending.
+    /// </summary>
+    [Test]
+    public async Task AFailedReflexJob_IsNotAnnouncedToHisFriends()
+    {
+        var log = new ConcurrentQueue<string>();
+        var client = new MinecraftClient(GameProfile.Offline("VertexQuiet"));
+        using var cts = new CancellationTokenSource(Slow);
+        await client.ConnectAsync("127.0.0.1", Port, cts.Token);
+        var root = Path.Combine(Path.GetTempPath(), $"vertex-tests-honest-{Guid.NewGuid():N}");
+        _folders.Add(root);
+        await using var brain = new VertexBrain(client, null, _ai, new CharacterStore(Path.Combine(root, "characters")), Character.BuiltIn[0], _model);
+        await using var _c = client;
+        await using var friend = new MinecraftClient(GameProfile.Offline("FriendQuiet"));
+        await friend.ConnectAsync("127.0.0.1", Port, cts.Token);
+        var heard = new ConcurrentQueue<ChatMessage>();
+        friend.ChatReceived += heard.Enqueue;
+        brain.Log += m => { log.Enqueue(m); TestContext.Out.WriteLine(m); };
+        brain.Start();
+        brain.Reflexes.Enabled = false; // only the job started here
+
+        brain.Tasks.StartReflex("stepping away from monsters", _ => Task.FromResult((false, "I could not get away from the monsters.")));
+        await Wait.UntilAsync(() => log.Any(l => l.StartsWith("task ended:")), Slow, () => "no task end; log: " + string.Join(" | ", log.TakeLast(6)));
+        await Task.Delay(TimeSpan.FromSeconds(25));
+        var said = string.Join(" ", heard.Where(m => m.SenderId == client.Profile.Id).Select(m => m.Content));
+        Assert.That(said, Is.Empty, "a reflex's failure is logged, not announced: " + said);
     }
 }

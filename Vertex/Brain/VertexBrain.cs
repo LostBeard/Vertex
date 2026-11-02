@@ -221,6 +221,7 @@ public sealed class VertexBrain : IBody
         {
             case TaskEvent t:
                 Log?.Invoke($"task ended: {t.Outcome.Task}: {t.Outcome.Summary}");
+                if (t.Outcome.Quiet) return true; // a reflex's small job: not news, not remembered, and it does not count as having been busy
                 _lastActivity = Now();
                 var forGoal = t.Outcome.Interruption || t.Outcome.Goal is not { Done: null } stepGoal ? null : stepGoal;
                 Remember(t.Outcome);

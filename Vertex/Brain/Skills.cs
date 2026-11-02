@@ -1802,6 +1802,32 @@ public sealed partial class Skills(MinecraftClient client)
         return client.Entities.Values.Where(e => Hostile.Contains(e.Name) && e.DistanceTo(x, y, z) < within).OrderBy(e => e.DistanceTo(x, y, z)).FirstOrDefault();
     }
 
+    /// <summary>
+    /// Steps away from every hostile mob within 12 blocks: heads for ground at least 14 blocks (plus their spread) from the middle of them, re-aiming every few seconds in case they follow.
+    /// Used when idle and a monster is close. (FleeFromAsync, a straight line 12 blocks the other way from ONE monster, failed live on 2026-11-02 with "I couldn't get away from the
+    /// monster"; the cause is not known. In the flat test arena it also gets out of a ring of four creepers, in 24 s against 9 s for this, one run each. This one aims at the middle of all
+    /// of them and lets the path finder pick any way that ends far enough from them.)
+    /// </summary>
+    public async Task<(bool, string)> StepAwayFromMonstersAsync(double clearOf, CancellationToken ct)
+    {
+        for (var hop = 0; hop < 5; hop++)
+        {
+            ct.ThrowIfCancellationRequested();
+            var (px, py, pz) = client.Position;
+            var near = client.Entities.Values.Where(e => Hostile.Contains(e.Name) && e.DistanceTo(px, py, pz) < 12).ToList();
+            if (near.Count == 0 || near.Min(e => e.DistanceTo(px, py, pz)) >= clearOf) return (true, "I stepped away from the monsters.");
+            double cx = near.Average(e => e.X), cz = near.Average(e => e.Z);
+            var spread = near.Max(e => Math.Sqrt((e.X - cx) * (e.X - cx) + (e.Z - cz) * (e.Z - cz)));
+            using var step = CancellationTokenSource.CreateLinkedTokenSource(ct);
+            step.CancelAfter(TimeSpan.FromSeconds(4));
+            try { await client.GoToAsync(Goal.AwayFrom(cx, cz, 14 + spread), new PathOptions { MaxNodes = 8_000 }, step.Token); }
+            catch (OperationCanceledException) when (!ct.IsCancellationRequested) { }
+        }
+        var (x, y, z) = client.Position;
+        var closest = client.Entities.Values.Where(e => Hostile.Contains(e.Name)).Select(e => e.DistanceTo(x, y, z)).DefaultIfEmpty(double.MaxValue).Min();
+        return closest >= clearOf ? (true, "I stepped away from the monsters.") : (false, "I could not get away from the monsters.");
+    }
+
     /// <summary>Is there solid dry ground under (x, y, z) and open air for feet and head? (Water and lava are not open, and neither is a fire or a cactus's spot.)</summary>
     private bool DryStand(int x, int y, int z)
     {

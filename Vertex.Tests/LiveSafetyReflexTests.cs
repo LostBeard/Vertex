@@ -79,6 +79,34 @@ public class LiveSafetyReflexTests
         finally { reflexes.Enabled = false; tasks.Stop(); await _server.CommandAsync("kill @e[tag=vavoid]"); }
     }
 
+    /// <summary>TJ's picture: four creepers around him, one on each side, none lit (no AI). Note: the old straight-line flee also got out of this flat ring (24 s against 9 s, one run each), so this guards the behaviour but does not reproduce the failure seen live.</summary>
+    [Test]
+    public async Task Idle_WithFourCreepersAround_GetsOutOfTheRing()
+    {
+        var (client, ax, az) = await JoinAsync("VertexRing");
+        await using var _ = client;
+        foreach (var (dx, dz) in new[] { (4.5, 0.0), (-3.5, 0.0), (0.0, 4.5), (0.0, -3.5) })
+            await _server.CommandAsync($"summon minecraft:creeper {ax + 0.5 + dx} 200 {az + 0.5 + dz} {{NoAI:1b,Tags:[\"vring\"]}}");
+        await Wait.UntilAsync(() => client.Entities.Values.Count(e => e.Name == "minecraft:creeper") == 4, Timeout, () => "the four creepers");
+        double Nearest() => client.Entities.Values.Where(e => e.Name == "minecraft:creeper").Min(e => Away(client, e));
+        var skills = new Skills(client);
+        var tasks = new TaskRunner();
+        var ended = new List<TaskOutcome>();
+        tasks.Finished += o => { lock (ended) ended.Add(o); };
+        using var reflexes = new Reflexes(client, skills, tasks, () => new PlayStyle()) { Enabled = false };
+        try
+        {
+            await Task.Delay(TimeSpan.FromSeconds(4));
+            Assert.That(Nearest(), Is.LessThan(5), "with the reflexes off he stays in the ring");
+
+            reflexes.Enabled = true;
+            await Wait.UntilAsync(() => Nearest() >= 9.5, TimeSpan.FromSeconds(40), () => $"nearest creeper {Nearest():0.0} blocks; at {client.Position}; task {tasks.Current}; ended {string.Join("; ", ended.Select(o => o.Summary))}");
+            Assert.That(client.Health, Is.EqualTo(20f));
+            lock (ended) Assert.That(ended.All(o => o.Quiet), Is.True, "and nothing about it was meant to be spoken");
+        }
+        finally { reflexes.Enabled = false; tasks.Stop(); await _server.CommandAsync("kill @e[tag=vring]"); }
+    }
+
     [Test]
     public async Task Idle_InWater_GetsOutOfIt()
     {

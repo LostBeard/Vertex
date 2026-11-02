@@ -3,8 +3,9 @@ namespace Vertex.Brain;
 /// <summary>
 /// How a background task ended. For: the player it was done for (who asked), if anyone. Goal: the long-running goal
 /// it was a step of, if any. Interruption: an urgent job that cut in (a reflex), after which the interrupted one resumes.
+/// Quiet: a reflex's job (getting out of water, stepping away from a monster): logged, never spoken about or remembered.
 /// </summary>
-public sealed record TaskOutcome(string Task, bool Success, string Summary, string? For = null, bool Interruption = false, Objective? Goal = null);
+public sealed record TaskOutcome(string Task, bool Success, string Summary, string? For = null, bool Interruption = false, Objective? Goal = null, bool Quiet = false);
 
 /// <summary>
 /// Runs one long activity at a time (follow, collect, go to...). Starting a new one cancels the current one,
@@ -45,6 +46,13 @@ public sealed class TaskRunner
     }
 
     /// <summary>
+    /// A reflex's own small job while nothing else runs (step away from a monster, get out of the water). Unlike <see cref="Start"/> it is not "being given something to do" (a "stay here"
+    /// stays in force), belongs to no goal and no player, and its ending is quiet: live on 2026-11-02 a failed step away was announced aloud, every ten seconds.
+    /// </summary>
+    public void StartReflex(string description, Func<CancellationToken, Task<(bool Success, string Summary)>> work)
+        => Run(description, work, null, null, null, quiet: true);
+
+    /// <summary>
     /// Does something urgent now (get away from a creeper), then goes back to what it was doing (following
     /// someone, guarding...). The urgent job's ending is reported like any other; the resumed one quietly restarts.
     /// </summary>
@@ -57,7 +65,7 @@ public sealed class TaskRunner
 
     private void Run(string description, Func<CancellationToken, Task<(bool Success, string Summary)>> work,
         (string Description, Func<CancellationToken, Task<(bool, string)>> Work, string? For, Objective? Goal)? resume,
-        string? forPlayer, Objective? goal, bool interruption = false)
+        string? forPlayer, Objective? goal, bool interruption = false, bool quiet = false)
     {
         CancellationTokenSource cts;
         lock (_lock)
@@ -75,7 +83,7 @@ public sealed class TaskRunner
             try
             {
                 var (ok, summary) = await work(cts.Token);
-                outcome = new TaskOutcome(description, ok, summary, forPlayer, interruption, goal);
+                outcome = new TaskOutcome(description, ok, summary, forPlayer, interruption, goal, quiet);
             }
             catch (OperationCanceledException) when (cts.IsCancellationRequested)
             {
@@ -83,7 +91,7 @@ public sealed class TaskRunner
             }
             catch (Exception e)
             {
-                outcome = new TaskOutcome(description, false, "failed: " + e.Message, forPlayer, interruption, goal);
+                outcome = new TaskOutcome(description, false, "failed: " + e.Message, forPlayer, interruption, goal, quiet);
             }
             lock (_lock)
             {

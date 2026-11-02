@@ -70,10 +70,10 @@ public sealed class Reflexes : IDisposable
 
         // Idle with a monster close: do not stand there (live on AubsCraft, 2026-11-01, he stood among four creepers). Creepers are always walked away from; any other monster gets the
         // same fight-or-flight rule as one that hurt us. Not while a job runs (jobs have their own care), and at most once every 10 seconds.
-        if (!_tasks.IsBusy && _tick >= _nextAvoidTick && _skills.NearestHostile(AvoidWithin) is { } threat)
+        if (!_tasks.IsBusy && _tick >= _nextAvoidTick && _skills.NearestHostile(AvoidWithin) != null)
         {
             _nextAvoidTick = _tick + 200;
-            Respond(threat, "attacked me", alwaysFlee: true);
+            _tasks.StartReflex("stepping away from monsters", ct => _skills.StepAwayFromMonstersAsync(AvoidWithin + 2, ct));
             return;
         }
 
@@ -82,7 +82,7 @@ public sealed class Reflexes : IDisposable
         if (!_tasks.IsBusy && _inWaterChecks >= 8 && _tick >= _nextLeaveWaterTick)
         {
             _nextLeaveWaterTick = _tick + 200;
-            _tasks.Start("getting out of the water", ct => _skills.LeaveWaterAsync(ct));
+            _tasks.StartReflex("getting out of the water", ct => _skills.LeaveWaterAsync(ct));
             return;
         }
 
@@ -111,14 +111,14 @@ public sealed class Reflexes : IDisposable
     }
 
     /// <summary>
-    /// Fight or run from a monster: always run from a creeper (hitting one makes it blow up) and from any monster that has not hurt us (a brave character fights one that did; picking fights
-    /// with whatever wanders by is not bravery), otherwise whatever the policy says for this character.
+    /// A monster hurt us: always run from a creeper (hitting one makes it blow up), otherwise whatever the policy says for this character (a brave one fights back). A monster that merely
+    /// wandered close is never fought: the idle reflex only steps away from it.
     /// </summary>
-    private void Respond(Entity attacker, string why, bool alwaysFlee = false)
+    private void Respond(Entity attacker, string why)
     {
         var features = ReflexFeatures.From(_client, attacker);
         var bravery = _style().Bravery;
-        var flee = alwaysFlee || attacker.Name == "minecraft:creeper";
+        var flee = attacker.Name == "minecraft:creeper";
         Run(async () =>
         {
             var action = flee ? ReflexAction.Flee : await Policy.DecideAsync(features, bravery);
