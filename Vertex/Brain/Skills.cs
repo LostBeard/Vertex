@@ -781,8 +781,16 @@ public sealed partial class Skills(MinecraftClient client)
             "north" or "n" => BlockFace.North, "south" or "s" => BlockFace.South, "east" or "e" => BlockFace.East, "west" or "w" => BlockFace.West,
             _ => Facing(site.X + w / 2.0, site.Z + d / 2.0, ox, oz),
         };
-        var script = BuildShapes.Script(kind, w, d, h, wallName, roof, side,
+        string MakeScript(string wall, string roofOf) => BuildShapes.Script(kind, w, d, h, wall, roofOf, side,
             windows: Have(s => s.Name == "minecraft:glass") >= 3, door: Have(Blueprints.IsDoor) > 0, torch: Have(s => s.Name == "minecraft:torch") > 0);
+        var script = MakeScript(wallName, roof);
+        // No material asked for, and the one we carry most of is short and not something we can fetch (5 dirt for a house that needs 71: live on AubsCraft, 2026-11-01, he stood still): build
+        // from wood instead, which GatherForBuildAsync cuts and crafts. A material that was ASKED for is left alone, so "build it of dirt" still says how much dirt is missing.
+        if (kind != "pen" && string.IsNullOrWhiteSpace(material) && string.IsNullOrWhiteSpace(roofMaterial) && wallName != "planks" && !Fetchable(wallName) && Shortage(script))
+        {
+            (wallName, wallPretty) = ("planks", "wooden");
+            script = MakeScript(wallName, wallName);
+        }
         // Wood or stone that is missing is fetched first (the spot is already chosen, so the walk to the trees does not lose it).
         var (gathered, gatherNote) = await GatherForBuildAsync(script, ct);
         if (!gathered) return (false, gatherNote!);
@@ -790,6 +798,16 @@ public sealed partial class Skills(MinecraftClient client)
         if (!ok) return (false, (gatherNote == null ? "" : gatherNote + " ") + text.Replace("build that", $"build a {w} by {d} {wallPretty} {kind}"));
         if (gatherNote != null) text = gatherNote + " " + text;
         return (true, $"{text} It is a {wallPretty} {kind}" + (kind is "house" or "castle" ? $", with the {(kind == "castle" ? "gate" : "door")} on the {Name(side)} side." : "."));
+    }
+
+    /// <summary>Material <see cref="GatherForBuildAsync"/> can fetch by itself (wood via logs, cobblestone via a pickaxe).</summary>
+    private static bool Fetchable(string material) => material.Bare() is "planks" or "cobblestone" || material.EndsWith("_planks");
+
+    /// <summary>True if we carry less of something than the script needs.</summary>
+    private bool Shortage(string scriptText)
+    {
+        try { return BuildScript.Parse(scriptText, D).Needs.Any(kv => Have(BuildScript.Matcher(kv.Key)) < kv.Value); }
+        catch (BuildScriptException) { return false; }
     }
 
     /// <summary>Carries on with the last build where it stands: blocks already placed are left alone, the rest are placed.</summary>

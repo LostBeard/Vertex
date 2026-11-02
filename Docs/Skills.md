@@ -40,7 +40,9 @@ behind. It digs toward a drop only right after mining ore, and only close by.
 `build_shape` builds a named shape near you, with the doorway or gate facing you. It uses the wood or stone it carries most of unless you
 name a material ("a stone castle"). It uses windows (glass), a door and a torch only if it carries them. **If it is short of wood or
 cobblestone it gets it first**: it cuts logs and makes planks of them (and the fences and gate for a pen), or mines cobblestone with a
-pickaxe, then builds. With no trees or stone within reach it says so instead of building half a house.
+pickaxe, then builds. With no trees or stone within reach it says so instead of building half a house. If no material was named and the
+block it carries most of is short and is not wood or cobblestone (5 dirt for a house that needs 71), it builds from wood instead; a material
+you name is never swapped, so "build it of dirt" still says how much dirt is missing.
 
 | Shape | Also called | Default size | Notes |
 |---|---|---|---|

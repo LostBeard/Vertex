@@ -77,6 +77,33 @@ public class LiveGatherTests
         Assert.That(planks, Is.GreaterThanOrEqualTo(30), "a house worth of planks is standing");
     }
 
+    /// <summary>
+    /// Live on AubsCraft 2026-11-01 (TJ, watching): on his own he chose "build a house" while carrying 5 dirt, took dirt as the wall material because it was what he carried most of, needed 71
+    /// and stood still. A few of something he cannot fetch must not beat a material he can: no material named, 5 dirt in the pockets, logs nearby, he builds from wood.
+    /// </summary>
+    [Test]
+    public async Task AHouseWithAHandfulOfDirt_NoMaterialNamed_IsBuiltFromLogsItCuts()
+    {
+        const string name = "VertexDirt";
+        var (client, ax, az) = await JoinAsync(name, trees: true);
+        await using var _ = client;
+        await _server.CommandAsync($"give {name} minecraft:dirt 5");
+        await Wait.UntilAsync(() => client.Inventory.Count("dirt") == 5, Timeout, () => "the dirt, have " + client.Inventory.Count("dirt"));
+        var skills = new Skills(client);
+
+        using var cts = new CancellationTokenSource(TimeSpan.FromMinutes(3));
+        var (ok, text) = await skills.BuildShapeAsync("house", 0, 0, 0, null, null, null, null, cts.Token);
+        TestContext.Out.WriteLine(text);
+        Assert.That(ok, Is.True, text);
+        Assert.That(text, Does.Contain("cut").And.Contain("log"), "it says it cut logs first");
+        var planks = 0;
+        for (var x = ax - 8; x <= ax + 10; x++)
+        for (var z = az - 8; z <= az + 8; z++)
+            for (var y = 200; y <= 204; y++)
+                if (client.World.GetBlock(x, y, z)?.Name.EndsWith("_planks") == true) planks++;
+        Assert.That(planks, Is.GreaterThanOrEqualTo(30), "a house worth of planks is standing");
+    }
+
     [Test]
     public async Task APenForAnimals_IsAFenceRingWithAGate_MadeFromLogsItCuts()
     {
