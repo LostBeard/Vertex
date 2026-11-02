@@ -111,6 +111,10 @@ Built in, without being asked:
 - It **backs off at three hearts** instead of fighting on.
 - **Reflexes** run without waiting for the language model: eating when hungry and idle, getting away from a lit creeper, coming up for air under
   water, wearing better armor as soon as it has it, and fight-or-flight when a mob hurts it (a small trained policy, with a hand-written rule behind it).
+- **Idle safety** (added 2026-11-01 after he stood in a river among four creepers): with no job running, a hostile mob within 8 blocks makes him
+  walk away from it (always away: a brave character fights one that hurt it, it does not pick fights with whatever wanders by), and standing in
+  water for about 2.5 seconds makes him walk to the nearest dry ground within 16 blocks. Each can start once per 10 seconds. He also chooses no
+  project of his own while he is in water or a hostile mob is within 16 blocks.
 
 ## Remembering
 

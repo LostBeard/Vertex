@@ -253,7 +253,14 @@ public sealed class VertexBrain : IBody
         => Client.GameMode == GameMode.Survival
         && Client.World.DayTime % 24000 is >= 0 and < 12000
         && Client.Health >= 14 && Client.Food >= 12
-        && now - _lastProjectAt >= ProjectCooldown;
+        && now - _lastProjectAt >= ProjectCooldown
+        && SafeForOwnProject(Client.BodySnapshot().InWater, Skills.NearestHostile(ProjectHostileRadius) != null);
+
+    /// <summary>How close a monster may be for him to start a project of his own (blocks).</summary>
+    internal const double ProjectHostileRadius = 16;
+
+    /// <summary>No project of his own while standing in water or with a monster close (live on AubsCraft, 2026-11-01: he stood in a river among four creepers and chose to build a platform).</summary>
+    internal static bool SafeForOwnProject(bool inWater, bool hostileNear) => !inWater && !hostileNear;
 
     /// <summary>
     /// The projects Vertex may be offered on its own: only ones it can do with what it carries or can gather. It was offered "plant some crops" with no seeds in its pockets (2026-11-01: it

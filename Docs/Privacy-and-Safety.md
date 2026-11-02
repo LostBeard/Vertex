@@ -27,7 +27,8 @@ the log setting off if the robot is somewhere private conversations happen.
 - **It does not build on top of a build.** A build spot has to be natural, flat, clear ground; blocks that look like someone's build (planks, glass, doors, bricks...)
   are never a foundation, and walking never digs them.
 - **It does not mine into lava.** Ore that touches lava is left alone and it says why.
-- **It backs off before it is in danger:** at three hearts it stops fighting and keeps following; a lit creeper is run from.
+- **It backs off before it is in danger:** at three hearts it stops fighting and keeps following; a lit creeper is run from; idle, it walks away from any hostile mob within 8 blocks and
+  out of water, and starts no project of its own in water or near a monster.
 - **It does not go to a server on its own.** The default server is set on the **Minecraft** tab; tests never connect to a live server.
 - **It says when it cannot do something** ("I need a bow to shoot", "I can't find open water") instead of pretending. A reply that claims an action without
   taking it is caught and retried once, and not kept in its memory.

@@ -33,6 +33,14 @@ public class SelfDirectedPolicyTests
     [Test] public void StudyingUnknownBlocks_ComesBeforeAProject() => Assert.That(Decide(unstudied: true), Is.EqualTo(IdleAction.StudyBlocks));
 
     [Test]
+    public void NoProjectOfHisOwn_InWater_OrWithAMonsterClose()
+    {
+        Assert.That(VertexBrain.SafeForOwnProject(inWater: false, hostileNear: false), Is.True);
+        Assert.That(VertexBrain.SafeForOwnProject(inWater: true, hostileNear: false), Is.False, "standing in a river");
+        Assert.That(VertexBrain.SafeForOwnProject(inWater: false, hostileNear: true), Is.False, "four creepers around him");
+    }
+
+    [Test]
     public void AGoalHeSetsForHimself_IsNobodys_ButAFriendsRequestKeepsItsOwner()
     {
         Assert.That(VertexBrain.GoalOwner(choosingOwnProject: true, requested: "Aubri"), Is.Null, "the model's habitual player 'me' must not make his own project Aubri's");
@@ -123,6 +131,30 @@ public class SelfDirectedPlayTests
         await Task.Delay(TimeSpan.FromSeconds(45));
         Assert.That(log.Any(l => l.Contains("choosing a project of my own")), Is.False, "off means off: " + string.Join(" | ", log.TakeLast(5)));
         Assert.That(log.Any(l => l.StartsWith("  tool ")), Is.False, "and no tool ran by itself");
+    }
+
+    /// <summary>Live on AubsCraft 2026-11-01: he stood in a river among four creepers and chose to build a platform. In water he chooses nothing; on dry land he does (the control).</summary>
+    [Test]
+    public async Task InWater_HeDoesNotChooseAProject_ButOnLandHeDoes()
+    {
+        var (client, brain, log) = await JoinAsync("VertexSwim", selfDirected: false);
+        await using var _c = client;
+        await using var _b = brain;
+        brain.Reflexes.Enabled = false; // the reflex would climb out by itself; this is about the choosing
+        var (px, _, pz) = client.Position;
+        int ax = (int)Math.Floor(px), az = (int)Math.Floor(pz);
+        await _server.CommandAsync($"fill {ax - 8} 197 {az - 8} {ax + 8} 199 {az + 8} minecraft:stone");
+        await _server.CommandAsync($"fill {ax - 8} 200 {az - 8} {ax + 8} 206 {az + 8} minecraft:air");
+        await _server.CommandAsync($"fill {ax - 3} 199 {az - 3} {ax + 3} 199 {az + 3} minecraft:water");
+        await _server.CommandAsync($"tp VertexSwim {ax + 0.5} 200 {az + 0.5}");
+        await Wait.UntilAsync(() => client.BodySnapshot().InWater, TimeSpan.FromSeconds(30), () => $"at {client.Position}");
+        log.Clear();
+        brain.SelfDirectedPlay = true;
+        await Task.Delay(TimeSpan.FromSeconds(40));
+        Assert.That(log.Any(l => l.Contains("choosing a project of my own")), Is.False, "in the water he chooses nothing: " + string.Join(" | ", log.TakeLast(5)));
+
+        await _server.CommandAsync($"tp VertexSwim {ax + 6.5} 200 {az + 6.5}");
+        await Wait.UntilAsync(() => log.Any(l => l.Contains("choosing a project of my own")), Slow, () => "on dry land he never chose; in water " + client.BodySnapshot().InWater + "; log: " + string.Join(" | ", log.TakeLast(6)));
     }
 
     [Test]

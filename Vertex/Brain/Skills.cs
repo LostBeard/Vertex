@@ -1795,6 +1795,46 @@ public sealed partial class Skills(MinecraftClient client)
         return (false, "A creeper is chasing me!");
     }
 
+    /// <summary>The nearest hostile mob within `within` blocks, if any.</summary>
+    public Entity? NearestHostile(double within)
+    {
+        var (x, y, z) = client.Position;
+        return client.Entities.Values.Where(e => Hostile.Contains(e.Name) && e.DistanceTo(x, y, z) < within).OrderBy(e => e.DistanceTo(x, y, z)).FirstOrDefault();
+    }
+
+    /// <summary>Is there solid dry ground under (x, y, z) and open air for feet and head? (Water and lava are not open, and neither is a fire or a cactus's spot.)</summary>
+    private bool DryStand(int x, int y, int z)
+    {
+        var w = client.World;
+        var below = w.GetState(x, y - 1, z);
+        if (below <= 0 || !D.HasCollision(below) || (D.StateFlags[below] & (GameData.FlagWater | GameData.FlagLava)) != 0) return false;
+        if (!D.CollisionBoxes(below).Any(b => b.MaxY >= 1.0) || D.BlockOf(below).Name is "minecraft:magma_block" or "minecraft:cactus" or "minecraft:campfire" or "minecraft:soul_campfire") return false;
+        return Open(w.GetState(x, y, z)) && Open(w.GetState(x, y + 1, z));
+    }
+
+    /// <summary>
+    /// Gets out of the water: walks to the nearest dry, solid, open spot within 16 blocks. Live on AubsCraft (2026-11-01) he stood in a river doing nothing: nothing ever told him to leave it.
+    /// </summary>
+    public async Task<(bool, string)> LeaveWaterAsync(CancellationToken ct)
+    {
+        if (!client.BodySnapshot().InWater) return (true, "I'm not in the water.");
+        var (px, py, pz) = client.Position;
+        int bx = (int)Math.Floor(px), bz = (int)Math.Floor(pz), by = (int)Math.Floor(py + 1e-6);
+        (int X, int Y, int Z)? best = null;
+        var bestD = int.MaxValue;
+        for (var dx = -16; dx <= 16; dx++)
+        for (var dz = -16; dz <= 16; dz++)
+        {
+            var d2 = dx * dx + dz * dz;
+            if (d2 > 256 || d2 >= bestD || !client.World.IsLoaded(bx + dx, bz + dz)) continue;
+            for (var y = by + 3; y >= by - 3; y--)
+                if (DryStand(bx + dx, y, bz + dz)) { best = (bx + dx, y, bz + dz); bestD = d2; break; }
+        }
+        if (best is not var (x, y2, z)) return (false, "I'm in the water and I can't see dry land close by.");
+        var ok = await client.GoToAsync(Goal.Block(x, y2, z), new PathOptions { MaxNodes = 8_000 }, ct);
+        return ok ? (true, "I got out of the water.") : (false, "I couldn't get out of the water.");
+    }
+
     /// <summary>Runs 12 blocks straight away from a mob (what a careful character does when one hurts it).</summary>
     public async Task<(bool, string)> FleeFromAsync(Entity attacker, CancellationToken ct)
     {
