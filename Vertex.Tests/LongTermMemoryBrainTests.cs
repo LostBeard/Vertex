@@ -62,6 +62,12 @@ public class LongTermMemoryBrainTests
         foreach (var f in _folders) { try { if (Directory.Exists(f)) Directory.Delete(f, true); } catch (IOException) { } }
     }
 
+    private static string ReadShared(string path)
+    {
+        try { using var s = new FileStream(path, FileMode.Open, FileAccess.Read, FileShare.ReadWrite | FileShare.Delete); using var r = new StreamReader(s); return r.ReadToEnd(); }
+        catch (IOException) { return ""; }
+    }
+
     private string NewFolder() { var f = Path.Combine(Path.GetTempPath(), $"vertex-tests-longterm-{Guid.NewGuid():N}"); _folders.Add(f); return f; }
 
     /// <summary>One "session": Vertex joins as <paramref name="name"/> with the given memory, a friend beside him; returns what Vertex said to a question once asked.</summary>
@@ -107,6 +113,10 @@ public class LongTermMemoryBrainTests
             brain.Tasks.Start("building a lighthouse", _ => Task.FromResult((true, "I built a purple glass lighthouse for Aubs by the river")));
             await Wait.UntilAsync(() => first.Store.Count == 1, Slow, () => "nothing was written to the memory");
             Assert.That(first.Store.List()[0].Text, Does.Contain("purple glass lighthouse").And.Contain("building a lighthouse"));
+            // The entry is in the store a moment before the brain's background save has put it on disk; closing and reopening in between loses it (seen 2026-11-02: reopened with 0).
+            // A restart is a real thing, so what is waited for is the file.
+            var metaFile = Path.Combine(memoryFolder, "memory.json");
+            await Wait.UntilAsync(() => File.Exists(metaFile) && File.Exists(Path.Combine(memoryFolder, "memory.vectors")) && ReadShared(metaFile).Contains("lighthouse"), TimeSpan.FromSeconds(30), () => "the memory never reached the disk");
         }
 
         // Session two: reopened from the files, a friend asks.

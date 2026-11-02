@@ -103,6 +103,7 @@ driver spills.
 
 ## Libraries and their versions
 
-Vertex is built on local-feed builds of `SpawnDev.ILGPU.ML` (5.3.11-local.6), `SpawnDev.AI.Server` and `SpawnDev.Reachy` while the chain is
-verified; the released versions on nuget.org lag behind. Local builds live in a folder feed on the development machine (never copy a package
+Vertex is built on local-feed builds of `SpawnDev.AI.Server` (1.4.0-local.15, 2026-11-02, which brings `SpawnDev.ILGPU.ML` 5.8.1-local.10 and
+`SpawnDev.ILGPU` 5.4.15-local.4) and `SpawnDev.Reachy` while the chain is verified; the released versions on nuget.org lag behind. A new package is
+verified with the full GPU test category on the RTX 2060 before it is deployed (and `bin`/`obj` are deleted first). Local builds live in a folder feed on the development machine (never copy a package
 into it: add it with `nuget add`), and a library defect found here is fixed in the library and covered by a test there.

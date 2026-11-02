@@ -274,8 +274,9 @@ public sealed class VertexBrain : IBody
         var good = hits.Where(h => h.Similarity >= MinRecallSimilarity).ToList();
         if (good.Count == 0) return "I don't remember anything about that.";
         Log?.Invoke($"  (remembered {good.Count}: {string.Join(" | ", good.Select(h => $"{h.Similarity:0.00}"))})");
-        return "OK, this is what my log says (things I did; say it as I, add nothing):\n"
-            + string.Join("\n", good.Select(h => $"- {Ago(DateTime.UtcNow - new DateTime(h.Entry.TimeTicks, DateTimeKind.Utc))}: {h.Entry.Text}"));
+        return "OK, this is what my log says (things I did):\n"
+            + string.Join("\n", good.Select(h => $"- {Ago(DateTime.UtcNow - new DateTime(h.Entry.TimeTicks, DateTimeKind.Utc))}: {h.Entry.Text}"))
+            + "\nNow tell my friend what it says, in one short sentence, as I. Add nothing the log does not say.";
     }
 
     async Task<bool> IBody.HandleEventAsync(BrainEvent e, TurnClock clock, CancellationToken ct)
