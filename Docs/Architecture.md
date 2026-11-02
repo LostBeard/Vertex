@@ -112,14 +112,18 @@ nvidia-smi after each (`GpuMemoryBreakdownTests`; one run, figures to the neares
 | The context and the accelerator | +80 MiB |
 | The language model: weights, cache sized for 8,192 tokens, first pass | +6,846 MiB |
 | The command matcher (MiniLM) | +112 MiB |
-| Speech to text + speaker + end of turn + one voice | +3,690 MiB |
+| Speech to text (Parakeet) | +1,477 MiB |
+| Who is talking (the speaker model) | +2,089 MiB |
+| Has the speaker finished (Smart Turn) | +110 MiB |
+| One voice, one short sentence (Kokoro) | +46 MiB |
 | Live words (streaming speech) | about 0 |
 | Faces | +50 MiB |
 | Long-term memory (a second MiniLM) | about 0 |
 | After one call with a prompt of about 4,000 tokens | +348 MiB |
 | **Total** | **11,511 MiB used, 777 MiB free** |
 
-The speech stack is the second biggest thing on the card (about 3.7 GB), next to the language model's 6.8 GB. With Vertex running in the game, Windows' per-process counters showed 11,115 MiB
+The speech stack is the second biggest thing on the card (about 3.7 GB: the speaker model is the largest part of it, bigger than speech to text), next to the language model's 6.8 GB.
+(A second run of the same test gave the same totals to within 2 MiB.) With Vertex running in the game, Windows' per-process counters showed 11,115 MiB
 dedicated and 76 MiB shared (spilled into system RAM): nothing meaningful spills, but under 1 GB is left for anything else (a browser, a game).
 
 ## Libraries and their versions

@@ -43,8 +43,15 @@ public class GpuMemoryBreakdownTests
         await Mark($"the language model {model} (weights + cache + first pass)");
         await ai.LoadIntentsAsync();
         await Mark("the command matcher (MiniLM)");
-        await ai.WarmUpAsync("kokoro:af_heart");
-        await Mark("speech to text + speaker + end of turn + one voice");
+        // WarmUpAsync loads these four in this order; here one at a time so each is measured.
+        await ai.Speech.EnsureReadyAsync();
+        await Mark("speech to text (Parakeet)");
+        await ai.Speakers.EnsureReadyAsync();
+        await Mark("who is talking (speaker model)");
+        await ai.Turns.EnsureReadyAsync();
+        await Mark("has the speaker finished (Smart Turn)");
+        await ai.Voice.SpeakWithVoiceAsync("Hello there.", "kokoro:af_heart");
+        await Mark("one voice, one short sentence (Kokoro)");
         await ai.WarmLiveWordsAsync();
         await Mark("live words (streaming speech)");
         await ai.WarmFacesAsync();
