@@ -61,6 +61,43 @@ public class OutcomeReportTests
         Assert.That((await normal.Task.WaitAsync(TimeSpan.FromSeconds(10))).Quiet, Is.False, "an ordinary job is still reported");
     }
 
+    /// <summary>
+    /// Seen in his memory file on 2026-11-02: "I finished stepping away from monsters" and "I finished getting out of the water" were recorded as things that happened, though reflex jobs are
+    /// quiet. A creeper escape (an Interrupt) had cut in; the runner resumes the job it interrupted, and the resumed job was restarted without the quiet flag.
+    /// </summary>
+    [Test]
+    public async Task AReflexJob_ThatWasInterrupted_IsStillQuiet_WhenItIsResumed()
+    {
+        var runner = new TaskRunner();
+        var outcomes = new List<TaskOutcome>();
+        runner.Finished += o => { lock (outcomes) outcomes.Add(o); };
+        var release = new TaskCompletionSource();
+        runner.StartReflex("stepping away from monsters", async ct => { await release.Task.WaitAsync(ct); return (true, "I stepped away from the monsters."); });
+        await Task.Delay(100);
+        runner.Interrupt("getting away from a creeper", _ => Task.FromResult((true, "A creeper was about to blow up, so I ran.")));
+        await Wait.UntilAsync(() => { lock (outcomes) return outcomes.Count == 1; }, TimeSpan.FromSeconds(10), () => "the interruption never ended");
+        await Wait.UntilAsync(() => runner.Current == "stepping away from monsters", TimeSpan.FromSeconds(10), () => "the interrupted reflex job was not resumed: " + runner.Current);
+        release.SetResult();
+        await Wait.UntilAsync(() => { lock (outcomes) return outcomes.Count == 2; }, TimeSpan.FromSeconds(10), () => "the resumed job never ended");
+        lock (outcomes)
+        {
+            Assert.That(outcomes[0].Interruption, Is.True);
+            Assert.That(outcomes[1].Task, Is.EqualTo("stepping away from monsters"));
+            Assert.That(outcomes[1].Quiet, Is.True, "the resumed reflex job is still a reflex job: not spoken about, not remembered");
+        }
+
+        // And an ordinary job that was interrupted is NOT made quiet by this.
+        outcomes.Clear();
+        var release2 = new TaskCompletionSource();
+        runner.Start("building a house", async ct => { await release2.Task.WaitAsync(ct); return (true, "I built it."); });
+        await Task.Delay(100);
+        runner.Interrupt("getting away from a creeper", _ => Task.FromResult((true, "ran")));
+        await Wait.UntilAsync(() => runner.Current == "building a house", TimeSpan.FromSeconds(10), () => "not resumed: " + runner.Current);
+        release2.SetResult();
+        await Wait.UntilAsync(() => { lock (outcomes) return outcomes.Count == 2; }, TimeSpan.FromSeconds(10), () => "the resumed house job never ended");
+        lock (outcomes) Assert.That(outcomes[1].Quiet, Is.False, "an ordinary job stays an ordinary job");
+    }
+
     [Test]
     public void TheProjectsOffered_AreOnlyOnesHeCanDoWithWhatHeCarries()
     {

@@ -17,6 +17,7 @@ public sealed class TaskRunner
     private Func<CancellationToken, Task<(bool Success, string Summary)>>? _work;
     private string? _for;
     private Objective? _goal;
+    private bool _quiet;
     private readonly object _lock = new();
 
     /// <summary>What Vertex is doing now, in a few words (for the prompt), or null when idle.</summary>
@@ -58,13 +59,13 @@ public sealed class TaskRunner
     /// </summary>
     public void Interrupt(string description, Func<CancellationToken, Task<(bool Success, string Summary)>> work)
     {
-        (string, Func<CancellationToken, Task<(bool, string)>>, string?, Objective?)? resume;
-        lock (_lock) resume = Current != null && _work != null ? (Current, _work, _for, _goal) : null;
+        (string, Func<CancellationToken, Task<(bool, string)>>, string?, Objective?, bool)? resume;
+        lock (_lock) resume = Current != null && _work != null ? (Current, _work, _for, _goal, _quiet) : null;
         Run(description, work, resume, null, null, interruption: true); // a reflex, done for nobody in particular
     }
 
     private void Run(string description, Func<CancellationToken, Task<(bool Success, string Summary)>> work,
-        (string Description, Func<CancellationToken, Task<(bool, string)>> Work, string? For, Objective? Goal)? resume,
+        (string Description, Func<CancellationToken, Task<(bool, string)>> Work, string? For, Objective? Goal, bool Quiet)? resume,
         string? forPlayer, Objective? goal, bool interruption = false, bool quiet = false)
     {
         CancellationTokenSource cts;
@@ -75,6 +76,7 @@ public sealed class TaskRunner
             _work = work;
             _for = forPlayer;
             _goal = goal;
+            _quiet = quiet;
             Current = description;
         }
         _ = Task.Run(async () =>
@@ -100,11 +102,12 @@ public sealed class TaskRunner
                 _work = null;
                 _for = null;
                 _goal = null;
+                _quiet = false;
             }
             Finished?.Invoke(outcome);
             if (resume is { } r)
                 lock (_lock)
-                    if (_cts == cts) Run(r.Description, r.Work, null, r.For, r.Goal); // nothing new was started meanwhile
+                    if (_cts == cts) Run(r.Description, r.Work, null, r.For, r.Goal, quiet: r.Quiet); // nothing new was started meanwhile; a reflex job stays a reflex job
         });
     }
 
@@ -118,6 +121,7 @@ public sealed class TaskRunner
             _work = null;
             _for = null;
             _goal = null;
+            _quiet = false;
             Current = null;
         }
     }
