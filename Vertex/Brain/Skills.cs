@@ -1795,6 +1795,33 @@ public sealed partial class Skills(MinecraftClient client)
         return (false, "A creeper is chasing me!");
     }
 
+    /// <summary>
+    /// Lands from flight in survival: holds sneak, which flies DOWN (about 4 blocks a second, and flying takes no fall damage), until his feet touch the ground (the client then ends
+    /// the flight by itself) or he is over water (then he ends it himself: water is a soft landing). Live on AubsCraft 2026-11-02: the account has /fly on (EssentialsX "Set fly mode
+    /// enabled" at login), the server said "flying", and with no gravity and "jump" meaning "up" he rose from the water at spawn to 50 blocks up and hovered there for an hour: walking,
+    /// building and the escape reflexes all assume ground. Not for creative or spectator, where flying is how one moves.
+    /// </summary>
+    public async Task<(bool, string)> LandAsync(CancellationToken ct)
+    {
+        if (!client.Flying) return (true, "I'm not flying.");
+        if (client.GameMode is not GameMode.Survival and not GameMode.Adventure) return (true, "I may fly here.");
+        var c = client.Controls;
+        try
+        {
+            c.Jump = false; c.Forward = false; c.Back = false; c.Left = false; c.Right = false; c.Sprint = false;
+            c.Sneak = true;
+            for (var tick = 0; tick < 20 * 90; tick++) // 90 seconds: more than enough for a 300 block drop
+            {
+                ct.ThrowIfCancellationRequested();
+                await client.WaitTicksAsync(1, ct);
+                if (!client.Flying) return (true, "I landed.");
+                if (client.BodySnapshot().InWater) { await client.SetFlyingAsync(false, ct); return (true, "I landed in the water."); }
+            }
+        }
+        finally { c.Sneak = false; }
+        return (false, "I could not land.");
+    }
+
     /// <summary>The nearest hostile mob within `within` blocks, if any.</summary>
     public Entity? NearestHostile(double within)
     {

@@ -115,8 +115,14 @@ Built in, without being asked:
   walk away from it (always away: a brave character fights one that hurt it, it does not pick fights with whatever wanders by; he heads for ground
   at least 10 blocks from the middle of all the monsters near him), and standing in water for about 2.5 seconds makes him walk to the nearest dry
   ground within 16 blocks. Each can start once per 10 seconds. These are quiet jobs: logged, never announced by voice or chat, not remembered,
-  and not counted as being given something to do (a "stay here" stays in force). He also chooses no project of his own while he is in water or a
-  hostile mob is within 16 blocks.
+  and not counted as being given something to do (a "stay here" stays in force). He also chooses no project of his own while he is in water, flying, or a
+  hostile mob is within 16 blocks. "In water" is judged over the last 3.6 seconds (8 of 12 looks), not in a row, because afloat at a river's surface
+  the reading flickers.
+- **Landing.** If the server says he is flying while he is in survival (a plugin such as EssentialsX left /fly on for the account: his login line was
+  "Set fly mode enabled", 2026-11-02), he lands first, because walking, building and the escape reflexes all assume ground: he holds sneak, which flies
+  down at about 4 blocks a second without fall damage, and flight ends when his feet touch ground (in water he ends it himself). The come-up-for-air
+  reflex does not hold "jump" while flying: in flight jump means up, and it had taken him from the water at spawn into the air. Not done: landing over
+  lava. In creative and spectator he keeps flying.
 
 ## Remembering
 

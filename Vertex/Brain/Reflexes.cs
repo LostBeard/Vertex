@@ -19,8 +19,8 @@ public sealed class Reflexes : IDisposable
     private int _tick;
     private bool _busy;
     private int _escaping = -1;
-    private int _inWaterChecks;
-    private long _nextAvoidTick, _nextLeaveWaterTick;
+    private int _waterHistory;
+    private long _nextAvoidTick, _nextLeaveWaterTick, _nextLandTick;
 
     /// <summary>How close a monster may be, idle, before he walks away from it (blocks).</summary>
     public const double AvoidWithin = 8;
@@ -65,8 +65,17 @@ public sealed class Reflexes : IDisposable
 
         // Come up for air: under water and not on a job that is steering.
         var body = c.BodySnapshot();
-        if (body.InWater && body.WaterHeight > 1.7 && !_tasks.IsBusy) c.Controls.Jump = true;
-        else if (!_tasks.IsBusy && c.Controls.Jump && !body.InWater) c.Controls.Jump = false;
+        // (Not while flying: there "jump" is "up", and it carried him 24 blocks into the air on 2026-11-02.)
+        if (body.InWater && body.WaterHeight > 1.7 && !_tasks.IsBusy && !c.Flying) c.Controls.Jump = true;
+        else if (!_tasks.IsBusy && c.Controls.Jump && (!body.InWater || c.Flying)) c.Controls.Jump = false;
+
+        // Flying in survival (a plugin left /fly on): nothing he does works in the air, so land first.
+        if (c.Flying && c.GameMode == GameMode.Survival && !_tasks.IsBusy && _tick >= _nextLandTick)
+        {
+            _nextLandTick = _tick + 100;
+            _tasks.StartReflex("landing", ct => _skills.LandAsync(ct));
+            return;
+        }
 
         // Idle with a monster close: do not stand there (live on AubsCraft, 2026-11-01, he stood among four creepers). Creepers are always walked away from; any other monster gets the
         // same fight-or-flight rule as one that hurt us. Not while a job runs (jobs have their own care), and at most once every 10 seconds.
@@ -78,8 +87,10 @@ public sealed class Reflexes : IDisposable
         }
 
         // Standing in water with nothing to do: get out of it.
-        _inWaterChecks = body.InWater ? _inWaterChecks + 1 : 0;
-        if (!_tasks.IsBusy && _inWaterChecks >= 8 && _tick >= _nextLeaveWaterTick)
+        // Counted over the last 12 looks (3.6 s), not in a row: afloat at the surface of a river the in-water reading flickers as he bobs, and a count that restarts at every flicker
+        // never reaches its goal.
+        _waterHistory = ((_waterHistory << 1) | (body.InWater ? 1 : 0)) & 0xFFF;
+        if (!_tasks.IsBusy && int.PopCount(_waterHistory) >= 8 && _tick >= _nextLeaveWaterTick)
         {
             _nextLeaveWaterTick = _tick + 200;
             _tasks.StartReflex("getting out of the water", ct => _skills.LeaveWaterAsync(ct));

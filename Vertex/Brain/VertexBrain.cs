@@ -319,6 +319,7 @@ public sealed class VertexBrain : IBody
         && Client.World.DayTime % 24000 is >= 0 and < 12000
         && Client.Health >= 14 && Client.Food >= 12
         && now - _lastProjectAt >= ProjectCooldown
+        && !Client.Flying // in the air nothing he does works; the landing reflex comes first
         && SafeForOwnProject(Client.BodySnapshot().InWater, Skills.NearestHostile(ProjectHostileRadius) != null);
 
     /// <summary>How close a monster may be for him to start a project of his own (blocks).</summary>

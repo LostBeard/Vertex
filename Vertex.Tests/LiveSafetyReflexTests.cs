@@ -20,7 +20,7 @@ public class LiveSafetyReflexTests
     [OneTimeSetUp]
     public async Task Start()
     {
-        _server = await PaperServer.StartAsync("safety", Port, TimeSpan.FromMinutes(4), new Dictionary<string, string> { ["difficulty"] = "easy" }); // not peaceful: that removes hostile mobs at once
+        _server = await PaperServer.StartAsync("safety", Port, TimeSpan.FromMinutes(4), new Dictionary<string, string> { ["difficulty"] = "easy", ["allow-flight"] = "true" }); // not peaceful: that removes hostile mobs at once; flight allowed so a hovering test player is not kicked
         await _server.CommandAsync("gamerule doMobSpawning false");
         await _server.CommandAsync("gamerule mobGriefing false");
         await _server.CommandAsync("time set day");
@@ -105,6 +105,66 @@ public class LiveSafetyReflexTests
             lock (ended) Assert.That(ended.All(o => o.Quiet), Is.True, "and nothing about it was meant to be spoken");
         }
         finally { reflexes.Enabled = false; tasks.Stop(); await _server.CommandAsync("kill @e[tag=vring]"); }
+    }
+
+    /// <summary>
+    /// Live on AubsCraft 2026-11-02: a plugin (EssentialsX) turned /fly on for the account at login, the server said "flying", and he hovered 50 blocks up for an hour. The server's message is
+    /// reproduced exactly (abilities: may fly + flying). Survival, fall damage on: he must come down by flying down, not fall.
+    /// </summary>
+    [Test]
+    public async Task Idle_FlyingInSurvival_LandsSafely_InsteadOfHoveringFiftyBlocksUp()
+    {
+        var (client, ax, az) = await JoinAsync("VertexFly");
+        await using var _ = client;
+        await _server.CommandAsync($"tp VertexFly {ax + 0.5} 250 {az + 0.5}");
+        await Wait.UntilAsync(() => client.Position.Y > 245, Timeout, () => $"at {client.Position}");
+        client.OnAbilities(2 | 4, 0.05f); // what EssentialsX's /fly makes the server send: may fly, and flying
+        Assert.That(client.Flying && client.GameMode == GameMode.Survival, Is.True);
+        var skills = new Skills(client);
+        var tasks = new TaskRunner();
+        using var reflexes = new Reflexes(client, skills, tasks, () => new PlayStyle()) { Enabled = false };
+        try
+        {
+            await Task.Delay(TimeSpan.FromSeconds(4));
+            Assert.That(client.Position.Y, Is.GreaterThan(245), "with the reflexes off he hovers where he is");
+            Assert.That(client.Flying, Is.True);
+
+            reflexes.Enabled = true;
+            await Wait.UntilAsync(() => !client.Flying && client.OnGround, TimeSpan.FromSeconds(60), () => $"at {client.Position}, flying {client.Flying}, on ground {client.OnGround}, task {tasks.Current}");
+            Assert.That(client.Position.Y, Is.EqualTo(200).Within(1.5), "on the floor");
+            Assert.That(client.Health, Is.EqualTo(20f), "flying down is not falling: no damage");
+        }
+        finally { reflexes.Enabled = false; tasks.Stop(); }
+    }
+
+    /// <summary>The climb: in water with /fly on, the come-up-for-air reflex held "jump", which in flight means up (62 to 86 blocks, then more).</summary>
+    [Test]
+    public async Task Idle_InWaterWithFlyOn_DoesNotClimbIntoTheAir_AndEndsOnTheGround()
+    {
+        // As at login on AubsCraft: already flying, hovering IN water deep enough (3 blocks; the come-up-for-air reflex acts above 1.7) and not touching the ground, which would end the flight by itself.
+        var (client, ax, az) = await JoinAsync("VertexFlyWet", (x, z) => $"fill {x - 5} 196 {z - 5} {x + 5} 196 {z + 5} minecraft:stone", (x, z) => $"fill {x - 4} 197 {z - 4} {x + 4} 199 {z + 4} minecraft:water");
+        await using var _ = client;
+        await _server.CommandAsync($"tp VertexFlyWet {ax + 0.5} 198.05 {az + 0.5}");
+        await Wait.UntilAsync(() => Math.Abs(client.Position.Y - 198.05) < 0.3 && client.BodySnapshot().InWater, Timeout, () => $"at {client.Position}, water {client.BodySnapshot().WaterHeight}");
+        await client.WaitTicksAsync(4); // so a stale "on the ground" from before the teleport is gone: touching the ground ends flight
+        client.OnAbilities(2 | 4, 0.05f);
+        Assert.That(client.Flying && client.BodySnapshot().WaterHeight > 1.7, Is.True, $"set up: flying {client.Flying}, water {client.BodySnapshot().WaterHeight}");
+        var skills = new Skills(client);
+        var tasks = new TaskRunner();
+        var ended = new List<string>();
+        tasks.Finished += o => { lock (ended) ended.Add($"{o.Task}: {(o.Success ? "ok" : "failed")}: {o.Summary}"); };
+        using var reflexes = new Reflexes(client, skills, tasks, () => new PlayStyle());
+        var highest = client.Position.Y;
+        try
+        {
+            var until = DateTime.UtcNow.AddSeconds(25);
+            while (DateTime.UtcNow < until) { highest = Math.Max(highest, client.Position.Y); await Task.Delay(100); }
+            TestContext.Out.WriteLine($"highest {highest:0.0}, now {client.Position}, flying {client.Flying}, in water {client.BodySnapshot().InWater}");
+            Assert.That(highest, Is.LessThan(203), "he never rose into the air (the floor is at 200)");
+            Assert.That(client.Flying, Is.False, "and the flight is over");
+            await Wait.UntilAsync(() => !client.BodySnapshot().InWater && client.OnGround, TimeSpan.FromSeconds(60), () => $"still in the water: at {client.Position} (pool centre {ax + 0.5},{az + 0.5}), task {tasks.Current}; jobs so far: {string.Join(" | ", ended)}");
+        }
+        finally { reflexes.Enabled = false; tasks.Stop(); }
     }
 
     [Test]
