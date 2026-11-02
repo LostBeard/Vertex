@@ -49,6 +49,11 @@ public sealed class VertexAi : IAsyncDisposable
     public string VoicesFile { get; }
     /// <summary>Where the introduced faces are kept between runs (next to the voices; never uploaded).</summary>
     public string FacesFile { get; }
+    /// <summary>Opens Vertex's long-term memory kept in <paramref name="folder"/> (see <see cref="Vertex.Memory.VertexMemory"/>), on this card and through the shared GPU lane.</summary>
+    /// <param name="cpu">Run the embedding model on the CPU accelerator instead of the card (and outside the GPU lane).</param>
+    public Task<Vertex.Memory.VertexMemory> OpenMemoryAsync(string folder, bool cpu = false, CancellationToken ct = default)
+        => Vertex.Memory.VertexMemory.OpenAsync(_models, cpu ? CpuAccelerator : Accelerator, folder, cpu ? null : Lane, ct);
+
     public AiToolRegistry Tools { get; } = new();
     public Action<string>? Log { get => _log; set { _log = value; Lane.Log = value; } }
     private Action<string>? _log;
