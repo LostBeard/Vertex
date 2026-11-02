@@ -49,7 +49,9 @@ public class HostTests
             await Wait.UntilAsync(() => vertex.Entities.Values.Any(e => e.PlayerName == "Aubs"), TimeSpan.FromSeconds(30), () => "Aubs visible");
             await aubs.SendChatAsync("Vertex, follow me!");
 
-            await Wait.UntilAsync(() => host.Lines.Any(l => l.Kind == LineKind.Said), TimeSpan.FromMinutes(2),
+            // Not "until he says something": the first Said line can be the greeting that "follow me" cut short (an empty reply, seen on AI.Server 1.4.0-local.10), which comes before the
+            // follow job is even logged. What this test is about is the follow job.
+            await Wait.UntilAsync(() => host.Lines.Any(l => l.Text.Contains("fast: \"follow me\" = follow_player")) && host.Brain!.Tasks.Current?.StartsWith("following") == true, TimeSpan.FromMinutes(2),
                 () => string.Join("\n", host.Lines.TakeLast(10).Select(l => $"{l.Kind}: {l.Text}")));
             var lines = host.Lines;
             foreach (var l in lines) TestContext.Out.WriteLine($"{l.Kind}: {l.Text}");
