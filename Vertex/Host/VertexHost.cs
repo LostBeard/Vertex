@@ -307,6 +307,30 @@ public sealed class VertexHost : IAsyncDisposable
         Changed?.Invoke();
     }
 
+    /// <summary>Whether the long-term memory is open (it is while Vertex is on and the Memory switch is on): the list below and the two deletes work only then.</summary>
+    public bool MemoryOpen => _memory != null;
+
+    /// <summary>What Vertex remembers, newest first (empty when the memory is not open).</summary>
+    public IReadOnlyList<Vertex.Memory.MemoryRow> MemoryRows => _memory?.Rows() ?? [];
+
+    /// <summary>Forgets one memory for good (and whatever was digested from it): gone from the list, the searches and the disk.</summary>
+    public async Task ForgetMemoryAsync(string id)
+    {
+        if (_memory is not { } memory) return;
+        var n = await memory.ForgetAsync([id]);
+        Add(LineKind.System, n == 1 ? "forgot one memory" : $"forgot {n} memories");
+        Changed?.Invoke();
+    }
+
+    /// <summary>Forgets everything Vertex remembers.</summary>
+    public async Task ForgetAllMemoriesAsync()
+    {
+        if (_memory is not { } memory) return;
+        var n = await memory.ForgetAllAsync();
+        Add(LineKind.System, $"forgot everything I remembered ({n} memories)");
+        Changed?.Invoke();
+    }
+
     /// <summary>Stops a running model install; the downloaded part is kept.</summary>
     public void CancelModelInstall() => _installCts?.Cancel();
     /// <summary>Where the robot's heard utterances are kept when <see cref="VertexSettings.ReachySaveHeard"/> is on.</summary>

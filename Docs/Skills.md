@@ -134,5 +134,6 @@ result, where (coordinates) and which server, and for whom when it was for a pla
 find a village?") and the `recall` tool looks in the log by meaning and he answers from what it says, in the first person, with how long ago. It
 is the Memory switch on the Minecraft tab. Measured 2026-11-02 on an RTX 2060: recording a memory takes 36 ms and a lookup 8-9 ms once warm (first
 use 280 ms and 242 ms). He answered from it in 5 of 5 tries with the real model, and without a log he did not know (control). What is shown is cut at a
-similarity of 0.30 (set from 16 test questions: questions about what was stored scored 0.351 to 0.753, small talk 0.084 to 0.240). Not done yet:
-episodes from what is said to him, lessons from failed goals, a screen to look at or delete one person's entries.
+similarity of 0.30 (set from 16 test questions: questions about what was stored scored 0.351 to 0.753, small talk 0.084 to 0.240). The People tab lists
+everything he remembers and deletes one entry or all of them for good (files rewritten at once; tested with real files; the page itself was only checked to render, no click test).
+Not done yet: episodes from what is said to him, lessons from failed goals, deleting everything about one person in one go.

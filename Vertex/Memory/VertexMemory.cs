@@ -6,6 +6,9 @@ using Vertex.AI;
 
 namespace Vertex.Memory;
 
+/// <summary>One memory as the control panel shows it: when, what kind, what it says, which server, and whether it is about a particular person.</summary>
+public sealed record MemoryRow(string Id, DateTime WhenLocal, string Kind, string Text, string Scope, bool AboutAPerson);
+
 /// <summary>
 /// Vertex's long-term memory: Data's <see cref="AiMemoryStore"/> (what is remembered, with the privacy rules) and <see cref="AiMemoryEngine"/> (embedding and search on the GPU), opened on files in
 /// Vertex's own folder and run through the shared GPU lane like every other model call. Everything stays on this PC.
@@ -77,6 +80,26 @@ public sealed class VertexMemory : IDisposable
         using (_lane == null || laneHeld ? null : await _lane.EnterAsync(urgent: true).ConfigureAwait(false))
             return await _engine.SearchAsync(query, k, new AiMemoryFilter { Scope = scope, Kinds = kinds }, null, null, ct).ConfigureAwait(false);
     }
+
+    /// <summary>Every memory, newest first, as the control panel lists them. Nothing here leaves this PC, and nothing is looked up by a person's name: a subject is an id.</summary>
+    public IReadOnlyList<MemoryRow> Rows() => Store.List(new AiMemoryFilter { IncludeSuperseded = true })
+        .OrderByDescending(e => e.TimeTicks)
+        .Select(e => new MemoryRow(e.Id, new DateTime(e.TimeTicks, DateTimeKind.Utc).ToLocalTime(), e.Kind.ToString().ToLowerInvariant(), e.Text, e.Scope, e.Subjects.Count > 0))
+        .ToList();
+
+    /// <summary>
+    /// Forgets these memories for good, and whatever was digested from them: gone from the store, from searches and, once the files are rewritten (before this returns), from the disk.
+    /// Returns how many were removed.
+    /// </summary>
+    public async Task<int> ForgetAsync(IEnumerable<string> ids, CancellationToken ct = default)
+    {
+        var removed = Store.Delete(ids.ToArray());
+        await SaveAsync(ct).ConfigureAwait(false);
+        return removed.Count;
+    }
+
+    /// <summary>Forgets everything he remembers.</summary>
+    public Task<int> ForgetAllAsync(CancellationToken ct = default) => ForgetAsync(Rows().Select(r => r.Id), ct);
 
     /// <summary>Writes the memories to disk (whole file, replaced in one step so a crash leaves the old one).</summary>
     public async Task SaveAsync(CancellationToken ct = default)

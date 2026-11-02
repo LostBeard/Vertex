@@ -163,6 +163,50 @@
                 </div>
                 <p class="hint">Then have them say a few sentences in front of the robot: the next new voice and face it notices are theirs.</p>
                 @if (VoiceMessage != "") { <p class="hint">@VoiceMessage</p> }
+
+                <h3>What Vertex remembers</h3>
+                <p class="hint">His own log of the jobs he has finished (what he built, found or could not do, where, and for whom). It stays on this PC. Deleting here removes it for good, from the disk too.</p>
+                @if (!Host.MemoryOpen)
+                {
+                    <p class="hint">@(Host.Settings.LongTermMemory ? "Start Vertex to see and manage his memory." : "The Memory switch on the Minecraft tab is off, so nothing is being written or looked up. What is already stored can be seen and deleted once Vertex is started with it on.")</p>
+                }
+                else
+                {
+                    var rows = Host.MemoryRows;
+                    @if (rows.Count == 0)
+                    {
+                        <p class="hint">Nothing yet.</p>
+                    }
+                    @foreach (var row in rows.Take(MemoryShown))
+                    {
+                        <div class="person">
+                            <div class="row">
+                                <span style="flex:1">@row.Text</span>
+                                <button class="secondary" style="flex:none" @onclick="() => Host.ForgetMemoryAsync(row.Id)">Forget</button>
+                            </div>
+                            <span class="hint">@row.WhenLocal.ToString("MMM d h:mm tt") - @row.Kind@(row.AboutAPerson ? " - about a person" : "") - @row.Scope</span>
+                        </div>
+                    }
+                    @if (rows.Count > MemoryShown)
+                    {
+                        <p class="hint">@(rows.Count - MemoryShown) older ones not shown. <button class="secondary" style="flex:none" @onclick="() => MemoryShown += 50">Show 50 more</button></p>
+                    }
+                    @if (rows.Count > 0)
+                    {
+                        <div class="row" style="margin-top:10px">
+                            @if (!ConfirmForgetMemory)
+                            {
+                                <button class="secondary" @onclick="() => ConfirmForgetMemory = true">Forget everything he remembers...</button>
+                            }
+                            else
+                            {
+                                <span class="hint" style="flex:1">Delete all @rows.Count memories for good?</span>
+                                <button @onclick="ForgetAllMemories">Yes, forget them all</button>
+                                <button class="secondary" @onclick="() => ConfirmForgetMemory = false">Cancel</button>
+                            }
+                        </div>
+                    }
+                }
             }
             else if (Tab == "minecraft")
             {
@@ -307,6 +351,14 @@
     private string NewVoice = "";
     private string VoiceMessage = "";
     private bool ConfirmForgetAll;
+    private bool ConfirmForgetMemory;
+    private int MemoryShown = 50;
+
+    private async Task ForgetAllMemories()
+    {
+        await Host.ForgetAllMemoriesAsync();
+        ConfirmForgetMemory = false;
+    }
 
     private static string Held(Vertex.People.PersonRecord p) => p.HasVoice && p.HasFace ? "voice and face" : p.HasVoice ? "voice only" : "face only";
 

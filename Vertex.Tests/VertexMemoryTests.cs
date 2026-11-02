@@ -140,6 +140,38 @@ public class VertexMemoryTests
         Assert.That(reopened.Store.List().Select(e => e.Text), Has.None.Contain("pen for the cows"), "not in the files either");
     }
 
+    /// <summary>The panel's list and its two delete buttons: what is forgotten is gone from the list, from searches AND from the files on disk (read as text, not through the store).</summary>
+    [Test]
+    public async Task ThePanelCanListAndForget_OneMemory_OrAll_AndTheFilesAreScrubbed()
+    {
+        await using var ai = TestAi.Create();
+        var folder = NewFolder();
+        using var memory = await ai.OpenMemoryAsync(folder, cpu: true);
+        await memory.RecordAsync(Episode("I built a purple glass lighthouse for Aubs by the river.", Home, 0.5f, "mc:11111111-1111-1111-1111-111111111111"));
+        await memory.RecordAsync(Episode("I mined twelve cobblestone in the cave.", Home));
+        await memory.RecordAsync(Episode("I went fishing and caught three salmon.", Home));
+
+        var rows = memory.Rows();
+        Assert.That(rows, Has.Count.EqualTo(3));
+        Assert.That(rows[0].WhenLocal, Is.GreaterThanOrEqualTo(rows[2].WhenLocal), "newest first");
+        var lighthouse = rows.Single(r => r.Text.Contains("lighthouse"));
+        Assert.That(lighthouse.AboutAPerson, Is.True, "it says it is about a person, without showing who by name");
+        Assert.That(rows.Single(r => r.Text.Contains("cobblestone")).AboutAPerson, Is.False);
+        var meta = Path.Combine(folder, "memory.json");
+        Assert.That(File.ReadAllText(meta), Does.Contain("lighthouse"), "on disk before");
+
+        Assert.That(await memory.ForgetAsync([lighthouse.Id]), Is.EqualTo(1));
+        Assert.That(memory.Rows().Select(r => r.Text), Has.None.Contain("lighthouse"));
+        Assert.That(File.ReadAllText(meta), Does.Not.Contain("lighthouse"), "scrubbed from the file, not just hidden");
+        Assert.That((await memory.RecallAsync("what did you build for Aubs?", Home, 3)).Select(h => h.Entry.Text), Has.None.Contain("lighthouse"), "and not found by a search");
+        using (var reopened = await ai.OpenMemoryAsync(folder, cpu: true)) Assert.That(reopened.Store.Count, Is.EqualTo(2), "still two after a restart");
+
+        Assert.That(await memory.ForgetAllAsync(), Is.EqualTo(2));
+        Assert.That(memory.Rows(), Is.Empty);
+        Assert.That(File.ReadAllText(meta), Does.Not.Contain("cobblestone").And.Not.Contain("salmon"));
+        using (var again = await ai.OpenMemoryAsync(folder, cpu: true)) Assert.That(again.Store.Count, Is.EqualTo(0));
+    }
+
     [Test]
     public async Task WhenLearningIsPaused_OrAPersonIsBlocked_NothingIsStored()
     {
