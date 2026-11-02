@@ -20,7 +20,8 @@ public sealed class Reflexes : IDisposable
     private bool _busy;
     private int _escaping = -1;
     private int _waterHistory;
-    private long _nextAvoidTick, _nextLeaveWaterTick, _nextLandTick;
+    private long _nextAvoidTick, _nextLeaveWaterTick, _nextLandTick, _nextPatchTick;
+    private int _tinyPatchLooks, _patchFailures;
 
     /// <summary>How close a monster may be, idle, before he walks away from it (blocks).</summary>
     public const double AvoidWithin = 8;
@@ -95,6 +96,21 @@ public sealed class Reflexes : IDisposable
             _nextLeaveWaterTick = _tick + 200;
             _tasks.StartReflex("getting out of the water", ct => _skills.LeaveWaterAsync(ct));
             return;
+        }
+
+        // Stranded on a tiny patch (an island, a pillar, a pit): not a case anyone wrote a rule for, so he TRIES to get off it (look around, swim, dig, climb) and what came of it becomes a lesson. First
+        // two tries are quiet; if those fail, the next is an ordinary job, spoken about: being stuck is news.
+        if (!_tasks.IsBusy && !c.Flying && c.OnGround && _tick % 60 == 0 && _tick >= _nextPatchTick)
+        {
+            _tinyPatchLooks = _skills.WalkablePatch(Skills.TinyPatch + 1) is { Count: > 0 and < Skills.TinyPatch } ? _tinyPatchLooks + 1 : 0;
+            if (_tinyPatchLooks >= 2)   // seen twice, 3 seconds apart: a real predicament, not a step off a ledge
+            {
+                _tinyPatchLooks = 0;
+                _nextPatchTick = _tick + 600;
+                if (_patchFailures < 2) _tasks.StartReflex("getting off a tiny patch of land", async ct => { var r = await _skills.GetOffATinyPatchAsync(ct); _patchFailures = r.Item1 ? 0 : _patchFailures + 1; return r; });
+                else _tasks.Start("getting off a tiny patch of land", async ct => { var r = await _skills.GetOffATinyPatchAsync(ct); _patchFailures = r.Item1 ? 0 : _patchFailures + 1; return r; });
+                return;
+            }
         }
 
         // Wear better armor as soon as we have it (idle, so clicks do not fight a crafting or chest job).

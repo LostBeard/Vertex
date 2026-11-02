@@ -1,4 +1,4 @@
-using SpawnDev.Minecraft;
+﻿using SpawnDev.Minecraft;
 using SpawnDev.Minecraft.Data;
 using SpawnDev.Minecraft.Entities;
 using SpawnDev.Minecraft.Items;
@@ -1830,6 +1830,28 @@ public sealed partial class Skills(MinecraftClient client)
         return (false, "I could not land.");
     }
 
+    /// <summary>In the water: the body says so, or the blocks he stands in do (the body's reading flickers when he bobs at the surface, and a decision made on one flicker is wrong half the time).</summary>
+    private bool InWaterNow() => client.BodySnapshot().InWater || Survey(2).InWater;
+
+    /// <summary>A look around from where he stands: the surface out to `reach` blocks in the eight compass directions (see <see cref="SurroundingsView"/>).</summary>
+    public SurroundingsView Survey(int reach) => SurroundingsView.Look(client.World, client.Position, reach);
+
+    /// <summary>The look around as the tool says it: where he is, each direction, and the nearest land, water, lava and drop.</summary>
+    public string LookAround() => Survey(96).Describe();
+
+    /// <summary>
+    /// One line on his surroundings for the status block, only when it matters (in the water: where land is; lava or a drop close by), else null so an ordinary moment costs nothing in the
+    /// prompt. Cheap: a short look first (12 blocks), a long one only when he is in the water.
+    /// </summary>
+    public string? Awareness()
+    {
+        var near = Survey(12);
+        var line = near.InWater ? Survey(96).Notable() : near.Notable();
+        if (!near.InWater && WalkablePatch(TinyPatch + 1) is { Count: > 0 and < TinyPatch } patch)
+            line = (line == null ? "" : line + " ") + $"You are on a tiny patch of land ({patch.Count} block{(patch.Count == 1 ? "" : "s")}): water or walls all round. You can swim, dig soft blocks (dirt, sand), climb or build to get off; look_around shows where land is.";
+        return line;
+    }
+
     /// <summary>The nearest hostile mob within `within` blocks, if any.</summary>
     public Entity? NearestHostile(double within)
     {
@@ -1845,22 +1867,33 @@ public sealed partial class Skills(MinecraftClient client)
     /// </summary>
     public async Task<(bool, string)> StepAwayFromMonstersAsync(double clearOf, CancellationToken ct)
     {
-        for (var hop = 0; hop < 5; hop++)
+        double? cx = null, cz = null;
+        var spread = 0.0;
+        for (var hop = 0; hop < 8; hop++)
         {
             ct.ThrowIfCancellationRequested();
             var (px, py, pz) = client.Position;
             var near = client.Entities.Values.Where(e => Hostile.Contains(e.Name) && e.DistanceTo(px, py, pz) < 12).ToList();
-            if (near.Count == 0 || near.Min(e => e.DistanceTo(px, py, pz)) >= clearOf) return (true, "I stepped away from the monsters.");
-            double cx = near.Average(e => e.X), cz = near.Average(e => e.Z);
-            var spread = near.Max(e => Math.Sqrt((e.X - cx) * (e.X - cx) + (e.Z - cz) * (e.Z - cz)));
+            if (near.Count > 0)
+            {
+                cx = near.Average(e => e.X); cz = near.Average(e => e.Z);
+                spread = near.Max(e => Math.Sqrt((e.X - cx.Value) * (e.X - cx.Value) + (e.Z - cz.Value) * (e.Z - cz.Value)));
+            }
+            // Done when they are not close AND he is on dry ground: out of reach of them but mid-swim is not "stepped away" (the leave-water reflex would then pick the nearest shore, which
+            // may be theirs). While swimming he keeps aiming for the far dry land he chose, from where the monsters last were.
+            var safe = near.Count == 0 || near.Min(e => e.DistanceTo(px, py, pz)) >= clearOf;
+            if (safe && !InWaterNow()) return (true, "I stepped away from the monsters.");
+            if (cx is not double awayX || cz is not double awayZ) return (true, "There was nothing to step away from.");
             using var step = CancellationTokenSource.CreateLinkedTokenSource(ct);
             step.CancelAfter(TimeSpan.FromSeconds(4));
-            try { await client.GoToAsync(Goal.AwayFrom(cx, cz, 14 + spread), new PathOptions { MaxNodes = 8_000 }, step.Token); }
+            // "Away" ends on DRY LAND (he swam out into a lake with no land in sight, 2026-11-02, because any far-enough place counted, water included). Swimming across to a far shore is fine
+            // and wanted; if there is no far shore he can reach, he stays and says so.
+            try { await client.GoToAsync(Goal.AwayFrom(awayX, awayZ, 14 + spread, DryStand), new PathOptions { MaxNodes = 8_000 }, step.Token); }
             catch (OperationCanceledException) when (!ct.IsCancellationRequested) { }
         }
         var (x, y, z) = client.Position;
         var closest = client.Entities.Values.Where(e => Hostile.Contains(e.Name)).Select(e => e.DistanceTo(x, y, z)).DefaultIfEmpty(double.MaxValue).Min();
-        return closest >= clearOf ? (true, "I stepped away from the monsters.") : (false, "I could not get away from the monsters.");
+        return closest >= clearOf && !InWaterNow() ? (true, "I stepped away from the monsters.") : (false, "I could not get away from the monsters.");
     }
 
     /// <summary>Is there solid dry ground under (x, y, z) and open air for feet and head? (Water and lava are not open, and neither is a fire or a cactus's spot.)</summary>
@@ -1874,26 +1907,138 @@ public sealed partial class Skills(MinecraftClient client)
     }
 
     /// <summary>
-    /// Gets out of the water: walks to the nearest dry, solid, open spot within 16 blocks. Live on AubsCraft (2026-11-01) he stood in a river doing nothing: nothing ever told him to leave it.
+    /// Gets out of the water: walks to the nearest dry, solid, open spot within 40 blocks. Live on AubsCraft (2026-11-01) he stood in a river doing nothing: nothing ever told him to leave it.
     /// </summary>
     public async Task<(bool, string)> LeaveWaterAsync(CancellationToken ct)
     {
-        if (!client.BodySnapshot().InWater) return (true, "I'm not in the water.");
+        if (!InWaterNow()) return (true, "I'm not in the water.");
         var (px, py, pz) = client.Position;
         int bx = (int)Math.Floor(px), bz = (int)Math.Floor(pz), by = (int)Math.Floor(py + 1e-6);
         (int X, int Y, int Z)? best = null;
         var bestD = int.MaxValue;
-        for (var dx = -16; dx <= 16; dx++)
-        for (var dz = -16; dz <= 16; dz++)
+        // Within 40 blocks (it was 16: out in a lake he said "I can't see dry land close by", the shore being behind him at a distance nobody measured). The nearest dry spot first.
+        const int reach = 40;
+        for (var dx = -reach; dx <= reach; dx++)
+        for (var dz = -reach; dz <= reach; dz++)
         {
             var d2 = dx * dx + dz * dz;
-            if (d2 > 256 || d2 >= bestD || !client.World.IsLoaded(bx + dx, bz + dz)) continue;
+            if (d2 > reach * reach || d2 >= bestD || !client.World.IsLoaded(bx + dx, bz + dz)) continue;
             for (var y = by + 3; y >= by - 3; y--)
                 if (DryStand(bx + dx, y, bz + dz)) { best = (bx + dx, y, bz + dz); bestD = d2; break; }
         }
-        if (best is not var (x, y2, z)) return (false, "I'm in the water and I can't see dry land close by.");
-        var ok = await client.GoToAsync(Goal.Block(x, y2, z), new PathOptions { MaxNodes = 8_000 }, ct);
+        if (best is not var (x, y2, z))
+        {
+            // Nothing dry within 40: look around, as a player in the water does, and swim toward the nearest land seen at any distance.
+            var look = Survey(96);
+            if (look.NearestLandSample() is not { } land)
+                return (false, $"I'm in the water and I looked around: I can't see any land within {look.Reach} blocks (the world I know goes out about {look.KnownReach}).");
+            (int X, int Y, int Z)? stand = null;
+            var standD = int.MaxValue;
+            for (var ddx = -4; ddx <= 4; ddx++)
+            for (var ddz = -4; ddz <= 4; ddz++)
+            for (var yy = land.Y + 3; yy >= land.Y - 3; yy--)
+                if (ddx * ddx + ddz * ddz < standD && DryStand(land.X + ddx, yy, land.Z + ddz)) { stand = (land.X + ddx, yy, land.Z + ddz); standD = ddx * ddx + ddz * ddz; break; }
+            if (stand is not { } st) return (false, $"I can see land {look.NearestLand!.Value.Direction} about {land.Distance} blocks away, but no place to stand on it.");
+            (x, y2, z) = st;
+        }
+        // A long swim is planned and followed in short pieces (each swim step is "interrupted" after a couple of blocks and replanned) and one GoTo gives up after 12 of those: a 56 block swim
+        // needs several rounds. Keep going while he is getting closer.
+        var ok = false;
+        for (var round = 0; round < 8 && !ok; round++)
+        {
+            var (fromX, _, fromZ) = client.Position;
+            var before = Math.Sqrt((fromX - x - 0.5) * (fromX - x - 0.5) + (fromZ - z - 0.5) * (fromZ - z - 0.5));
+            ok = await client.GoToAsync(Goal.Block(x, y2, z), new PathOptions { MaxNodes = 25_000 }, ct);
+            var (ax, _, az) = client.Position;
+            if (!ok && Math.Sqrt((ax - x - 0.5) * (ax - x - 0.5) + (az - z - 0.5) * (az - z - 0.5)) > before - 3) break; // not getting closer: stop
+        }
         return ok ? (true, "I got out of the water.") : (false, "I couldn't get out of the water.");
+    }
+
+    // ---------------------------------------------------------------- being stuck
+
+    /// <summary>
+    /// Raised when he works something out by trying: a sentence about what he was stuck on, what he tried and what came of it. The brain writes it to his long-term memory as a LESSON, which
+    /// the recall tool can find later. (TJ, 2026-11-02: "we can't account for every situation. he needs to be able to learn and try things... when he is playing alone is the best time".)
+    /// </summary>
+    public event Action<string>? Learned;
+
+    /// <summary>The dry blocks he can WALK to from where he stands (no swimming, digging or building; steps up of one block and drops of three are fine), up to `cap`.</summary>
+    public HashSet<(int X, int Y, int Z)> WalkablePatch(int cap = 40)
+    {
+        var (px, py, pz) = client.Position;
+        var start = ((int)Math.Floor(px), (int)Math.Floor(py + 1e-6), (int)Math.Floor(pz));
+        var seen = new HashSet<(int X, int Y, int Z)>();
+        if (!DryStand(start.Item1, start.Item2, start.Item3)) return seen;
+        seen.Add(start);
+        var queue = new Queue<(int X, int Y, int Z)>();
+        queue.Enqueue(start);
+        while (queue.Count > 0 && seen.Count < cap)
+        {
+            var (x, y, z) = queue.Dequeue();
+            foreach (var (dx, dz) in new[] { (1, 0), (-1, 0), (0, 1), (0, -1) })
+                for (var dy = 1; dy >= -3; dy--)
+                {
+                    var n = (X: x + dx, Y: y + dy, Z: z + dz);
+                    if (!DryStand(n.X, n.Y, n.Z)) continue;
+                    if (seen.Add(n)) queue.Enqueue(n);
+                    break;
+                }
+        }
+        return seen;
+    }
+
+    /// <summary>How small a walkable patch has to be for him to count as stranded on it: an island, a pillar, a pit, a ledge with water or a wall all round.</summary>
+    public const int TinyPatch = 12;
+
+    /// <summary>
+    /// Stranded on a tiny patch (a one-block island with water on three sides and a three-high dirt wall on the fourth, live 2026-11-02, "he has no clue what to do"): looks around, picks the
+    /// nearest other land, and TRIES to get there with everything he can do (swim, dig through soft blocks, climb), nearest first, a few candidates. What worked, or what did not, is raised as
+    /// <see cref="Learned"/>.
+    /// </summary>
+    public async Task<(bool, string)> GetOffATinyPatchAsync(CancellationToken ct)
+    {
+        var patch = WalkablePatch();
+        if (patch.Count == 0 || patch.Count >= TinyPatch) return (true, "I'm not stuck.");
+        var size = patch.Count;
+        var look = Survey(48);
+        // The nearest land in each direction that is not part of the patch itself, nearest first.
+        var candidates = look.Rays
+            .Select(r => r.Samples.Where(s => s.Kind == SurfaceKind.Land && s.Distance >= 2 && !patch.Any(p => p.X == s.X && p.Z == s.Z)).Cast<SurfaceSample?>().FirstOrDefault())
+            .Where(s => s != null).Select(s => s!.Value).OrderBy(s => s.Distance).Take(4).ToList();
+        var what = $"a tiny patch of land ({size} block{(size == 1 ? "" : "s")}) with water or a wall all round";
+        if (candidates.Count == 0)
+        {
+            var none = $"I was stuck on {what} and I could not see any other land within {look.Reach} blocks to try for.";
+            Learned?.Invoke(none);
+            return (false, none);
+        }
+        foreach (var cand in candidates)
+        {
+            int swim = 0, dig = 0, climb = 0;
+            void OnPlan(IReadOnlyList<PathStep> steps)
+            {
+                swim = steps.Count(s => s.Kind == MoveKind.Swim); dig = steps.Sum(s => s.Dig.Length); climb = steps.Count(s => s.Kind is MoveKind.JumpUp or MoveKind.Pillar or MoveKind.Climb);
+            }
+            var direction = look.Rays.First(r => r.Samples.Contains(cand)).Direction;
+            using var attempt = CancellationTokenSource.CreateLinkedTokenSource(ct);
+            attempt.CancelAfter(TimeSpan.FromSeconds(40));
+            client.PathPlanned += OnPlan;
+            bool arrived;
+            try { arrived = await client.GoToAsync(Goal.Near(cand.X + 0.5, cand.Y + 1, cand.Z + 0.5, 1.2), new PathOptions { CanDig = true, MaxNodes = 20_000 }, attempt.Token); }   // 1.2, not more: land 2 blocks away is "within range" of where he already stands
+            catch (OperationCanceledException) when (!ct.IsCancellationRequested) { arrived = false; }
+            finally { client.PathPlanned -= OnPlan; }
+            if (arrived && WalkablePatch().Count >= TinyPatch)
+            {
+                var how = string.Join(" and ", new[] { swim > 0 ? $"swimming about {swim} blocks" : null, dig > 0 ? $"digging through {dig} block{(dig == 1 ? "" : "s")}" : null, climb > 0 ? $"climbing up {climb}" : null }.Where(h => h != null));
+                var lesson = $"I was stuck on {what}. I got off by going {direction} to land {cand.Distance} blocks away{(how.Length > 0 ? ", " + how : "")}. That works.";
+                Learned?.Invoke(lesson);
+                return (true, lesson);
+            }
+        }
+        var failed = $"I was stuck on {what}. I tried going toward land {candidates.Count} way{(candidates.Count == 1 ? "" : "s")} ({string.Join(", ", candidates.Select(c => $"{look.Rays.First(r => r.Samples.Contains(c)).Direction} {c.Distance}"))}) and could not get off.";
+        Learned?.Invoke(failed);
+        return (false, failed);
     }
 
     /// <summary>Runs 12 blocks straight away from a mob (what a careful character does when one hurts it).</summary>

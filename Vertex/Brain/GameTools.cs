@@ -500,6 +500,11 @@ public static class GameTools
             """{"type":"object","properties":{"fact":{"type":"string"},"about":{"type":"string","description":"the player it is about ('me' = the person talking); empty for facts about the world"}},"required":["fact"]}""",
             a => Task.FromResult(brain.Remember(Str(a, "fact") ?? "", Str(a, "about") is { Length: > 0 } about ? Speaker(about) : null)));
 
+        yield return new GameTool("look_around",
+            "Look around you: where you are, and in each direction what is there (land, water, lava, a cliff or a drop, how far the world goes). Use it when you are lost, in the water, can't see land, or are asked what you see or where things are.",
+            """{"type":"object","properties":{}}""",
+            _ => Task.FromResult(skills.LookAround()));
+
         yield return new GameTool("recall",
             "Look in your own log of what you did before: what you built, where you found something, what happened last time. Use it for questions about the PAST (\"what did you build earlier?\", \"where did we find the diamonds?\"). Not for what you are doing now.",
             """{"type":"object","properties":{"question":{"type":"string","description":"what to look up, in a few words, e.g. 'what I built for Aubs'"}},"required":["question"]}""",

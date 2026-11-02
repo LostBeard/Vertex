@@ -153,6 +153,7 @@ public sealed class VertexBrain : IBody
         Tasks.Starting += name => { Staying = false; if (_choosing) { lock (_recentProjects) { _recentProjects.Add(name); if (_recentProjects.Count > 5) _recentProjects.RemoveAt(0); } } };      // told to stay, then given something to do: the stay is over
         Tasks.GoalOf = () => _pursuing;
         Tasks.Finished += o => companion.Post(new TaskEvent(o));
+        Skills.Learned += RecordLesson;
         companion.Attach(this);
         companion.AddChannel(Channel);
     }
@@ -240,6 +241,24 @@ public sealed class VertexBrain : IBody
         : age.TotalHours < 1 ? $"{(int)age.TotalMinutes} minutes ago"
         : age.TotalDays < 1 ? $"{(int)age.TotalHours} hour{((int)age.TotalHours == 1 ? "" : "s")} ago"
         : $"{(int)age.TotalDays} day{((int)age.TotalDays == 1 ? "" : "s")} ago";
+
+    /// <summary>Writes what he worked out by trying (a lesson) to long-term memory: kind Lesson, important (0.7: it is how he gets better at being somewhere).</summary>
+    private void RecordLesson(string lesson)
+    {
+        Log?.Invoke("learned: " + lesson);
+        var memory = LongTerm;
+        if (memory == null) return;
+        var entry = new SpawnDev.AI.AiMemoryEntry
+        {
+            Kind = SpawnDev.AI.AiMemoryKind.Lesson, Text = lesson + $" (at {Client.Position.X:0} {Client.Position.Y:0} {Client.Position.Z:0})", Scope = MemoryScope, Source = "minecraft",
+            Tags = ["lesson", "stuck"], Importance = 0.7f,
+        };
+        _ = Task.Run(async () =>
+        {
+            try { await memory.RecordAsync(entry); }
+            catch (Exception e) { Log?.Invoke("memory: could not record a lesson: " + e.Message); }
+        });
+    }
 
     /// <summary>Writes a finished job to long-term memory in the background (a memory that cannot be written is a log line, never a problem for the game).</summary>
     private void RecordEpisode(TaskOutcome outcome)
@@ -380,6 +399,7 @@ public sealed class VertexBrain : IBody
         var (x, y, z) = Client.Position;
         sb.AppendLine($"- In the game you are at x {x:0} y {y:0} z {z:0} in {Client.World.Dimension.Bare()}, " +
                       $"health {Client.Health / 2:0.#} of 10 hearts, food {Client.Food / 2:0.#} of 10, game mode {Client.GameMode.ToString().ToLowerInvariant()}.");
+        if (Skills.Awareness() is { } around) sb.AppendLine("- " + around);
         var time = Client.World.DayTime % 24000;
         sb.AppendLine($"- It is {(time is >= 0 and < 12000 ? "daytime" : time < 13000 ? "sunset" : time < 23000 ? "night" : "sunrise")} in the game.");
         sb.AppendLine($"- You are carrying: {Skills.InventorySummary()}. Holding: {(Client.Inventory.MainHand.IsEmpty ? "nothing" : Client.Inventory.MainHand.ToString())}.");

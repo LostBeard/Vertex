@@ -1,4 +1,4 @@
-# Minecraft skills
+﻿# Minecraft skills
 
 What Vertex can do in a Minecraft Java world, what each skill needs in its pockets, and what it will not do. Skills are the code in
 `Vertex/Brain/Skills*.cs`; the language model reaches them through tools (`Vertex/Brain/GameTools.cs`). Every skill has a test against a
@@ -120,9 +120,27 @@ Built in, without being asked:
   the reading flickers.
 - **Landing.** If the server says he is flying while he is in survival (a plugin such as EssentialsX left /fly on for the account: his login line was
   "Set fly mode enabled", 2026-11-02), he lands first, because walking, building and the escape reflexes all assume ground: he holds sneak, which flies
-  down at about 4 blocks a second without fall damage, and flight ends when his feet touch ground (in water he ends it himself). The come-up-for-air
+  down at about 4 blocks a second (a flying player takes no fall damage in vanilla; the live case has not been seen, and the test server cannot be told he is flying, so a test shows only the descent and the end of the flight), and flight ends when his feet touch ground (in water he ends it himself). The come-up-for-air
   reflex does not hold "jump" while flying: in flight jump means up, and it had taken him from the water at spawn into the air. Not done: landing over
   lava. In creative and spectator he keeps flying.
+
+## Looking around and trying things
+
+TJ, 2026-11-02, after Vertex swam out into a lake and said he could not see land (the shore was behind him): "he did not think to look around ... being aware of surroundings is a large
+part of existing in a world", "being able and willing to swim across water is needed", "we can't account for every situation: he needs to be able to learn and try things", and, standing
+on a one-block island with water on three sides and a three-high dirt wall on the fourth, "he has no clue what to do ... when he is playing alone is the best time to try new things".
+
+- **`look_around`** (also "what do you see?", "where is the land?"): the ground around him in the eight compass directions out to 96 blocks, from the chunks he already has: for each
+  direction, where there is land, water, lava, a drop or a rise (and where the world he knows ends), then the nearest of each. It reads only the loaded terrain, like a player's view
+  across it; trees are not counted as ground.
+- **He is told without asking.** When it matters, one line is added to the status he is given with every reply: in the water, how deep and where the nearest land is (or that there is none
+  within 96 blocks); lava within 10 blocks; a drop of 4 blocks or more within 6; a tiny patch of land. On ordinary ground nothing is added, so a normal moment costs nothing in the prompt.
+- **Getting out of the water follows what he sees**, however far (40 blocks by the nearest dry spot; beyond that, the nearest land in the look, up to 96): a 56 block swim in the test.
+  Swimming is allowed and wanted; "stepping away from monsters" ends on dry land, not in the middle of a lake, and says so when there is nowhere to go.
+- **Stranded on a tiny patch** (fewer than 12 blocks he can walk to: an island, a pillar, a pit): idle for 3 seconds, he looks, picks the nearest other land, and TRIES to get there with
+  everything he can do (swim, dig through soft blocks, climb), a few candidates, nearest first. What he did and whether it worked is written to his memory as a LESSON ("I was stuck on a
+  tiny patch of land (1 block)... I got off by going N to land 2 blocks away, digging through 2 blocks. That works."), where the recall tool can find it. The first two tries are quiet; a
+  third becomes an ordinary job he talks about. Not done yet: using a lesson before trying (he reads them only if asked), and trying new things on purpose while playing alone.
 
 ## Remembering
 

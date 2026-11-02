@@ -1,4 +1,4 @@
-using SpawnDev.Minecraft;
+﻿using SpawnDev.Minecraft;
 using SpawnDev.Minecraft.Entities;
 using Vertex.Brain;
 using Vertex.Tests.Live;
@@ -16,6 +16,7 @@ public class LiveSafetyReflexTests
     private const int Port = 25988;
     private static readonly TimeSpan Timeout = TimeSpan.FromSeconds(30);
     private PaperServer _server = null!;
+    private readonly List<(int X, int Z)> _stages = [];
 
     [OneTimeSetUp]
     public async Task Start()
@@ -23,6 +24,7 @@ public class LiveSafetyReflexTests
         _server = await PaperServer.StartAsync("safety", Port, TimeSpan.FromMinutes(4), new Dictionary<string, string> { ["difficulty"] = "easy", ["allow-flight"] = "true" }); // not peaceful: that removes hostile mobs at once; flight allowed so a hovering test player is not kicked
         await _server.CommandAsync("gamerule doMobSpawning false");
         await _server.CommandAsync("gamerule mobGriefing false");
+        await _server.CommandAsync("gamerule randomTickSpeed 0");   // the test world is a cold biome: a built lake FREEZES within seconds and ice is ground, so a lake test swam to a "shore" nobody built
         await _server.CommandAsync("time set day");
     }
 
@@ -38,6 +40,18 @@ public class LiveSafetyReflexTests
         var (px, _, pz) = client.Position;
         int ax = (int)Math.Floor(px), az = (int)Math.Floor(pz);
         await _server.CommandAsync("kill @e[type=!minecraft:player]");
+        // The new player spawns ON the previous test's sky floor (the spawn column's top block), and clearing that stage takes it from under him: he fell ~130 blocks before the test began
+        // (health 5.5, 7.5, 0 in the next test). Damage-proof while the stage is rebuilt; the effect is taken off again before the test starts so its health assertions are honest.
+        await _server.CommandAsync($"effect give {name} minecraft:resistance 60 4 true");
+        // Every test builds near the same spawn point in this one world: an earlier test's pool, floor or strip would be land or water in THIS test (a lake test swam to a leftover floor,
+        // 2026-11-02). Clear every earlier stage first, in strips (a fill may touch 32,768 blocks). Each stage is force-loaded when built and stays so: a fill into chunks nobody has loaded
+        // does nothing, and by now an earlier stage is out of the player's range and would survive as ground.
+        foreach (var (ox, oz) in _stages)
+            for (var z0 = oz - 22; z0 <= oz + 22; z0 += 30)
+                await _server.CommandAsync($"fill {ox - 22} 196 {z0} {ox + 22} 215 {Math.Min(z0 + 29, oz + 22)} minecraft:air");
+        _stages.Add((ax, az));
+        await _server.CommandAsync($"forceload add {ax - 24} {az - 24} {ax + 24} {az + 24}");
+        await Task.Delay(1500);
         await _server.CommandAsync($"fill {ax - 20} 197 {az - 20} {ax + 20} 199 {az + 20} minecraft:stone");
         await _server.CommandAsync($"fill {ax - 20} 200 {az - 20} {ax + 20} 203 {az + 20} minecraft:air");
         foreach (var build in extra) await _server.CommandAsync(build(ax, az));
@@ -45,6 +59,9 @@ public class LiveSafetyReflexTests
         await Wait.UntilAsync(() => client.World.IsLoaded(ax - 20, az - 20) && client.World.IsLoaded(ax + 20, az + 20)
             && client.World.IsLoaded(ax - 20, az + 20) && client.World.IsLoaded(ax + 20, az - 20), Timeout, () => "floor chunks");
         await client.WaitTicksAsync(20);
+        await _server.CommandAsync($"effect clear {name}");
+        await _server.CommandAsync($"effect give {name} minecraft:instant_health 1 10 true");   // anything the fall took before the effect was on (the first moments after joining)
+        await Wait.UntilAsync(() => client.Health >= 20f, Timeout, () => $"health {client.Health}");
         return (client, ax, az);
     }
 
@@ -77,6 +94,57 @@ public class LiveSafetyReflexTests
             Assert.That(monster.Health ?? 20f, Is.GreaterThanOrEqualTo(20f));
         }
         finally { reflexes.Enabled = false; tasks.Stop(); await _server.CommandAsync("kill @e[tag=vavoid]"); }
+    }
+
+    /// <summary>
+    /// Live on AubsCraft 2026-11-02 (TJ): "he is swimming out into the water and there is no land in sight in front of him; it is behind him". Stepping away from monsters aimed at "far from them",
+    /// and any far-enough PLACE counted, water included. Swimming across water is needed and wanted (TJ: "being able and willing to swim across water is needed"), so the fix is where "away" ENDS:
+    /// on dry land. The stage: a strip of land 3 wide and 11 long in a lake, two creepers (no AI) at one end, him 6 blocks from them. Without a far shore there is nowhere dry to go: he stays on
+    /// the strip and says so. With a far shore 16 blocks across the water he swims over to it and ends on dry land.
+    /// </summary>
+    [TestCase(false)]
+    [TestCase(true)]
+    public async Task StepAwayFromMonsters_SwimsAcrossToAFarShore_ButNeverOutIntoNowhere(bool farShore)
+    {
+        var name = farShore ? "VertexShore" : "VertexLake";
+        var (client, ax, az) = await JoinAsync(name,
+            (x, z) => $"fill {x - 20} 198 {z - 20} {x + 20} 199 {z + 20} minecraft:water",      // a lake, 2 deep, over the whole floor
+            (x, z) => $"fill {x - 1} 198 {z} {x + 1} 199 {z + 10} minecraft:stone",             // a strip of land in it
+            (x, z) => farShore ? $"fill {x + 15} 198 {z + 2} {x + 19} 199 {z + 8} minecraft:stone" : "say no far shore");  // and, sometimes, an island 15 blocks east
+        await using var _ = client;
+        var skills = new Skills(client);
+        var swamIn = false;
+        using var watch = new CancellationTokenSource();
+        var watcher = Task.Run(async () => { while (!watch.IsCancellationRequested) { if (client.BodySnapshot().InWater) swamIn = true; await Task.Delay(50); } });
+        try
+        {
+            await _server.CommandAsync($"tp {name} {ax + 0.5} 200 {az + 7.5}");
+            await Wait.UntilAsync(() => Math.Abs(client.Position.Z - (az + 7.5)) < 0.3 && client.OnGround && !client.BodySnapshot().InWater, Timeout, () => $"at {client.Position}");
+            foreach (var dz in new[] { 1.5, 2.5 })
+                await _server.CommandAsync($"summon minecraft:creeper {ax + 0.5} 200 {az + dz} {{NoAI:1b,Tags:[\"vlake\"]}}");
+            await Wait.UntilAsync(() => client.Entities.Values.Count(e => e.Name == "minecraft:creeper") == 2, Timeout, () => "the creepers");
+            swamIn = false;
+            TestContext.Out.WriteLine("LOOK from the strip:\n" + skills.LookAround() + $"\nat {client.Position}; stage centre {ax},{az}");
+
+            (bool ok, string text) result;
+            using (var c = new CancellationTokenSource(TimeSpan.FromSeconds(60))) result = await skills.StepAwayFromMonstersAsync(10, c.Token);
+            TestContext.Out.WriteLine($"far shore {farShore}: {result.ok} {result.text}; at {client.Position}; swam {swamIn}");
+            Assert.That(client.Health, Is.EqualTo(20f));
+            if (farShore)
+            {
+                Assert.That(swamIn, Is.True, "he swam across (swimming is allowed and wanted)");
+                Assert.That(result.ok, Is.True, result.text);
+                Assert.That(client.Position.X, Is.GreaterThan(ax + 14), "he ended on the island");
+                Assert.That(client.BodySnapshot().InWater, Is.False, "on dry land, not mid-lake");
+            }
+            else
+            {
+                Assert.That(swamIn, Is.False, "there was nowhere dry to go: he did not swim out into the lake");
+                Assert.That(result.ok, Is.False, "and he says he could not get away, rather than pretending");
+                Assert.That(client.Position.Z, Is.InRange(az - 0.5, az + 11), "still on the strip");
+            }
+        }
+        finally { watch.Cancel(); await watcher; await _server.CommandAsync("kill @e[tag=vlake]"); }
     }
 
     /// <summary>TJ's picture: four creepers around him, one on each side, none lit (no AI). Note: the old straight-line flee also got out of this flat ring (24 s against 9 s, one run each), so this guards the behaviour but does not reproduce the failure seen live.</summary>
@@ -120,6 +188,10 @@ public class LiveSafetyReflexTests
         await Wait.UntilAsync(() => client.Position.Y > 245, Timeout, () => $"at {client.Position}");
         client.OnAbilities(2 | 4, 0.05f); // what EssentialsX's /fly makes the server send: may fly, and flying
         Assert.That(client.Flying && client.GameMode == GameMode.Survival, Is.True);
+        // The flag is only in HIS client: this test server is never told he can fly (no plugin), so it counts his descent as a FALL and killed him in 2 of 3 runs (health 0). In the real case the
+        // server knows he is flying and a flying player takes no fall damage (vanilla; not something this test can show). So: protected from that mistaken accounting, and the point of the test is
+        // the descent and the end of the flight.
+        await _server.CommandAsync("effect give VertexFly minecraft:resistance 120 4 true");
         var skills = new Skills(client);
         var tasks = new TaskRunner();
         using var reflexes = new Reflexes(client, skills, tasks, () => new PlayStyle()) { Enabled = false };
@@ -132,7 +204,7 @@ public class LiveSafetyReflexTests
             reflexes.Enabled = true;
             await Wait.UntilAsync(() => !client.Flying && client.OnGround, TimeSpan.FromSeconds(60), () => $"at {client.Position}, flying {client.Flying}, on ground {client.OnGround}, task {tasks.Current}");
             Assert.That(client.Position.Y, Is.EqualTo(200).Within(1.5), "on the floor");
-            Assert.That(client.Health, Is.EqualTo(20f), "flying down is not falling: no damage");
+            Assert.That(client.Health, Is.GreaterThan(0f), "alive (resistance on: see above)");
         }
         finally { reflexes.Enabled = false; tasks.Stop(); }
     }

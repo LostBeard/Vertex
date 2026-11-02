@@ -14,14 +14,27 @@ public abstract class Goal
     public static Goal Block(int x, int y, int z) => new GoalNear(x, y, z, 0);
     public static Goal Near(double x, double y, double z, double range) => new GoalNear(x, y, z, range);
     public static Goal XZ(int x, int z) => new GoalXZ(x, z);
-    public static Goal AwayFrom(double x, double z, double distance) => new GoalAwayFrom(x, z, distance);
+    /// <summary>At least <paramref name="distance"/> blocks from the point (<paramref name="x"/>, <paramref name="z"/>).</summary>
+    /// <param name="x">The danger's x.</param>
+    /// <param name="z">The danger's z.</param>
+    /// <param name="distance">How far away is far enough.</param>
+    /// <param name="mustBe">When given, the path may only END where this says so (the feet block x, y, z): "away" ends on somewhere he can STAND (dry land), not in the middle of a
+    /// lake. Applies to a path that gets as close as it can too, not only to a complete one. The way there may still be a swim: swimming across to a far shore is allowed and wanted.</param>
+    public static Goal AwayFrom(double x, double z, double distance, Func<int, int, int, bool>? mustBe = null) => new GoalAwayFrom(x, z, distance, mustBe);
+
+    /// <summary>
+    /// Whether a path may END at x, y, z. Only matters for a path to a goal that cannot be reached: it then goes as close as it can, to the best place that passes this. Default: anywhere.
+    /// (Without it, "as far from the danger as I can get" was the farthest water, and he swam out into a lake, 2026-11-02.)
+    /// </summary>
+    public virtual bool CanEndAt(int x, int y, int z) => true;
 }
 
 /// <summary>At least `distance` blocks (horizontally) from a point: running away, wherever the ground allows.</summary>
-public sealed class GoalAwayFrom(double x, double z, double distance) : Goal
+public sealed class GoalAwayFrom(double x, double z, double distance, Func<int, int, int, bool>? mustBe = null) : Goal
 {
     private double Dist(int bx, int bz) => Math.Sqrt((bx + 0.5 - x) * (bx + 0.5 - x) + (bz + 0.5 - z) * (bz + 0.5 - z));
-    public override bool IsReached(int bx, int by, int bz) => Dist(bx, bz) >= distance;
+    public override bool IsReached(int bx, int by, int bz) => Dist(bx, bz) >= distance && (mustBe == null || mustBe(bx, by, bz));
+    public override bool CanEndAt(int bx, int by, int bz) => mustBe == null || mustBe(bx, by, bz);
     public override double Heuristic(int bx, int by, int bz) => Math.Max(0, distance - Dist(bx, bz));
 }
 
@@ -230,7 +243,7 @@ public sealed class Pathfinder
                 g[next] = ng;
                 came[next] = (n, step);
                 var h = goal.Heuristic(next.X, next.Y, next.Z);
-                if (h < bestH) { bestH = h; best = next; }
+                if (h < bestH && goal.CanEndAt(next.X, next.Y, next.Z)) { bestH = h; best = next; }
                 open.Enqueue(next, ng + h * 1.01);
             }
         }

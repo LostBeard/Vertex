@@ -134,6 +134,11 @@ public static class InstinctData
         [
             "remember that I love pink axolotls", "remember my favorite color is purple", "don't forget my dog's name is Max", "remember I'm scared of creepers", "keep in mind that my birthday is in August",
         ],
+        ["look_around"] =
+        [
+            "look around", "what do you see", "can you see any land", "where is the land", "where are we", "what is around you", "are you lost", "look around and tell me what is near",
+            "what's out there", "which way is the shore",
+        ],
         ["recall"] =
         [
             "what did you build earlier", "do you remember what we built", "where did we find the diamonds", "what did you do yesterday", "did you ever find a village",
