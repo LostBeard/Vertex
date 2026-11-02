@@ -1681,14 +1681,20 @@ public sealed partial class Skills(MinecraftClient client)
         var seenMobs = new Dictionary<string, HashSet<int>>();
         void Look()
         {
+            // Only what a player standing here could SEE counts (Sight): the server sends every buried ore and every tracked animal, and reporting those is an X-ray, not exploring.
+            var eye = client.EyePosition;
             foreach (var (x, y, z) in client.World.FindBlocks(stateKind.ContainsKey, client.Position, 48, 4096))
             {
                 var kind = stateKind[client.World.GetState(x, y, z)];
-                if (kind == "a village") { if (villages.All(v => (v.X - x) * (v.X - x) + (v.Z - z) * (v.Z - z) > 64 * 64)) villages.Add((x, y, z)); }
-                else if (!seenBlocks.ContainsKey(kind)) seenBlocks[kind] = (x, y, z);
+                if (kind == "a village")
+                {
+                    if (villages.All(v => (v.X - x) * (v.X - x) + (v.Z - z) * (v.Z - z) > 64 * 64) && Sight.CanSeeBlock(client.World, eye, x, y, z)) villages.Add((x, y, z));
+                }
+                else if (!seenBlocks.ContainsKey(kind) && Sight.CanSeeBlock(client.World, eye, x, y, z)) seenBlocks[kind] = (x, y, z);
             }
             foreach (var e in client.Entities.Values.Where(e => NotableMobs.Contains(e.Name)))
-                (seenMobs.TryGetValue(e.Name, out var ids) ? ids : seenMobs[e.Name] = []).Add(e.Id);
+                if (e.DistanceTo(eye.X, eye.Y, eye.Z) <= 48 && Sight.CanSeeBody(client.World, eye, e.X, e.Y, e.Z))
+                    (seenMobs.TryGetValue(e.Name, out var ids) ? ids : seenMobs[e.Name] = []).Add(e.Id);
         }
         Look();
         var before = seenBlocks.Keys.ToHashSet(); // what was already in view at the start is not news

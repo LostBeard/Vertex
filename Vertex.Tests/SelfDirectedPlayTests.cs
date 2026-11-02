@@ -31,6 +31,15 @@ public class SelfDirectedPolicyTests
     }
     [Test] public void AGoalHeAlreadyHas_OutranksANewProject() => Assert.That(Decide(hasGoal: true), Is.EqualTo(IdleAction.WorkOnGoal));
     [Test] public void StudyingUnknownBlocks_ComesBeforeAProject() => Assert.That(Decide(unstudied: true), Is.EqualTo(IdleAction.StudyBlocks));
+
+    [Test]
+    public void AGoalHeSetsForHimself_IsNobodys_ButAFriendsRequestKeepsItsOwner()
+    {
+        Assert.That(VertexBrain.GoalOwner(choosingOwnProject: true, requested: "Aubri"), Is.Null, "the model's habitual player 'me' must not make his own project Aubri's");
+        Assert.That(VertexBrain.GoalOwner(choosingOwnProject: true, requested: null), Is.Null);
+        Assert.That(VertexBrain.GoalOwner(choosingOwnProject: false, requested: "Aubri"), Is.EqualTo("Aubri"), "a goal a friend gives is still for that friend");
+        Assert.That(VertexBrain.GoalOwner(choosingOwnProject: false, requested: null), Is.Null);
+    }
 }
 
 /// <summary>The real thing: a real Paper server and the real model; he decides what to do with nobody asking. Settings and memory live in a temp folder.</summary>
@@ -102,6 +111,7 @@ public class SelfDirectedPlayTests
         var tool = log.SkipWhile(l => !l.Contains("choosing a project of my own")).First(l => l.StartsWith("  tool "));
         TestContext.Out.WriteLine("HE CHOSE: " + tool);
         Assert.That(tool, Does.Not.Contain("tool stop"), "a project, not a stop");
+        Assert.That(brain.Memory.Goals.Where(g => g.For != null), Is.Empty, "nothing he chose for himself is recorded as being FOR someone: " + string.Join("; ", brain.Memory.Goals.Select(g => $"{g.Text} (for {g.For})")));
     }
 
     [Test]

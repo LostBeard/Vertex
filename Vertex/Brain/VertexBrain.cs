@@ -228,7 +228,7 @@ public sealed class VertexBrain : IBody
                     await ReviewGoalStepAsync(forGoal, t.Outcome, ct);
                 // Report back in character (failures always; successes unless very quiet).
                 else if (!t.Outcome.Success || Character.Style.Chattiness >= 0.2)
-                    await Companion.RespondAsync($"[Game update, not a friend talking: you finished {t.Outcome.Task}. Result: {t.Outcome.Summary}] Tell your friends how it went, in one short first-person sentence.", ct, allowTools: false, clock);
+                    await Companion.RespondAsync($"[Game update, not a friend talking: {OutcomeReport.ForModel(t.Outcome, null)}] Tell your friends how it went, in one short first-person sentence.", ct, allowTools: false, clock);
                 return true;
             case JoinedEvent j:
                 if (Character.Style.Chattiness >= 0.2)
@@ -256,6 +256,24 @@ public sealed class VertexBrain : IBody
         && now - _lastProjectAt >= ProjectCooldown;
 
     /// <summary>
+    /// The projects Vertex may be offered on its own: only ones it can do with what it carries or can gather. It was offered "plant some crops" with no seeds in its pockets (2026-11-01: it
+    /// chose "plant some carrots", the job failed, and it told everyone it had finished); planting needs seeds or crops, fishing needs a rod, everything else it can start from nothing.
+    /// </summary>
+    /// <param name="count">How many of an item (short name, "fishing_rod", "wheat_seeds") it carries.</param>
+    internal static List<string> OwnProjectIdeas(Func<string, int> count)
+    {
+        var ideas = new List<string>
+        {
+            "build a little shelter or garden with build_shape",
+            "explore one direction (no farther than about 40 blocks) and tell what you find",
+            "gather some wood, stone or dirt",
+        };
+        if (count("fishing_rod") > 0) ideas.Add("go fishing");
+        if (new[] { "wheat_seeds", "beetroot_seeds", "melon_seeds", "pumpkin_seeds", "carrot", "potato" }.Any(seed => count(seed) > 0)) ideas.Add("plant the seeds or crops you carry");
+        return ideas;
+    }
+
+    /// <summary>
     /// Asks the language model for ONE small project and lets it start it with whichever tool fits (build_shape, explore, collect, fish, farm... or set_goal for something that takes many
     /// steps): the same tools and rules as any request, so nothing it does on its own is anything a friend could not have asked for.
     /// </summary>
@@ -266,9 +284,10 @@ public sealed class VertexBrain : IBody
             string[] recent; lock (_recentProjects) recent = _recentProjects.ToArray();
             Log?.Invoke("choosing a project of my own");
             _choosing = true;
+            var ideas = OwnProjectIdeas(item => Client.Inventory.Count(item));
             await Companion.RespondAsync("[Game update, not a friend talking: nobody needs you right now and you have no goal, so pick ONE small project of your own to do while you wait. "
-                + "Something a friend would enjoy watching: build a little shelter or garden with build_shape, explore one direction (no farther than about 40 blocks) and tell what you find, gather some wood or stone or dirt, "
-                + "go fishing, or plant some crops. Keep it small and safe, in daylight, near where you are. Never break or build on anything that looks like someone's build. "
+                + $"Something a friend would enjoy watching, and only what you can do right now: {string.Join("; ", ideas)}. "
+                + "Keep it small and safe, in daylight, near where you are. Never break or build on anything that looks like someone's build. "
                 + (recent.Length > 0 ? $"You recently did: {string.Join("; ", recent)}. Pick something different. " : "")
                 + "Call the ONE tool that starts it (set_goal only for something that really takes many steps), then say in one short sentence what you chose.]", ct);
         }
@@ -395,8 +414,7 @@ public sealed class VertexBrain : IBody
         _pursuing = goal; // a step it starts from here is still for the goal (the task keeps it)
         try
         {
-            await Companion.RespondAsync($"[Game update, not a friend talking: you finished {step.Task}, a step toward your goal \"{goal.Text}\". "
-                + $"Result: {step.Summary}. Is the goal reached now? If yes, call finish_goal. Then tell your friends how it went, in one short first-person sentence.]", ct);
+            await Companion.RespondAsync($"[Game update, not a friend talking: {OutcomeReport.ForModel(step, goal.Text)} Then tell your friends how it went, in one short first-person sentence.]", ct);
         }
         finally { _pursuing = null; }
     }
@@ -462,9 +480,16 @@ public sealed class VertexBrain : IBody
         return "remembered";
     }
 
+    /// <summary>
+    /// Whose a new goal is. A goal Vertex sets for itself while choosing its own project is nobody's: the model writes player "me" out of habit, and "me" means whoever spoke last, so
+    /// without this a project of its own was recorded as FOR Aubri (seen live 2026-11-01, "plant some carrots") and, once done, written into her history.
+    /// </summary>
+    internal static string? GoalOwner(bool choosingOwnProject, string? requested) => choosingOwnProject ? null : requested;
+
     public string SetGoal(string goal, string? forPlayer)
     {
         if (string.IsNullOrWhiteSpace(goal)) return "no goal given";
+        forPlayer = GoalOwner(_choosing, forPlayer);
         // Kept under the player's real name (the model may write "aubri" or "Aubrey").
         var g = Memory.AddGoal(goal, forPlayer != null && (Memory.Person(forPlayer) ?? Memory.PersonNamedIn(forPlayer)) is { } p ? p.Name : forPlayer, Now());
         return $"OK: new long-term goal \"{g.Text}\". You will work on it whenever nobody needs you.";

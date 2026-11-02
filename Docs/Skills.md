@@ -17,7 +17,7 @@ You never have to say a tool name. Say what you want in your own words; a small 
 | "stay here", "wait for me", "don't move" | `stay` | Really stays: it does not wander off to be useful until it is asked something else. |
 | "stop" | `stop` | Cancels the current task. A bare "stop!" is also caught instantly, without the language model. |
 | "remember this is home", "go home", "forget home" | `mark_place`, `go_to_place`, `forget_place` | Named places are kept per server. |
-| "go explore" | `explore` | Walks out, comes back and tells you what it found; villages become places it remembers. |
+| "go explore" | `explore` | Walks out, comes back and tells you what it found; villages become places it remembers. It reports only what a player could have SEEN (a clear line from the eyes, within 48 blocks): ore buried in rock or an animal behind a wall is not reported, because the server sends all of that to every client. |
 
 Walking never breaks a player build (planks, glass, doors, bricks and the like): it only digs natural blocks, and only when there is
 no other way.
