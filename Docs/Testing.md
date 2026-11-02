@@ -48,7 +48,13 @@ Things that have cost time:
 ## The tool-choice test
 
 `ToolChoiceTests` asks the real model 18 things a child might say and checks the first tool it calls and what its arguments contain (the test stops each task as soon as it
-starts: it tests the choice, not the doing). It is the measure behind most of [Architecture.md](Architecture.md): run it alone, it takes about four minutes.
+starts: it tests the choice, not the doing). It is the measure behind most of [Architecture.md](Architecture.md): run it alone, it takes about four to seven minutes.
+
+**Where its time goes** (measured 2026-11-02, RTX 2060 12 GB, SpawnDev.AI.Server 1.4.0-local.15, llama3.1:8b on the batch decoder, GPU otherwise idle, the test took 7 m 24 s; every
+reply logs one `reply:` line from the engine's own timers, the LAST generation pass of each call): 32 replies, prompts of 3,105 to 5,081 tokens (median 4,431). Prefill: median
+2.7 s per reply, about 1,570 prompt tokens a second; the first reply of the process took 32 s (kernels compiled on first use); all 32 summed 161 s, 129 s without that first one.
+Decode: 2,255 tokens in 125 s, median 17.7 tokens a second (16.1 to 18.9). So prefill and decode cost about the same; 17.7 tokens a second is a third of what Data measured on a
+4070 (54 on the same package), reported to Data.
 
 | Switch | Effect |
 |---|---|

@@ -361,8 +361,22 @@ public sealed class VertexAi : IAsyncDisposable
                 await hold.YieldAsync(ct);
                 if (onDelta != null) await onDelta(d);
             }
-            return await Chat.ChatStreamAsync(request, Delta, ct);
+            var result = await Chat.ChatStreamAsync(request, Delta, ct);
+            Log?.Invoke(DescribeReply(result));
+            return result;
         }
+    }
+
+    /// <summary>
+    /// One line on where a reply's time went, from the engine's own timers (SpawnDev.AI.Server 1.4.0-local.14 and later): the prompt it read and how long that took (prefill, plus the
+    /// first token), then the tokens it wrote and the rate of the steps after the first. For the LAST generation pass of the call (tool rounds before it are not in it). Nothing when the
+    /// engine did not time the pass.
+    /// </summary>
+    internal static string DescribeReply(AiChatResult r)
+    {
+        if (r.Timings is not { } t) return $"reply: {r.PromptTokens} prompt tokens, {r.GeneratedTokens} generated (no timings)";
+        var decode = t.EvalMs is { } e && e > 0 && r.GeneratedTokens > 1 ? $", {(r.GeneratedTokens - 1) / (e / 1000.0):0.0} tok/s" : "";
+        return $"reply: {r.PromptTokens} prompt tokens, prefill {(t.PromptEvalMs is { } p ? $"{p:0}" : "-")} ms; {r.GeneratedTokens} generated, decode {(t.EvalMs is { } d ? $"{d:0}" : "-")} ms{decode}; load {t.LoadMs:0} ms, total {t.TotalMs:0} ms";
     }
 
     /// <summary>The chat models available locally (Ollama cache) by name.</summary>
