@@ -198,6 +198,40 @@ public class LiveAwarenessTests
         finally { reflexes.Enabled = false; tasks.Stop(); }
     }
 
+    /// <summary>
+    /// TJ, 2026-11-02: "he needs to be able to learn and try things... when he is playing alone is the best time". The first experiment: a pond 12 blocks wide with a shore on the far side. He
+    /// finds it by looking, swims across, and the lesson (tagged with the experiment's key) says it worked. Nothing near water: there is nothing to try.
+    /// </summary>
+    [Test]
+    public async Task Alone_HeTriesSwimmingAcrossAPond_AndLearnsItWorks()
+    {
+        var (client, ax, az) = await StageAsync("VertexTry", 30);
+        await using var _ = client;
+        await StandAsync(client, "VertexTry", ax, 200, az);
+        var skills = new Skills(client);
+        Assert.That(skills.FindSwimAcross(), Is.Null, "dry floor all round: nothing to try");
+
+        await _server.CommandAsync($"fill {ax - 20} 198 {az + 4} {ax + 20} 199 {az + 15} minecraft:water");   // 12 blocks of water, then the floor again
+        await Wait.UntilAsync(() => client.World.GetBlock(ax, 199, az + 8)?.Name == "minecraft:water" && client.World.IsLoaded(ax, az + 28), Timeout, () => $"at {client.Position}");
+        var target = skills.FindSwimAcross();
+        TestContext.Out.WriteLine($"found: {target}");
+        Assert.That(target, Is.Not.Null);
+        Assert.That(target!.Value.Direction, Is.EqualTo("S"));
+        Assert.That(target.Value.Width, Is.InRange(11, 13));
+
+        var lessons = new List<Skills.Lesson>();
+        skills.LessonLearned += lessons.Add;
+        (bool ok, string text) result;
+        using (var c = new CancellationTokenSource(TimeSpan.FromSeconds(90))) result = await skills.SwimAcrossAsync(c.Token);
+        TestContext.Out.WriteLine($"{result.ok}: {result.text}; at {client.Position}");
+        Assert.That(result.ok, Is.True, result.text);
+        Assert.That(client.Position.Z, Is.GreaterThan(az + 15), "on the far shore");
+        Assert.That(client.BodySnapshot().InWater, Is.False);
+        Assert.That(lessons, Has.Count.EqualTo(1));
+        Assert.That(lessons[0], Is.EqualTo(new Skills.Lesson(lessons[0].Text, Skills.SwimAcrossKey, true)));
+        Assert.That(lessons[0].Text, Does.Contain("12 blocks of water").And.Contain("It worked"), lessons[0].Text);
+    }
+
     [Test]
     public async Task OnPlainLand_TheStatusCostsNothing_ButAnEdgeAndLavaAreMentioned()
     {

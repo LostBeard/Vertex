@@ -154,6 +154,7 @@ public sealed class VertexBrain : IBody
         Tasks.GoalOf = () => _pursuing;
         Tasks.Finished += o => companion.Post(new TaskEvent(o));
         Skills.Learned += RecordLesson;
+        Skills.LessonLearned += RecordLesson;
         companion.Attach(this);
         companion.AddChannel(Channel);
     }
@@ -258,6 +259,49 @@ public sealed class VertexBrain : IBody
             try { await memory.RecordAsync(entry); }
             catch (Exception e) { Log?.Invoke("memory: could not record a lesson: " + e.Message); }
         });
+    }
+
+    /// <summary>Writes an experiment's lesson to long-term memory with tags, so "have I tried this?" is an exact lookup (tag "exp:&lt;key&gt;"), not a guess from similar words.</summary>
+    private void RecordLesson(Skills.Lesson lesson)
+    {
+        Log?.Invoke($"learned ({lesson.Key}, {(lesson.Worked ? "worked" : "did not work")}): {lesson.Text}");
+        var memory = LongTerm;
+        if (memory == null) return;
+        var entry = new SpawnDev.AI.AiMemoryEntry
+        {
+            Kind = SpawnDev.AI.AiMemoryKind.Lesson, Text = lesson.Text + $" (at {Client.Position.X:0} {Client.Position.Y:0} {Client.Position.Z:0})", Scope = MemoryScope, Source = "minecraft",
+            Tags = ["lesson", "experiment", ExperimentTag(lesson.Key), lesson.Worked ? "worked" : "failed"], Importance = 0.7f,
+        };
+        _ = Task.Run(async () =>
+        {
+            try { await memory.RecordAsync(entry); }
+            catch (Exception e) { Log?.Invoke("memory: could not record a lesson: " + e.Message); }
+        });
+        lock (_triedKeys) _triedKeys.Add(lesson.Key);
+    }
+
+    internal static string ExperimentTag(string key) => "exp:" + key;
+    private readonly HashSet<string> _triedKeys = [];
+
+    /// <summary>Has he already learned the answer to this experiment (here, or earlier on this server: it is in his memory)? Then he does not try it again.</summary>
+    internal bool AlreadyTried(string key)
+    {
+        lock (_triedKeys) if (_triedKeys.Contains(key)) return true;
+        var memory = LongTerm;
+        if (memory == null) return false;
+        var tag = ExperimentTag(key);
+        return memory.Store.List(new SpawnDev.AI.AiMemoryFilter { Scope = MemoryScope, Kinds = [SpawnDev.AI.AiMemoryKind.Lesson] }).Any(e => e.Tags.Contains(tag));
+    }
+
+    /// <summary>
+    /// What he could try now, on purpose, for the sake of finding out: the first experiment he has no lesson for yet and whose set-up is here (a pond with a far shore). Null when there is
+    /// nothing new to try. Played alone is the best time to learn (TJ, 2026-11-02): nothing is at stake and nobody is waiting on him.
+    /// </summary>
+    internal (string Name, Func<CancellationToken, Task<(bool, string)>> Run)? NextExperiment()
+    {
+        if (!AlreadyTried(Skills.SwimAcrossKey) && Skills.FindSwimAcross() is { } t)
+            return ($"trying something new: swimming across {t.Width} blocks of water", Skills.SwimAcrossAsync);
+        return null;
     }
 
     /// <summary>Writes a finished job to long-term memory in the background (a memory that cannot be written is a log line, never a problem for the game).</summary>
@@ -460,6 +504,15 @@ public sealed class VertexBrain : IBody
                 var unstudied = goal == null && !Staying && StudyWhenIdle && Skills.UnstudiedBlocks(16).Count > 0;     // the scan only when it could matter
                 var action = IdlePolicy.Decide(Staying, Tasks.IsBusy, _goalQueued || _projectQueued, Client.IsSpawned, now - _lastActivity, IdleBeforeGoals, goal != null, StudyWhenIdle, unstudied,
                     SelfDirectedPlay, SelfDirectedIdle, SelfDirectedPlay && FitForOwnProject(now));
+                if (action == IdleAction.ChooseProject && NextExperiment() is { } experiment)
+                {
+                    // Something he has never tried and can try right here: do that before inventing a project (nothing is at stake, and he writes down what he finds out).
+                    _lastActivity = now;
+                    _lastProjectAt = now;
+                    Log?.Invoke("experiment: " + experiment.Name);
+                    Tasks.Start(experiment.Name, experiment.Run);
+                }
+                else
                 if (action == IdleAction.ChooseProject)
                 {
                     _projectQueued = true;

@@ -140,7 +140,12 @@ on a one-block island with water on three sides and a three-high dirt wall on th
 - **Stranded on a tiny patch** (fewer than 12 blocks he can walk to: an island, a pillar, a pit): idle for 3 seconds, he looks, picks the nearest other land, and TRIES to get there with
   everything he can do (swim, dig through soft blocks, climb), a few candidates, nearest first. What he did and whether it worked is written to his memory as a LESSON ("I was stuck on a
   tiny patch of land (1 block)... I got off by going N to land 2 blocks away, digging through 2 blocks. That works."), where the recall tool can find it. The first two tries are quiet; a
-  third becomes an ordinary job he talks about. Not done yet: using a lesson before trying (he reads them only if asked), and trying new things on purpose while playing alone.
+  third becomes an ordinary job he talks about.
+- **Trying new things alone** (with "Play on his own" on): when it is time to choose a project of his own, he first checks for an experiment he has no lesson for yet and can set up right here. The
+  first one is **swimming across a pond**: water 6 to 30 blocks wide within 24 blocks, a shore he can see on the far side, no lava on the way. He swims over, and the lesson ("I tried swimming
+  across 12 blocks of water to the S shore. It worked, in 24 seconds, and it cost me no health.") is stored with the tags `experiment`, `exp:swim-across` and `worked` or `failed`. He looks
+  for that tag (an exact lookup, not a guess from similar words) before an experiment and does not repeat one he has a lesson for, on this server, across restarts. Not done yet: using the
+  lessons to choose HOW to get out of a predicament (the tiny-patch lesson is only found by the recall tool), and more experiments than this one.
 
 ## Remembering
 

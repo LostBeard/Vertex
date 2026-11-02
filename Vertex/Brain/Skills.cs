@@ -2041,6 +2041,79 @@ public sealed partial class Skills(MinecraftClient client)
         return (false, failed);
     }
 
+    // ---------------------------------------------------------------- trying things on purpose
+
+    /// <summary>The key of the swim-across experiment (its lesson carries this tag).</summary>
+    public const string SwimAcrossKey = "swim-across";
+
+    /// <summary>
+    /// Raised with a structured lesson from an experiment: the brain stores it with the tags, so that "have I already tried this?" is an exact lookup, not a guess from similar words.
+    /// </summary>
+    public event Action<Lesson>? LessonLearned;
+
+    /// <summary>What an experiment taught: the sentence, the experiment's key and whether the thing worked.</summary>
+    public sealed record Lesson(string Text, string Key, bool Worked);
+
+    /// <summary>
+    /// A pond or lake with a far shore he can see: where to swim to, how many blocks of water, and which way. Null when nothing fits (no water within 24 blocks, water wider than 30 or narrower
+    /// than 6, lava on the way, or no dry place to stand over there).
+    /// </summary>
+    public (int X, int Y, int Z, int Width, string Direction)? FindSwimAcross()
+    {
+        var look = Survey(48);
+        (int X, int Y, int Z, int Width, string Direction)? best = null;
+        foreach (var ray in look.Rays)
+        {
+            var s = ray.Samples;
+            var first = s.ToList().FindIndex(p => p.Kind == SurfaceKind.Water);
+            if (first < 0 || s[first].Distance > 24 || s.Take(first).Any(p => p.Kind is not SurfaceKind.Land)) continue;
+            var after = first;
+            while (after < s.Count && s[after].Kind == SurfaceKind.Water) after++;
+            if (after >= s.Count || s[after].Kind != SurfaceKind.Land) continue;     // ends in the unknown, a void or lava: not a shore he can see
+            var width = s[after].Distance - s[first].Distance;
+            if (width < 6 || width > 30) continue;
+            var shore = s[after];
+            for (var ddx = -3; ddx <= 3; ddx++)
+            for (var ddz = -3; ddz <= 3; ddz++)
+            for (var yy = shore.Y + 3; yy >= shore.Y - 3; yy--)
+                if (DryStand(shore.X + ddx, yy, shore.Z + ddz))
+                {
+                    if (best == null || width < best.Value.Width) best = (shore.X + ddx, yy, shore.Z + ddz, width, ray.Direction);
+                    goto nextRay;
+                }
+            nextRay:;
+        }
+        return best;
+    }
+
+    /// <summary>
+    /// The experiment: swims across the water in front of him to the far shore, to find out for himself that it can be done (and what it costs). Raises <see cref="LessonLearned"/> either way.
+    /// </summary>
+    public async Task<(bool, string)> SwimAcrossAsync(CancellationToken ct)
+    {
+        if (FindSwimAcross() is not { } t) return (false, "There is no pond or lake with a far shore near enough to swim across.");
+        var healthBefore = client.Health;
+        var sw = System.Diagnostics.Stopwatch.StartNew();
+        bool ok = false;
+        for (var round = 0; round < 8 && !ok; round++)
+        {
+            var (fx, _, fz) = client.Position;
+            var before = Math.Sqrt((fx - t.X - 0.5) * (fx - t.X - 0.5) + (fz - t.Z - 0.5) * (fz - t.Z - 0.5));
+            ok = await client.GoToAsync(Goal.Block(t.X, t.Y, t.Z), new PathOptions { MaxNodes = 25_000 }, ct);
+            var (ax, _, az) = client.Position;
+            if (!ok && Math.Sqrt((ax - t.X - 0.5) * (ax - t.X - 0.5) + (az - t.Z - 0.5) * (az - t.Z - 0.5)) > before - 3) break;
+        }
+        ok = ok && !InWaterNow();
+        var lost = Math.Max(0, healthBefore - client.Health) / 2;
+        var text = ok
+            ? $"I tried swimming across {t.Width} blocks of water to the {t.Direction} shore. It worked, in {sw.Elapsed.TotalSeconds:0} seconds{(lost >= 0.5 ? $", and it cost me {lost:0.#} hearts" : ", and it cost me no health")}. I can cross water that wide."
+            : $"I tried swimming across {t.Width} blocks of water to the {t.Direction} shore and I did not get there.";
+        var lesson = new Lesson(text, SwimAcrossKey, ok);
+        LessonLearned?.Invoke(lesson);      // not also Learned: the brain writes each lesson to memory once, and would write this one twice
+        if (!ok && InWaterNow()) await LeaveWaterAsync(ct);
+        return (ok, text);
+    }
+
     /// <summary>Runs 12 blocks straight away from a mob (what a careful character does when one hurts it).</summary>
     public async Task<(bool, string)> FleeFromAsync(Entity attacker, CancellationToken ct)
     {
