@@ -73,6 +73,19 @@ public sealed class VertexBrain : IBody
     private bool _projectQueued, _choosing;
     private DateTime _lastProjectAt = DateTime.MinValue;
     private readonly List<string> _recentProjects = [];
+    /// <summary>
+    /// Long-term memory (null: none). Jobs that end are written to it as episodes, and what a friend says is looked up in it before the language model answers. Everything stays on this PC;
+    /// the privacy rules (paused learning, people nothing may be learned about, forgetting a person) live in its store.
+    /// </summary>
+    public Vertex.Memory.VertexMemory? LongTerm { get; set; }
+    /// <summary>Which world the memories belong to: "host:port". "Home" on one server must never answer on another.</summary>
+    public string MemoryScope { get; set; } = "";
+    /// <summary>
+    /// How alike (cosine, 0 to 1) a memory must be to what was said to be shown to the language model. Set from measurements (2026-11-02, CPU, all-MiniLM-L6-v2, 7 memories, 8 questions about
+    /// them and 8 lines of small talk): questions scored 0.351 to 0.753, small talk 0.084 to 0.240; 0.30 is the middle of the gap. A small sample: VertexMemoryTests.TheRecallCutoff...
+    /// asserts it stays between the two groups, and it should be re-measured on real entries.
+    /// </summary>
+    public const float MinRecallSimilarity = 0.30f;
     /// <summary>How often the idle check runs.</summary>
     public TimeSpan IdleCheckEvery { get; set; } = TimeSpan.FromSeconds(10);
     /// <summary>The clock (tests move it).</summary>
@@ -215,6 +228,56 @@ public sealed class VertexBrain : IBody
         return result.TextForModel;
     }
 
+    /// <summary>The episode a finished job leaves in long-term memory: what he did (or tried), the result in his own words, and where.</summary>
+    internal static string EpisodeText(TaskOutcome outcome, (double X, double Y, double Z) at)
+    {
+        var where = $" (at {at.X:0} {at.Y:0} {at.Z:0})";
+        return outcome.Success ? $"I finished {outcome.Task}: {outcome.Summary.TrimEnd('.', ' ')}.{where}" : $"I tried {outcome.Task}, but it did not work: {outcome.Summary.TrimEnd('.', ' ')}.{where}";
+    }
+
+    /// <summary>"just now", "20 minutes ago", "3 hours ago", "2 days ago".</summary>
+    internal static string Ago(TimeSpan age) => age.TotalMinutes < 1 ? "just now"
+        : age.TotalHours < 1 ? $"{(int)age.TotalMinutes} minutes ago"
+        : age.TotalDays < 1 ? $"{(int)age.TotalHours} hour{((int)age.TotalHours == 1 ? "" : "s")} ago"
+        : $"{(int)age.TotalDays} day{((int)age.TotalDays == 1 ? "" : "s")} ago";
+
+    /// <summary>Writes a finished job to long-term memory in the background (a memory that cannot be written is a log line, never a problem for the game).</summary>
+    private void RecordEpisode(TaskOutcome outcome)
+    {
+        var memory = LongTerm;
+        if (memory == null) return;
+        var subjects = new List<string>();
+        if (outcome.For is { Length: > 0 } who && Client.Entities.Values.FirstOrDefault(e => e.IsPlayer && e.PlayerName == who) is { } person) subjects.Add("mc:" + person.Uuid);
+        var entry = new SpawnDev.AI.AiMemoryEntry
+        {
+            Kind = SpawnDev.AI.AiMemoryKind.Episode, Text = EpisodeText(outcome, Client.Position), Scope = MemoryScope, Source = "minecraft",
+            Tags = ["task", outcome.Success ? "done" : "failed"], Subjects = subjects, Importance = outcome.Success ? 0.5f : 0.35f,
+        };
+        _ = Task.Run(async () =>
+        {
+            try { await memory.RecordAsync(entry); }
+            catch (Exception e) { Log?.Invoke("memory: could not record: " + e.Message); }
+        });
+    }
+
+    /// <summary>
+    /// The recall tool: looks in his own log for what the question is about and answers with the few best matches, each with how long ago. A tool result is what the 8B model uses most
+    /// faithfully (a free-text note beside the friend's message was ignored or parroted back, measured 2026-11-02: 3 of 5 and 2 of 3 attempts).
+    /// </summary>
+    internal async Task<string> RecallForToolAsync(string question, CancellationToken ct = default)
+    {
+        var memory = LongTerm;
+        if (memory == null) return "I don't keep a long-term log, so I can't look that up.";
+        if (string.IsNullOrWhiteSpace(question)) return "Look up what? Tell me what to remember.";
+        // laneHeld: this runs as a tool, inside the chat turn that holds the GPU lane (asking for it again would wait on itself forever).
+        var hits = await memory.RecallAsync(question, MemoryScope, 3, null, ct, laneHeld: true);
+        var good = hits.Where(h => h.Similarity >= MinRecallSimilarity).ToList();
+        if (good.Count == 0) return "I don't remember anything about that.";
+        Log?.Invoke($"  (remembered {good.Count}: {string.Join(" | ", good.Select(h => $"{h.Similarity:0.00}"))})");
+        return "OK, this is what my log says (things I did; say it as I, add nothing):\n"
+            + string.Join("\n", good.Select(h => $"- {Ago(DateTime.UtcNow - new DateTime(h.Entry.TimeTicks, DateTimeKind.Utc))}: {h.Entry.Text}"));
+    }
+
     async Task<bool> IBody.HandleEventAsync(BrainEvent e, TurnClock clock, CancellationToken ct)
     {
         switch (e)
@@ -225,6 +288,7 @@ public sealed class VertexBrain : IBody
                 _lastActivity = Now();
                 var forGoal = t.Outcome.Interruption || t.Outcome.Goal is not { Done: null } stepGoal ? null : stepGoal;
                 Remember(t.Outcome);
+                if (!t.Outcome.Interruption) RecordEpisode(t.Outcome);
                 if (forGoal != null)
                     await ReviewGoalStepAsync(forGoal, t.Outcome, ct);
                 // Report back in character (failures always; successes unless very quiet).

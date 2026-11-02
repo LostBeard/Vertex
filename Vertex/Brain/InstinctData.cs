@@ -134,6 +134,11 @@ public static class InstinctData
         [
             "remember that I love pink axolotls", "remember my favorite color is purple", "don't forget my dog's name is Max", "remember I'm scared of creepers", "keep in mind that my birthday is in August",
         ],
+        ["recall"] =
+        [
+            "what did you build earlier", "do you remember what we built", "where did we find the diamonds", "what did you do yesterday", "did you ever find a village",
+            "what have you been up to", "what did you make for me", "do you remember the pen you made", "what happened last time", "what did you build for me before",
+        ],
         ["mark_place"] =
         [
             "remember this place as home", "mark this spot as the mine", "call this place the farm", "save this location as base", "this is our castle remember it",

@@ -61,6 +61,60 @@ public class VertexMemoryTests
         Assert.That(there[0].Entry.Text, Does.Contain("stone tower"));
     }
 
+    /// <summary>
+    /// How long recording and recalling take, cold (the first of each, which compiles kernels) and warm (the second batch in the same process), on the CPU accelerator and on the card.
+    /// Printed, and asserted only for the one thing known to be true: warm is not slower than cold. Numbers go to the library's author when they look wrong.
+    /// </summary>
+    [TestCase(true)]
+    [TestCase(false, Category = "GPU")]
+    public async Task Timings_ColdAndWarm(bool cpu)
+    {
+        await using var ai = TestAi.Create();
+        var clock = System.Diagnostics.Stopwatch.StartNew();
+        using var memory = await ai.OpenMemoryAsync(NewFolder(), cpu);
+        var open = clock.ElapsedMilliseconds;
+
+        async Task<(long Record, long Recall)> RoundAsync(string[] texts, string query)
+        {
+            clock.Restart();
+            foreach (var t in texts) await memory.RecordAsync(Episode(t, Home));
+            var record = clock.ElapsedMilliseconds;
+            clock.Restart();
+            await memory.RecallAsync(query, Home, 3);
+            return (record, clock.ElapsedMilliseconds);
+        }
+
+        var cold = await RoundAsync(["I built a house near the river.", "I mined cobblestone in a cave.", "I went fishing at the lake.", "I found a village to the east.", "I planted wheat behind the house.", "I made a pen for the cows.", "I cut ten oak logs."], "where did we build the house?");
+        var warm = await RoundAsync(["I built a tower on the hill.", "I mined coal under the mountain.", "I caught salmon in the river.", "I found a temple in the desert.", "I planted carrots by the barn.", "I made a fence around the sheep.", "I cut twelve birch logs."], "did you build a tower?");
+        // One more recall alone, the number a player would feel.
+        clock.Restart();
+        await memory.RecallAsync("what did you fish for?", Home, 3);
+        var recallAlone = clock.ElapsedMilliseconds;
+        TestContext.Out.WriteLine($"TIMING {(cpu ? "CPU" : "CUDA")}: open {open} ms; cold: 7 records {cold.Record} ms ({cold.Record / 7.0:0} ms each), first recall {cold.Recall} ms; warm: 7 records {warm.Record} ms ({warm.Record / 7.0:0} ms each), recall {warm.Recall} ms; one more recall {recallAlone} ms");
+        Assert.That(warm.Record, Is.LessThanOrEqualTo(cold.Record), "the second batch is not slower than the first");
+    }
+
+    /// <summary>The cut-off for what is shown to the language model is MEASURED here, not guessed: what people would ask about what is in the memory must score above it, small talk below it.</summary>
+    [Test]
+    public async Task TheRecallCutoff_SeparatesRelatedQuestions_FromSmallTalk()
+    {
+        await using var ai = TestAi.Create();
+        using var memory = await ai.OpenMemoryAsync(NewFolder(), cpu: true);
+        await SeedAsync(memory);
+        string[] related =
+        [
+            "where did we build the house?", "what did you build for me?", "did you ever find a village?", "do you remember the cow pen?", "did you catch any fish?",
+            "what did you plant behind the house?", "have you been mining lately?", "what did you do yesterday?",
+        ];
+        string[] smallTalk = ["hello there!", "what is your favourite colour?", "come here please", "how are you today?", "tell me a joke", "stop", "what time is it?", "can you jump?"];
+        var rel = new List<float>(); var small = new List<float>();
+        foreach (var q in related) { var h = await memory.RecallAsync(q, Home, 1); rel.Add(h[0].Similarity); TestContext.Out.WriteLine($"related   {h[0].Similarity:0.000}  {q}  -> {h[0].Entry.Text}"); }
+        foreach (var q in smallTalk) { var h = await memory.RecallAsync(q, Home, 1); small.Add(h[0].Similarity); TestContext.Out.WriteLine($"small     {h[0].Similarity:0.000}  {q}  -> {h[0].Entry.Text}"); }
+        TestContext.Out.WriteLine($"related min {rel.Min():0.000}, small talk max {small.Max():0.000}");
+        Assert.That(rel.Min(), Is.GreaterThan(small.Max()), "the two groups do not overlap");
+        Assert.That(Vertex.Brain.VertexBrain.MinRecallSimilarity, Is.LessThanOrEqualTo(rel.Min()).And.GreaterThan(small.Max()), "the cut-off sits between them");
+    }
+
     [TestCase(true)]
     [TestCase(false, Category = "GPU")]
     public async Task TheMemory_SurvivesARestart_AndForgettingAPersonReallyForgets(bool cpu)

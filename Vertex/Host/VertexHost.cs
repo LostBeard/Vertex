@@ -39,6 +39,11 @@ public sealed class VertexSettings
     /// and does it. Only in survival, by day, healthy and fed; a person talking to it, "stay" or a goal always outrank it. Off by default.
     /// </summary>
     public bool SelfDirectedPlay { get; set; }
+    /// <summary>
+    /// Long-term memory: jobs Vertex finishes are written to a log on this PC (the memory folder in the data folder), and what a friend says is looked up in it before he answers, so he can say
+    /// what he built last week. Off: nothing is written and nothing is looked up (what is already stored stays until deleted).
+    /// </summary>
+    public bool LongTermMemory { get; set; } = true;
     /// <summary>Use the Reachy Mini as Vertex's body at home: its microphone, speaker and body language.</summary>
     public bool Reachy { get; set; } = true;
     /// <summary>The robot's address on the LAN.</summary>
@@ -289,6 +294,19 @@ public sealed class VertexHost : IAsyncDisposable
         Add(LineKind.System, on ? "playing on my own when nobody needs me" : "not playing on my own any more");
     }
 
+    /// <summary>
+    /// Turns the long-term memory on or off, now (the brain in the game follows at once) and for next time. Off writes and looks up nothing; what is already stored stays on disk.
+    /// </summary>
+    public async Task SetLongTermMemoryAsync(bool on)
+    {
+        Settings.LongTermMemory = on;
+        Settings.Save();
+        if (on) await OpenMemoryAsync(); // only when the AI is loaded; otherwise the next Start opens it
+        if (_brain != null) _brain.LongTerm = on ? _memory : null;
+        Add(LineKind.System, on ? "remembering what I do" : "not writing to my long-term memory any more");
+        Changed?.Invoke();
+    }
+
     /// <summary>Stops a running model install; the downloaded part is kept.</summary>
     public void CancelModelInstall() => _installCts?.Cancel();
     /// <summary>Where the robot's heard utterances are kept when <see cref="VertexSettings.ReachySaveHeard"/> is on.</summary>
@@ -465,6 +483,7 @@ public sealed class VertexHost : IAsyncDisposable
             SetStatus(HostState.Starting, $"Loading {Settings.Model}...");
             await _ai!.EnsureChatReadyAsync(Settings.Model);
             await LoadIntentsAsync();
+            await OpenMemoryAsync();
             var character = Characters.Find(Settings.Character) ?? Character.BuiltIn[0];
             SetStatus(HostState.Starting, "Warming up ears and voice...");
             await _ai.WarmUpAsync(character.Voice);
@@ -502,6 +521,20 @@ public sealed class VertexHost : IAsyncDisposable
         {
             _gate.Release();
         }
+    }
+
+    private Vertex.Memory.VertexMemory? _memory;
+
+    /// <summary>Opens the long-term memory (once per loaded AI). A memory that cannot be opened is a log line: Vertex plays on without it.</summary>
+    private async Task OpenMemoryAsync()
+    {
+        if (!Settings.LongTermMemory || _memory != null || _ai == null) return;
+        try
+        {
+            _memory = await _ai.OpenMemoryAsync(System.IO.Path.Combine(_dataFolder, "memory"));
+            Add(LineKind.System, $"long-term memory: {_memory.Store.Count} memories");
+        }
+        catch (Exception e) { Add(LineKind.Error, "long-term memory is off: " + e.Message); }
     }
 
     /// <summary>Joins the Minecraft server while Vertex is on.</summary>
@@ -636,7 +669,12 @@ public sealed class VertexHost : IAsyncDisposable
                 _voice = new SimpleVoiceChat(_client, Settings.Server);
                 _voice.Log += m => Add(LineKind.System, "voice: " + m);
             }
-            _brain = new VertexBrain(_client, _voice, _companion, $"{Settings.Server}_{Settings.Port}") { SelfDirectedPlay = Settings.SelfDirectedPlay };
+            _brain = new VertexBrain(_client, _voice, _companion, $"{Settings.Server}_{Settings.Port}")
+            {
+                SelfDirectedPlay = Settings.SelfDirectedPlay,
+                LongTerm = Settings.LongTermMemory ? _memory : null,
+                MemoryScope = $"{Settings.Server}:{Settings.Port}",
+            };
             _brain.Log += AddLog;
             await _client.ConnectAsync(Settings.Server, Settings.Port);
             _brain.Start();
@@ -837,6 +875,8 @@ public sealed class VertexHost : IAsyncDisposable
             var ai = _ai;
             SetStatus(HostState.Stopping, "Giving the GPU back...");
             _ai = null;
+            _memory?.Dispose();
+            _memory = null;
             await ai.DisposeAsync();
             SetStatus(HostState.Idle, "Off");
             Add(LineKind.System, "gave the GPU back (Vertex is off); the next Start loads the models again");
@@ -891,6 +931,8 @@ public sealed class VertexHost : IAsyncDisposable
         CancelUnload();
         CancelRejoin();
         await TearDownAsync();
+        _memory?.Dispose();
+        _memory = null;
         if (_ai != null) await _ai.DisposeAsync();
     }
 }

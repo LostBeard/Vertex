@@ -69,11 +69,12 @@ public sealed class VertexMemory : IDisposable
 
     /// <summary>
     /// The best <paramref name="k"/> memories for what was just said, in this <paramref name="scope"/> (a server's "host:port") or in none, newest and most important ranked up.
-    /// Urgent lane work: it runs before the prompt is built.
+    /// Urgent lane work, unless <paramref name="laneHeld"/>: a tool the language model calls runs INSIDE the chat turn, which holds the GPU lane for the whole reply, and asking for the lane
+    /// again from there waits on its own caller forever (found 2026-11-02 by LongTermMemoryBrainTests: the run sat 54 minutes with "RecallAsync (urgent) has waited 3142 s; held by ChatAsync").
     /// </summary>
-    public async Task<IReadOnlyList<AiMemoryHit>> RecallAsync(string query, string scope, int k = 3, IReadOnlyCollection<AiMemoryKind>? kinds = null, CancellationToken ct = default)
+    public async Task<IReadOnlyList<AiMemoryHit>> RecallAsync(string query, string scope, int k = 3, IReadOnlyCollection<AiMemoryKind>? kinds = null, CancellationToken ct = default, bool laneHeld = false)
     {
-        using (_lane == null ? null : await _lane.EnterAsync(urgent: true).ConfigureAwait(false))
+        using (_lane == null || laneHeld ? null : await _lane.EnterAsync(urgent: true).ConfigureAwait(false))
             return await _engine.SearchAsync(query, k, new AiMemoryFilter { Scope = scope, Kinds = kinds }, null, null, ct).ConfigureAwait(false);
     }
 

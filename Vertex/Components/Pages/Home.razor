@@ -188,6 +188,7 @@
                 }
                 <Check @bind-Value="Host.Settings.Voice" Disabled="@InGameOrBusy" Title="Voice chat">Simple Voice Chat.</Check>
                 <Check Value="Host.Settings.SelfDirectedPlay" ValueChanged="Host.SetSelfDirectedPlay" Title="Play on his own">When nobody has needed Vertex for a few minutes and he has no goal, he chooses one small project (build something little, explore, gather, fish, farm) and does it. Only in survival, by day, healthy and fed. Say "stay" or talk to him and he stops; the Stop button always works.</Check>
+                <Check Value="Host.Settings.LongTermMemory" ValueChanged="Host.SetLongTermMemoryAsync" Title="Remember what I do">Vertex keeps a log on this PC of the jobs he finishes (what he built, found or could not do, where, and for whom) and looks in it when you ask about the past ("what did you build earlier?"). Nothing leaves this PC. Turning it off stops writing and looking things up; what is already stored stays until its folder (memory, in the data folder) is deleted.</Check>
                 @if (Host.State == HostState.Playing)
                 {
                     <div class="row" style="margin-top:12px">

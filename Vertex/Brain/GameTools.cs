@@ -500,6 +500,11 @@ public static class GameTools
             """{"type":"object","properties":{"fact":{"type":"string"},"about":{"type":"string","description":"the player it is about ('me' = the person talking); empty for facts about the world"}},"required":["fact"]}""",
             a => Task.FromResult(brain.Remember(Str(a, "fact") ?? "", Str(a, "about") is { Length: > 0 } about ? Speaker(about) : null)));
 
+        yield return new GameTool("recall",
+            "Look in your own log of what you did before: what you built, where you found something, what happened last time. Use it for questions about the PAST (\"what did you build earlier?\", \"where did we find the diamonds?\"). Not for what you are doing now.",
+            """{"type":"object","properties":{"question":{"type":"string","description":"what to look up, in a few words, e.g. 'what I built for Aubs'"}},"required":["question"]}""",
+            async a => await brain.RecallForToolAsync(Str(a, "question") ?? ""));
+
         yield return new GameTool("set_goal",
             "Take on a long-term goal that needs many steps over time (collect 64 diamonds, find a village, explore for a stronghold). NOT for building: build_shape builds right away. You work on it by yourself whenever nobody needs you, and remember it between games.",
             """{"type":"object","properties":{"goal":{"type":"string","description":"the goal, e.g. 'find a village'"},"player":{"type":"string","description":"who it is for ('me' = the person talking)"}},"required":["goal"]}""",
