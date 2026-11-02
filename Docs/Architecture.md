@@ -101,6 +101,27 @@ recogniser. Model calls take turns through `GpuLane` (speech recognition may run
 short the driver spilled to system RAM silently and replies took minutes; the libraries now reclaim idle buffers across every model before the
 driver spills.
 
+## What Vertex holds on the card
+
+Measured 2026-11-02 on an RTX 2060 12 GB (12,288 MiB), SpawnDev.AI.Server 1.4.0-local.15, llama3.1:8b, the card otherwise idle, by loading the parts in start order and reading
+nvidia-smi after each (`GpuMemoryBreakdownTests`; one run, figures to the nearest few MiB):
+
+| Part | Card memory |
+|---|---|
+| Card idle (desktop and other programs) | 409 MiB |
+| The context and the accelerator | +80 MiB |
+| The language model: weights, cache sized for 8,192 tokens, first pass | +6,846 MiB |
+| The command matcher (MiniLM) | +112 MiB |
+| Speech to text + speaker + end of turn + one voice | +3,690 MiB |
+| Live words (streaming speech) | about 0 |
+| Faces | +50 MiB |
+| Long-term memory (a second MiniLM) | about 0 |
+| After one call with a prompt of about 4,000 tokens | +348 MiB |
+| **Total** | **11,511 MiB used, 777 MiB free** |
+
+The speech stack is the second biggest thing on the card (about 3.7 GB), next to the language model's 6.8 GB. With Vertex running in the game, Windows' per-process counters showed 11,115 MiB
+dedicated and 76 MiB shared (spilled into system RAM): nothing meaningful spills, but under 1 GB is left for anything else (a browser, a game).
+
 ## Libraries and their versions
 
 Vertex is built on local-feed builds of `SpawnDev.AI.Server` (1.4.0-local.15, 2026-11-02, which brings `SpawnDev.ILGPU.ML` 5.8.1-local.10 and
