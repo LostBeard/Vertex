@@ -337,7 +337,8 @@ public sealed class VertexBrain : IBody
     {
         var ideas = new List<string>
         {
-            "build a little shelter or garden with build_shape",
+            // Only shapes build_shape has: offered "a shelter or garden" he chose "garden" twice and failed twice (2026-11-02), there being no such shape.
+            "build something small with build_shape (a house, a platform or a pen for animals)",
             "explore one direction (no farther than about 40 blocks) and tell what you find",
             "gather some wood, stone or dirt",
         };

@@ -27,6 +27,29 @@ public class LiveExploreHonestyTests
     [OneTimeTearDown]
     public async Task Stop() { if (_server != null) await _server.DisposeAsync(); }
 
+    /// <summary>Live 2026-11-02: hovering in the air he "finished exploring north: I explored 0 blocks north" twice, and both went into his memory as things that happened. He walked nowhere.</summary>
+    [Test]
+    public async Task WhenHeCannotGoAnywhere_HeSaysSo_AndDoesNotClaimToHaveExplored()
+    {
+        await using var client = new MinecraftClient(GameProfile.Offline("VertexBoxed"));
+        using var cts = new CancellationTokenSource(TimeSpan.FromMinutes(3));
+        await client.ConnectAsync("127.0.0.1", Port, cts.Token);
+        var (px, _, pz) = client.Position;
+        int ax = (int)Math.Floor(px), az = (int)Math.Floor(pz);
+        await _server.CommandAsync($"fill {ax - 6} 197 {az - 6} {ax + 6} 199 {az + 6} minecraft:stone");
+        await _server.CommandAsync($"fill {ax - 6} 200 {az - 6} {ax + 6} 210 {az + 6} minecraft:air");
+        await _server.CommandAsync($"fill {ax - 1} 200 {az - 1} {ax + 1} 202 {az + 1} minecraft:stone");   // a 3 by 3 block...
+        await _server.CommandAsync($"fill {ax} 200 {az} {ax} 201 {az} minecraft:air");                      // ...with a hole one wide and two high: a cell
+        await _server.CommandAsync($"tp VertexBoxed {ax + 0.5} 200 {az + 0.5}");
+        await Wait.UntilAsync(() => Math.Abs(client.Position.X - (ax + 0.5)) < 0.1 && Math.Abs(client.Position.Z - (az + 0.5)) < 0.1 && client.OnGround, TimeSpan.FromSeconds(30), () => $"at {client.Position}");
+        await client.WaitTicksAsync(20);
+
+        var (ok, summary) = await new Skills(client).ExploreAsync("north", 40, null, cts.Token);
+        TestContext.Out.WriteLine("HE SAID: " + summary);
+        Assert.That(ok, Is.False, "he went nowhere: " + summary);
+        Assert.That(summary, Does.Contain("couldn't really go anywhere").And.Not.Contain("finished"), summary);
+    }
+
     [Test]
     public async Task HeReportsWhatHeCouldSee_NotWhatIsBuriedOrWalledIn()
     {

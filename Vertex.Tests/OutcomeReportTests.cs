@@ -64,6 +64,7 @@ public class OutcomeReportTests
     [Test]
     public void TheProjectsOffered_AreOnlyOnesHeCanDoWithWhatHeCarries()
     {
+        Assert.That(string.Join(" | ", VertexBrain.OwnProjectIdeas(_ => 0)), Does.Not.Contain("garden"), "there is no garden shape: he chose it twice and failed twice");
         var empty = VertexBrain.OwnProjectIdeas(_ => 0);
         Assert.That(empty, Has.Count.EqualTo(3));
         Assert.That(string.Join(" | ", empty), Does.Contain("build").And.Contain("explore").And.Contain("gather").And.Not.Contain("plant").And.Not.Contain("fishing"), "no seeds, no rod: nothing to plant or fish with");

@@ -1737,6 +1737,14 @@ public sealed partial class Skills(MinecraftClient client)
         var (ex, _, ez) = client.Position;
         far = Math.Abs((ex - sx) * dx + (ez - sz) * dz);
 
+        // He went nowhere (blocked in, or flying with nothing working): that is not "I finished exploring", and nothing seen from the spot he started on is a discovery of the walk. Live
+        // 2026-11-02: "I finished exploring north: I explored 0 blocks north" was logged to his memory twice.
+        if (far < Math.Min(8, distance / 4.0))
+        {
+            await TravelAsync(start.Item1, start.Item2, start.Item3, "where I started", ct);
+            return (false, $"I couldn't really go anywhere: I only got {far:0} blocks {way}.");
+        }
+
         var found = new List<string>();
         foreach (var v in villages.Skip(villagesBefore))
         {
