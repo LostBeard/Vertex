@@ -31,6 +31,12 @@ public sealed class Reflexes : IDisposable
 
     public bool Enabled { get; set; } = true;
 
+    /// <summary>
+    /// Health (half hearts) at or below which, with a monster close, he takes cover underground. 10 to start; the brain raises it after deaths in which he had not dug in (<see cref="ExperienceLog.CoverBelow"/>):
+    /// it is learned from what happened to him, not fixed.
+    /// </summary>
+    public int CoverBelow { get; set; } = 10;
+
     /// <summary>Decides fight or flight when hurt (the hand-written rule unless a trained policy is set).</summary>
     public IReflexPolicy Policy { get; set; } = RuleReflexPolicy.Instance;
 
@@ -82,7 +88,7 @@ public sealed class Reflexes : IDisposable
         }
 
         // Losing: five hearts or fewer with a monster close (a flier counts: they killed him in 70 seconds): dig in and wait it out. He fights or flees on the ordinary rules until then.
-        if (!_tasks.IsBusy && c.Health <= 10 && c.GameMode == GameMode.Survival && _tick >= _nextCoverTick && (_skills.NearestHostile(10) != null || _skills.NearestFlier(10) != null))
+        if (!_tasks.IsBusy && c.Health <= CoverBelow && c.GameMode == GameMode.Survival && _tick >= _nextCoverTick && (_skills.NearestHostile(10) != null || _skills.NearestFlier(10) != null))
         {
             _nextCoverTick = _tick + 600;
             _tasks.Start("taking cover underground", ct => _skills.TakeCoverAsync(ct));

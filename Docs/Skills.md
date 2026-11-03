@@ -150,6 +150,13 @@ on a one-block island with water on three sides and a three-high dirt wall on th
   first one is **swimming across a pond**: water 6 to 30 blocks wide within 24 blocks, a shore he can see on the far side, no lava on the way. He swims over, and the lesson ("I tried swimming
   across 12 blocks of water to the S shore. It worked, in 24 seconds, and it cost me no health.") is stored with the tags `experiment`, `exp:swim-across` and `worked` or `failed`. He looks
   for that tag (an exact lookup, not a guess from similar words) before an experiment and does not repeat one he has a lesson for, on this server, across restarts.
+- **Learning from what happens to him** (`ExperienceLog`, from 2026-11-03, after phantoms killed him 70 seconds after god mode went off). Once a second he records where he is, what is near, what he is doing,
+  the time, the weather and his health. A **death** becomes a lesson in his own words, from facts he saw only ("I died: HereticSpawn was slain by Phantom. It was night, at x y z. In the last 14 seconds my
+  health went from 10 hearts to none. Near me: 3 phantoms. I was doing: stepping away from monsters. I had not taken cover. I had a weapon. I had food."); a **big loss he got through** (4 hearts or more
+  in a few seconds, then 5 seconds with no further drop) becomes one too. They are stored with tags (`death`, `night`, `no-cover`, `death:phantom`...). They are used in two ways: the last three go into
+  the prompt when he chooses a project of his own ("What has hurt you before... plan so it does not happen again"), and **how early he takes cover is learned**: he digs in at 5 hearts, and 1 heart higher
+  for each death in the last day in which he had not dug in, up to 8 hearts (the log says "learned from 1 death today without digging in: I now take cover at 6 hearts"). This is a first step, not
+  machine learning yet: the next ones are choosing between fight, flight, eating and digging in from the logged outcomes, and training the fight-or-flight network on real episodes.
 - **Using what he learned.** Stranded on a tiny patch, he asks his memory BEFORE trying: the lessons for that situation (tag `exp:tiny-patch`) carry the ways that worked or failed (`worked:swim`,
   `failed:dig`; ways are swim, dig, climb). Each candidate shore is planned without moving, and the order of tries moves toward a way that worked and away from one that failed; with no earlier
   lessons it stays nearest first. It is only the ORDER: nothing is ruled out, a way that failed is still tried if the others do not work. When the order changed he says why in the lesson

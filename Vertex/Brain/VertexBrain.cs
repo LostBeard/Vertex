@@ -168,6 +168,7 @@ public sealed class VertexBrain : IBody
         foreach (var p in Client.Players.Values.Where(p => p.Id != Client.Profile.Id)) Memory.Meet(p.Id, p.Name, _startedAt);
         if (_ownsCompanion) Companion.Start();
         _idleLoop = Task.Run(() => IdleLoopAsync(_cts.Token));
+        _ = Task.Run(() => ExperienceLoopAsync(_cts.Token));
     }
 
     // ---------------------------------------------------------------- the companion's members, as before
@@ -414,6 +415,78 @@ public sealed class VertexBrain : IBody
     /// </summary>
     public bool? GodMode { get; private set; }
 
+    // ---------------------------------------------------------------- learning from what happens (see ExperienceLog)
+
+    private readonly ExperienceLog _experience = new();
+    private string? _deathMessage;
+    private DateTime _deathMessageAt = DateTime.MinValue;
+
+    private static readonly System.Text.RegularExpressions.Regex DeathWords = new(
+        @"\b(was slain|was shot|was killed|was blown up|was pricked|was fireballed|was squashed|was impaled|was struck|was pummeled|was stung|was burned|was doomed|died|drowned|burned to death|starved|suffocated|fell|hit the ground|tried to swim|went up in flames|withered|blew up|walked into|froze)\b",
+        System.Text.RegularExpressions.RegexOptions.IgnoreCase | System.Text.RegularExpressions.RegexOptions.Compiled);
+
+    /// <summary>Once a second: what is near, what he is doing, how he is. The log turns it into lessons about deaths and big losses; they are stored, and how soon he takes cover follows from them.</summary>
+    private async Task ExperienceLoopAsync(CancellationToken ct)
+    {
+        using var timer = new PeriodicTimer(TimeSpan.FromSeconds(1));
+        try
+        {
+            RefreshCoverThreshold();
+            while (await timer.WaitForNextTickAsync(ct))
+            {
+                if (!Client.IsSpawned) continue;
+                var (x, y, z) = Client.Position;
+                var mobs = Client.Entities.Values.Where(e => Skills.Hostile.Contains(e.Name) && e.DistanceTo(x, y, z) < 24).Select(e => (e.Name, e.DistanceTo(x, y, z))).ToList();
+                var weapon = Client.Inventory.Find(s => s.Name.EndsWith("_sword") || s.Name.EndsWith("_axe")).Any();
+                var moment = new Moment(DateTime.UtcNow, Client.Health, Client.Food, Tasks.Current, Client.World.DayTime, Client.Weather, $"{x:0} {y:0} {z:0}", mobs, weapon, Skills.HasFood);
+                var message = DateTime.UtcNow - _deathMessageAt < TimeSpan.FromSeconds(15) ? _deathMessage : null;
+                foreach (var lesson in _experience.Observe(moment, message))
+                {
+                    RecordLesson(lesson);
+                    if (lesson.Key == "death") RefreshCoverThreshold();
+                }
+            }
+        }
+        catch (OperationCanceledException) { }
+    }
+
+    /// <summary>How many deaths in the last day happened without his having dug in (this run's, and those in his memory from before).</summary>
+    private int DeathsWithoutCoverToday()
+    {
+        List<Skills.Lesson> mine; lock (_sessionLessons) mine = _sessionLessons.Where(l => l.Key == "death" && l.Has("no-cover")).ToList();
+        var n = mine.Count;
+        if (LongTerm is { } memory)
+        {
+            var cutoff = DateTime.UtcNow.AddHours(-24).Ticks;
+            foreach (var e in memory.Store.List(new SpawnDev.AI.AiMemoryFilter { Scope = MemoryScope, Kinds = [SpawnDev.AI.AiMemoryKind.Lesson] }))
+                if (e.TimeTicks >= cutoff && e.Tags.Contains(ExperimentTag("death")) && e.Tags.Contains("no-cover") && !mine.Any(l => e.Text.StartsWith(l.Text, StringComparison.Ordinal))) n++;
+        }
+        return n;
+    }
+
+    private void RefreshCoverThreshold()
+    {
+        var deaths = DeathsWithoutCoverToday();
+        var threshold = ExperienceLog.CoverBelow(deaths);
+        if (threshold != Reflexes.CoverBelow) Log?.Invoke($"learned from {deaths} death{(deaths == 1 ? "" : "s")} today without digging in: I now take cover at {threshold / 2.0:0.#} hearts (it was {Reflexes.CoverBelow / 2.0:0.#})");
+        Reflexes.CoverBelow = threshold;
+    }
+
+    /// <summary>The last few things that hurt him badly, from his own log, in his words: for the prompt when he decides what to do. Empty when nothing has.</summary>
+    private string HurtBefore()
+    {
+        var lines = new List<string>();
+        lock (_sessionLessons) lines.AddRange(_sessionLessons.Where(l => l.Key is "death" or "big-loss").TakeLast(3).Select(l => l.Text).Reverse());
+        if (LongTerm is { } memory && lines.Count < 3)
+            foreach (var e in memory.Store.List(new SpawnDev.AI.AiMemoryFilter { Scope = MemoryScope, Kinds = [SpawnDev.AI.AiMemoryKind.Lesson] })
+                         .Where(e => e.Tags.Contains(ExperimentTag("death")) || e.Tags.Contains(ExperimentTag("big-loss"))).OrderByDescending(e => e.TimeTicks))
+            {
+                if (lines.Count >= 3) break;
+                if (!lines.Any(l => e.Text.StartsWith(l, StringComparison.Ordinal))) lines.Add(e.Text);
+            }
+        return lines.Count == 0 ? "" : "What has hurt you before, from your own log (plan so it does not happen again): " + string.Join(" | ", lines.Select(l => l.Length > 260 ? l[..260] + "..." : l)) + " ";
+    }
+
     private static readonly System.Text.RegularExpressions.Regex GodModeLine = new(@"God mode:\s*(?<v>true|false|enabled|disabled|on|off)", System.Text.RegularExpressions.RegexOptions.IgnoreCase | System.Text.RegularExpressions.RegexOptions.Compiled);
 
     /// <summary>True or false when a line from the server says "God mode: ..." (EssentialsX's /whois), else null.</summary>
@@ -426,6 +499,12 @@ public sealed class VertexBrain : IBody
 
     private void OnServerText(ChatMessage m)
     {
+        // How he died, as the server says it ("HereticSpawn was slain by Phantom"): kept for the experience log.
+        if (m.Kind != ChatKind.Player && m.Content.StartsWith(Client.Profile.Name + " ", StringComparison.Ordinal) && DeathWords.IsMatch(m.Content))
+        {
+            _deathMessage = m.Content.Trim();
+            _deathMessageAt = DateTime.UtcNow;
+        }
         if (m.Kind == ChatKind.Player || GodModeIn(m.Content) is not bool god) return;
         GodMode = god;
         Log?.Invoke($"the server says God mode is {(god ? "ON for this account (damage is cancelled)" : "off")}");
@@ -493,6 +572,7 @@ public sealed class VertexBrain : IBody
                 + $"Something a friend would enjoy watching, and only what you can do right now: {string.Join("; ", ideas)}. "
                 + (night ? "It is night: stay close to where you are. " : "Keep it small and safe, in daylight, near where you are. ")
                 + "Never break or build on anything that looks like someone's build. "
+                + HurtBefore()
                 + (recent.Length > 0 ? $"You recently did: {string.Join("; ", recent)}. Pick something different. " : "")
                 + "Call the ONE tool that starts it (set_goal only for something that really takes many steps), then say in one short sentence what you chose.]", ct);
         }
