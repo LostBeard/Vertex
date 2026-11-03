@@ -40,6 +40,11 @@ public sealed class VertexSettings
     /// </summary>
     public bool SelfDirectedPlay { get; set; }
     /// <summary>
+    /// When the server (EssentialsX) says god mode is on for his account, he turns it off himself with /god and asks again to confirm: with it on nothing can hurt him, so nothing he does is
+    /// ever tested and the household cannot see how he copes. The owner's request for HIS account (TJ, 2026-11-03: "handing it to me is you refusing to do what I asked"). Off by default.
+    /// </summary>
+    public bool TurnOffGodMode { get; set; }
+    /// <summary>
     /// Long-term memory: jobs Vertex finishes are written to a log on this PC (the memory folder in the data folder), and what a friend says is looked up in it before he answers, so he can say
     /// what he built last week. Off: nothing is written and nothing is looked up (what is already stored stays until deleted).
     /// </summary>
@@ -724,6 +729,7 @@ public sealed class VertexHost : IAsyncDisposable
             _brain = new VertexBrain(_client, _voice, _companion, $"{Settings.Server}_{Settings.Port}")
             {
                 SelfDirectedPlay = Settings.SelfDirectedPlay,
+                TurnOffGodMode = Settings.TurnOffGodMode,
                 LongTerm = Settings.LongTermMemory ? _memory : null,
                 MemoryScope = $"{Settings.Server}:{Settings.Port}",
             };

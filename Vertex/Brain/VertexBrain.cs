@@ -420,11 +420,31 @@ public sealed class VertexBrain : IBody
     internal static bool? GodModeIn(string text) =>
         GodModeLine.Match(text) is { Success: true } g ? g.Groups["v"].Value.ToLowerInvariant() is "true" or "enabled" or "on" : null;
 
+    /// <summary>Turn god mode off when the server says it is on (the owner's setting): one /god per join, then ask again to confirm.</summary>
+    public bool TurnOffGodMode { get; set; }
+    private bool _godOffSent;
+
     private void OnServerText(ChatMessage m)
     {
         if (m.Kind == ChatKind.Player || GodModeIn(m.Content) is not bool god) return;
         GodMode = god;
         Log?.Invoke($"the server says God mode is {(god ? "ON for this account (damage is cancelled)" : "off")}");
+        if (god && TurnOffGodMode && !_godOffSent)
+        {
+            _godOffSent = true;
+            Log?.Invoke("turning god mode off, as the owner asked (/god), then asking again");
+            // Fixed commands, nothing a model wrote. /god toggles, so only once per join, and the second /whois shows what it is now.
+            _ = Task.Run(async () =>
+            {
+                try
+                {
+                    await Client.SendChatAsync("/god");
+                    await Task.Delay(TimeSpan.FromSeconds(3));
+                    await Client.SendChatAsync("/whois " + Client.Profile.Name);
+                }
+                catch (Exception e) { Log?.Invoke("could not turn god mode off: " + e.Message); }
+            });
+        }
     }
 
     /// <summary>Is it night in the game (when a bed can be slept in: from sunset to just before sunrise)?</summary>
