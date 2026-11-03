@@ -1035,13 +1035,39 @@ public sealed partial class Skills(MinecraftClient client)
             missing = m;
             if (m != null || f == 0 || p == 0) break;       // done, out of something, or a pass that got nowhere
         }
-        // Step away from it, to the open side, so we are not left standing inside our own build.
-        await client.GoToAsync(Goal.Near(corner.X + script.Width / 2.0, corner.Y, corner.Z - 2.5, 2.0), new PathOptions { MaxNodes = 8_000 }, ct);
+        // Step away from it so we are not left standing inside our own build (live 2026-11-03: he finished a house, was still inside it 8 seconds later, and the stuck reflex dug him out through the wall).
+        await LeaveFootprintAsync(corner, script.Width, script.Depth, ct);
         var size = $"{script.Width} by {script.Depth}, {script.Height} high";
         if (missing != null) return (false, $"I ran out of {missing} while building ({placed} blocks placed, {size}). Give me more and say keep building.");
         return failed == 0
             ? (true, $"I built it: {placed} blocks placed ({size}).")
             : (true, $"I built most of it ({placed} blocks placed, {size}), but {failed} {(failed == 1 ? "block" : "blocks")} wouldn't go where I wanted.");
+    }
+
+    /// <summary>
+    /// Gets out of a footprint he has just built on: tries to walk to a point two blocks off each side in turn (north first, as before; the doorway is on one of them), a few seconds each, and when
+    /// none can be reached from inside, digs out through the nearest wall: it is his own build, and being shut in it is worse than a hole in it.
+    /// </summary>
+    private async Task LeaveFootprintAsync((int X, int Y, int Z) corner, int width, int depth, CancellationToken ct)
+    {
+        bool Inside() { var (px, py, pz) = client.Position; return px > corner.X && px < corner.X + width && pz > corner.Z && pz < corner.Z + depth && py < corner.Y + 4; }
+        double cx = corner.X + width / 2.0, cz = corner.Z + depth / 2.0;
+        var spots = new (double X, double Z)[] { (cx, corner.Z - 2.5), (corner.X + width + 1.5, cz), (corner.X - 2.5, cz), (cx, corner.Z + depth + 1.5) };
+        foreach (var (sx, sz) in spots)
+        {
+            using var step = CancellationTokenSource.CreateLinkedTokenSource(ct);
+            step.CancelAfter(TimeSpan.FromSeconds(8));
+            try { await client.GoToAsync(Goal.Near(sx, corner.Y, sz, 2.0), new PathOptions { MaxNodes = 8_000 }, step.Token); }
+            catch (OperationCanceledException) when (!ct.IsCancellationRequested) { }
+            if (!Inside()) return;
+        }
+        // Shut in: dig out through the wall nearest an open side.
+        var (x, y, z) = client.Position;
+        var nearest = spots.OrderBy(s => (s.X - x) * (s.X - x) + (s.Z - z) * (s.Z - z)).First();
+        using var out_ = CancellationTokenSource.CreateLinkedTokenSource(ct);
+        out_.CancelAfter(TimeSpan.FromSeconds(30));
+        try { await client.GoToAsync(Goal.Near(nearest.X, corner.Y, nearest.Z, 1.5), new PathOptions { CanDig = true, MaxNodes = 8_000 }, out_.Token); }
+        catch (OperationCanceledException) when (!ct.IsCancellationRequested) { }
     }
 
     // ---------------------------------------------------------------- walls, towers, bridges

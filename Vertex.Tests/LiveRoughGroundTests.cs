@@ -160,5 +160,12 @@ public class LiveRoughGroundTests
                 if (n is "minecraft:dirt" or "minecraft:oak_log" or "minecraft:oak_leaves" or "minecraft:stone") leftovers.Add($"{n} at {x},{y},{z}");
             }
         Assert.That(leftovers, Is.Empty, "the hill and the trees are cut away inside: " + string.Join("; ", leftovers));
+
+        // And he is not shut in his own house (live 2026-11-03: 8 seconds after "I built it" the stuck-on-a-small-patch reflex dug him out through the wall: he was inside, with 9 blocks of floor).
+        var (bx, by, bz) = client.Position;
+        var inside = bx > x0 && bx < x1 + 1 && bz > z0 && bz < z1 + 1 && by < baseY + 4;
+        TestContext.Out.WriteLine($"he ends at {bx:0.0} {by:0.0} {bz:0.0}; the house is x {x0}..{x1}, z {z0}..{z1}");
+        Assert.That(inside, Is.False, "he finished the house and walked out of it");
+        Assert.That(skills.WalkablePatch().Count, Is.GreaterThanOrEqualTo(Skills.TinyPatch), "and stands on open ground, not in a small closed space");
     }
 }
