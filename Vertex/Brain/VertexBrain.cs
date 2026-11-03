@@ -398,7 +398,7 @@ public sealed class VertexBrain : IBody
         if (now - _lastProjectAt < ProjectCooldown) return "the last project was less than " + ProjectCooldown.TotalMinutes.ToString("0") + " minutes ago";
         if (Client.Flying) return "he is flying (the landing reflex comes first)";
         if (Client.BodySnapshot().InWater) return "he is in the water";
-        if (Skills.NearestHostile(ProjectHostileRadius) is { } mob) return $"a {mob.Name.Bare().Replace('_', ' ')} is {mob.DistanceTo(Client.Position.X, Client.Position.Y, Client.Position.Z):0} blocks away (needs {ProjectHostileRadius:0})";
+        if (Skills.NearestThreat(ProjectHostileRadius, Reflexes.AvoidWithin) is { } mob) return $"a {mob.Name.Bare().Replace('_', ' ')} is {mob.DistanceTo(Client.Position.X, Client.Position.Y, Client.Position.Z):0} blocks away and in sight (needs {ProjectHostileRadius:0}, or out of sight beyond {Reflexes.AvoidWithin:0})";
         return null;
     }
 

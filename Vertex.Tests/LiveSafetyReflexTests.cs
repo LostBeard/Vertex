@@ -101,6 +101,32 @@ public class LiveSafetyReflexTests
     }
 
     /// <summary>
+    /// Live 2026-11-03: "not starting a project of my own: a skeleton is 13 blocks away (needs 16)", for minutes. A monster he cannot see cannot see him: out to the avoid distance (8) any monster
+    /// counts, beyond that only one in sight. The same skeleton 12 blocks away behind a wall does not stop a project; with the wall gone it does.
+    /// </summary>
+    [Test]
+    public async Task AMonsterBehindAWall_DoesNotKeepHimFromAProject_ButOneInTheOpenDoes()
+    {
+        var (client, ax, az) = await JoinAsync("VertexWall");
+        await using var _ = client;
+        await _server.CommandAsync($"fill {ax + 4} 200 {az - 8} {ax + 4} 206 {az + 8} minecraft:stone");     // a wall 5 blocks east, 17 wide, 7 high
+        await _server.CommandAsync($"summon minecraft:skeleton {ax + 12.5} 200 {az + 0.5} {{NoAI:1b,Tags:[\"vavoid\"],active_effects:[{{id:\"minecraft:fire_resistance\",duration:1000000}}]}}");
+        await Wait.UntilAsync(() => client.Entities.Values.Any(e => e.Name == "minecraft:skeleton") && client.World.GetBlock(ax + 4, 203, az)?.Name == "minecraft:stone", Timeout, () => "the skeleton and the wall");
+        var skills = new Skills(client);
+        try
+        {
+            Assert.That(skills.NearestHostile(16), Is.Not.Null, "he knows it is there (the server tells him of everything near)");
+            Assert.That(skills.NearestThreat(16, 8), Is.Null, "but it is behind the wall and 12 blocks away: no threat for starting something");
+
+            await _server.CommandAsync($"fill {ax + 4} 200 {az - 8} {ax + 4} 206 {az + 8} minecraft:air");
+            await Wait.UntilAsync(() => client.World.GetBlock(ax + 4, 203, az)?.Name == "minecraft:air", Timeout, () => "the wall gone");
+            Assert.That(skills.NearestThreat(16, 8), Is.Not.Null, "with the wall gone it is in sight, 12 blocks away, and it is");
+            Assert.That(skills.NearestThreat(16, 8)!.Name, Is.EqualTo("minecraft:skeleton"));
+        }
+        finally { await _server.CommandAsync("kill @e[tag=vavoid]"); }
+    }
+
+    /// <summary>
     /// Live 2026-11-03, daytime: 3 to 8 phantoms circled him for half an hour and a "stepping away from monsters" job fired every 30 seconds ("phantom 1.8 blocks away; I am at ..." in the log), each one
     /// resetting his idle timer, so he never chose a project. A phantom flies: walking away gets nowhere. The control above shows he steps away from a zombie; a phantom the same distance away is left alone.
     /// </summary>

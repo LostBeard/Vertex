@@ -1877,6 +1877,19 @@ public sealed partial class Skills(MinecraftClient client)
         return parts.Count == 0 ? "none within " + within.ToString("0") : string.Join("; ", parts);
     }
 
+    /// <summary>
+    /// The nearest hostile mob on foot that is a threat for choosing to start something: within `regardlessWithin` blocks always, farther (up to `within`) only when he could see it. A skeleton
+    /// 13 blocks away behind rock kept him from starting any project for minutes (2026-11-03: "a skeleton is 13 blocks away (needs 16)"): a monster he cannot see cannot see him either.
+    /// </summary>
+    public Entity? NearestThreat(double within, double regardlessWithin)
+    {
+        var (x, y, z) = client.Position;
+        var eye = client.EyePosition;
+        return client.Entities.Values
+            .Where(e => IsThreatOnFoot(e.Name) && e.DistanceTo(x, y, z) < within && (e.DistanceTo(x, y, z) < regardlessWithin || Sight.CanSeeBody(client.World, eye, e.X, e.Y, e.Z)))
+            .OrderBy(e => e.DistanceTo(x, y, z)).FirstOrDefault();
+    }
+
     /// <summary>The nearest hostile mob within `within` blocks, if any.</summary>
     public Entity? NearestHostile(double within)
     {
