@@ -131,7 +131,8 @@ public sealed class Reflexes : IDisposable
         if (hurt)
         {
             var (x, y, z) = c.Position;
-            var attacker = c.Entities.Values.Where(e => Skills.Hostile.Contains(e.Name) && e.DistanceTo(x, y, z) < 6).OrderBy(e => e.DistanceTo(x, y, z)).FirstOrDefault();
+            // On foot only: a phantom's swoop is neither something to run from nor, from the ground, something he can chase (the fight skill walks to its target, and one in the air cannot be walked to).
+            var attacker = c.Entities.Values.Where(e => Skills.IsThreatOnFoot(e.Name) && e.DistanceTo(x, y, z) < 6).OrderBy(e => e.DistanceTo(x, y, z)).FirstOrDefault();
             if (attacker == null) return;
             Respond(attacker, "attacked me");
         }

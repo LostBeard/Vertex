@@ -24,6 +24,15 @@ public sealed partial class Skills(MinecraftClient client)
         "minecraft:breeze", "minecraft:endermite", "minecraft:guardian", "minecraft:ravager", "minecraft:vex", "minecraft:evoker",
     ];
 
+    /// <summary>
+    /// Hostile mobs that fly: walking away from them gets nowhere (a phantom swoops at whatever he does). Live 2026-11-03, daytime: 3 to 8 phantoms circled him for half an hour, the "step away from
+    /// monsters" reflex fired every 30 seconds, and every one of those jobs counted as busy, so he never settled into a project. They are not threats to leave on foot.
+    /// </summary>
+    public static readonly HashSet<string> Fliers = ["minecraft:phantom", "minecraft:vex", "minecraft:ghast", "minecraft:blaze"];
+
+    /// <summary>A hostile mob he could walk away from: hostile, and not one that flies.</summary>
+    public static bool IsThreatOnFoot(string entityName) => Hostile.Contains(entityName) && !Fliers.Contains(entityName);
+
     // ---------------------------------------------------------------- finding things
 
     /// <summary>A player entity by (fuzzy) name, or the nearest player when the name is empty.</summary>
@@ -1860,7 +1869,7 @@ public sealed partial class Skills(MinecraftClient client)
     {
         var (x, y, z) = client.Position;
         var eye = client.EyePosition;
-        var parts = client.Entities.Values.Where(e => Hostile.Contains(e.Name) && e.DistanceTo(x, y, z) < within).OrderBy(e => e.DistanceTo(x, y, z)).Take(4)
+        var parts = client.Entities.Values.Where(e => IsThreatOnFoot(e.Name) && e.DistanceTo(x, y, z) < within).OrderBy(e => e.DistanceTo(x, y, z)).Take(4)
             .Select(e => $"{e.Name.Bare().Replace('_', ' ')} {e.DistanceTo(x, y, z):0.#} blocks away"
                 + (Math.Abs(e.Y - y) >= 3 ? (e.Y > y ? $", {e.Y - y:0} above" : $", {y - e.Y:0} below") : "")
                 + (Sight.CanSeeBody(client.World, eye, e.X, e.Y, e.Z) ? "" : ", out of sight"))
@@ -1872,7 +1881,7 @@ public sealed partial class Skills(MinecraftClient client)
     public Entity? NearestHostile(double within)
     {
         var (x, y, z) = client.Position;
-        return client.Entities.Values.Where(e => Hostile.Contains(e.Name) && e.DistanceTo(x, y, z) < within).OrderBy(e => e.DistanceTo(x, y, z)).FirstOrDefault();
+        return client.Entities.Values.Where(e => IsThreatOnFoot(e.Name) && e.DistanceTo(x, y, z) < within).OrderBy(e => e.DistanceTo(x, y, z)).FirstOrDefault();
     }
 
     /// <summary>
@@ -1889,7 +1898,7 @@ public sealed partial class Skills(MinecraftClient client)
         {
             ct.ThrowIfCancellationRequested();
             var (px, py, pz) = client.Position;
-            var near = client.Entities.Values.Where(e => Hostile.Contains(e.Name) && e.DistanceTo(px, py, pz) < 12).ToList();
+            var near = client.Entities.Values.Where(e => IsThreatOnFoot(e.Name) && e.DistanceTo(px, py, pz) < 12).ToList();
             if (near.Count > 0)
             {
                 cx = near.Average(e => e.X); cz = near.Average(e => e.Z);
@@ -1909,7 +1918,7 @@ public sealed partial class Skills(MinecraftClient client)
             catch (OperationCanceledException) when (!ct.IsCancellationRequested) { }
         }
         var (x, y, z) = client.Position;
-        var closest = client.Entities.Values.Where(e => Hostile.Contains(e.Name)).Select(e => e.DistanceTo(x, y, z)).DefaultIfEmpty(double.MaxValue).Min();
+        var closest = client.Entities.Values.Where(e => IsThreatOnFoot(e.Name)).Select(e => e.DistanceTo(x, y, z)).DefaultIfEmpty(double.MaxValue).Min();
         Trace?.Invoke($"could not get away: {DescribeHostiles(clearOf + 6)}; I am at {x:0} {y:0} {z:0}{(InWaterNow() ? ", in the water" : "")}");
         return closest >= clearOf && !InWaterNow() ? (true, "I stepped away from the monsters.") : (false, "I could not get away from the monsters.");
     }

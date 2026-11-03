@@ -101,6 +101,34 @@ public class LiveSafetyReflexTests
     }
 
     /// <summary>
+    /// Live 2026-11-03, daytime: 3 to 8 phantoms circled him for half an hour and a "stepping away from monsters" job fired every 30 seconds ("phantom 1.8 blocks away; I am at ..." in the log), each one
+    /// resetting his idle timer, so he never chose a project. A phantom flies: walking away gets nowhere. The control above shows he steps away from a zombie; a phantom the same distance away is left alone.
+    /// </summary>
+    [Test]
+    public async Task Idle_WithAPhantomNear_HeDoesNotWalkAwayFromIt_AndNothingIsStarted()
+    {
+        var (client, ax, az) = await JoinAsync("VertexPhantom");
+        await using var _ = client;
+        await _server.CommandAsync($"summon minecraft:phantom {ax + 5.0} 200 {az + 0.5} {{NoAI:1b,Tags:[\"vavoid\"],active_effects:[{{id:\"minecraft:fire_resistance\",duration:1000000}}]}}");
+        await Wait.UntilAsync(() => client.Entities.Values.Any(e => e.Name == "minecraft:phantom"), Timeout, () => "the phantom");
+        var monster = client.Entities.Values.First(e => e.Name == "minecraft:phantom");
+        var skills = new Skills(client);
+        Assert.That(skills.NearestHostile(Reflexes.AvoidWithin), Is.Null, "a flier is not a threat to leave on foot");
+        Assert.That(skills.DescribeHostiles(20), Does.StartWith("none"), "and is not listed as one");
+        var tasks = new TaskRunner();
+        using var reflexes = new Reflexes(client, skills, tasks, () => new PlayStyle { Bravery = 1.0 }) { Enabled = true };
+        try
+        {
+            var started = new List<string>();
+            tasks.Starting += started.Add;
+            await Task.Delay(TimeSpan.FromSeconds(15));
+            Assert.That(started, Is.Empty, "no job was started for it: " + string.Join(", ", started));
+            Assert.That(Away(client, monster), Is.LessThan(6), "and he is still where he was");
+        }
+        finally { reflexes.Enabled = false; tasks.Stop(); await _server.CommandAsync("kill @e[tag=vavoid]"); }
+    }
+
+    /// <summary>
     /// Live on AubsCraft 2026-11-02 (TJ): "he is swimming out into the water and there is no land in sight in front of him; it is behind him". Stepping away from monsters aimed at "far from them",
     /// and any far-enough PLACE counted, water included. Swimming across water is needed and wanted (TJ: "being able and willing to swim across water is needed"), so the fix is where "away" ENDS:
     /// on dry land. The stage: a strip of land 3 wide and 11 long in a lake, two creepers (no AI) at one end, him 6 blocks from them. Without a far shore there is nowhere dry to go: he stays on
