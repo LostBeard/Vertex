@@ -570,7 +570,7 @@ public sealed partial class Skills(MinecraftClient client)
     /// <summary>Sleeps in the nearest free bed until morning (the night passes when everyone online sleeps).</summary>
     public async Task<(bool, string)> SleepAsync(CancellationToken ct)
     {
-        var beds = client.FindBeds();
+        var beds = client.FindBeds(48);
         if (beds.Count == 0) return (false, "I don't see a bed nearby.");
         string? why = null;
         foreach (var (x, y, z) in beds.Take(4))
@@ -2157,6 +2157,13 @@ public sealed partial class Skills(MinecraftClient client)
         return client.Entities.Values
             .Where(e => IsThreatOnFoot(e.Name) && e.DistanceTo(x, y, z) < within && (e.DistanceTo(x, y, z) < regardlessWithin || Sight.CanSeeBody(client.World, eye, e.X, e.Y, e.Z)))
             .OrderBy(e => e.DistanceTo(x, y, z)).FirstOrDefault();
+    }
+
+    /// <summary>The nearest flying hostile mob (a phantom...) within `within` blocks, if any: not one to walk away from, one to hit when it comes down to him.</summary>
+    public Entity? NearestFlier(double within)
+    {
+        var (x, y, z) = client.Position;
+        return client.Entities.Values.Where(e => Fliers.Contains(e.Name) && e.DistanceTo(x, y + 1, z) < within).OrderBy(e => e.DistanceTo(x, y + 1, z)).FirstOrDefault();
     }
 
     /// <summary>The nearest hostile mob within `within` blocks, if any.</summary>

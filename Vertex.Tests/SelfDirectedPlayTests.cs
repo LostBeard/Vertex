@@ -159,6 +159,36 @@ public class SelfDirectedPlayTests
     }
 
     [Test]
+    public void AtNight_TheProjectsAreCloseToHome_NoWanderingOffOverOpenGround()
+    {
+        Assert.That(string.Join(" | ", VertexBrain.OwnProjectIdeas(_ => 0, night: false)), Does.Contain("explore"));
+        var night = string.Join(" | ", VertexBrain.OwnProjectIdeas(_ => 0, night: true));
+        Assert.That(night, Does.Not.Contain("explore"), "at night he builds and gathers close by: " + night);
+        Assert.That(night, Does.Contain("build").And.Contain("gather"));
+    }
+
+    /// <summary>TJ, 2026-11-03: "he should either stay busy at night or, if he is near a house he has built, he can sleep." Night, nothing to do, a bed 3 blocks away: he goes to bed by himself.</summary>
+    [Test]
+    public async Task AtNight_WithABedNear_HeGoesToSleepByHimself()
+    {
+        var (client, brain, log) = await JoinAsync("VertexSleepy", selfDirected: true);
+        await using var _c = client;
+        await using var _b = brain;
+        brain.SelfDirectedIdle = TimeSpan.FromMinutes(5);       // as in the game: he waits 5 minutes to choose a project, and goes to bed after 20 seconds
+        var (px, _, pz) = client.Position;
+        int ax = (int)Math.Floor(px), az = (int)Math.Floor(pz);
+        await _server.CommandAsync($"fill {ax - 8} 197 {az - 8} {ax + 8} 199 {az + 8} minecraft:stone");
+        await _server.CommandAsync($"fill {ax - 8} 200 {az - 8} {ax + 8} 206 {az + 8} minecraft:air");
+        await _server.CommandAsync($"setblock {ax + 3} 200 {az} minecraft:white_bed[facing=east,part=foot]");
+        await _server.CommandAsync($"setblock {ax + 4} 200 {az} minecraft:white_bed[facing=east,part=head]");
+        await _server.CommandAsync($"tp VertexSleepy {ax + 0.5} 200 {az + 0.5}");
+        await Wait.UntilAsync(() => client.OnGround && client.FindBeds(48, 1).Count > 0, TimeSpan.FromSeconds(30), () => $"at {client.Position}");
+        await _server.CommandAsync("time set 13500");
+        await Wait.UntilAsync(() => log.Any(l => l.Contains("going to sleep")), TimeSpan.FromSeconds(90), () => "never went to bed; log: " + string.Join(" | ", log.TakeLast(6)));
+        await Wait.UntilAsync(() => client.Sleeping, TimeSpan.FromSeconds(30), () => "not in bed; log: " + string.Join(" | ", log.TakeLast(6)));
+    }
+
+    [Test]
     public async Task InCreative_HeNeverChoosesAProject_EvenWithItOn()
     {
         var (client, brain, log) = await JoinAsync("VertexCreative", selfDirected: true);

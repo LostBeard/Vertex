@@ -23,6 +23,7 @@ public sealed class Reflexes : IDisposable
     private long _nextAvoidTick, _nextLeaveWaterTick, _nextLandTick, _nextPatchTick;
     private int _tinyPatchLooks, _patchFailures;
     private int _avoidRepeats;
+    private long _nextSwatTick;
     private long _lastAvoidTick;
 
     /// <summary>How close a monster may be, idle, before he walks away from it (blocks).</summary>
@@ -77,6 +78,15 @@ public sealed class Reflexes : IDisposable
         {
             _nextLandTick = _tick + 100;
             _tasks.StartReflex("landing", ct => _skills.LandAsync(ct));
+            return;
+        }
+
+        // A phantom (or other flier) that comes down within reach: hit it. Walking away from it gets nowhere, and he stood there while they bit him (TJ, 2026-11-03: "birds attacking him and it does not
+        // bother him"). Not while a job runs (jobs have their own care), a swing every 0.7 seconds with the best weapon he carries.
+        if (!_tasks.IsBusy && _tick >= _nextSwatTick && _skills.NearestFlier(3.3) is { } bird)
+        {
+            _nextSwatTick = _tick + 14;
+            Run(async () => { await _skills.EquipWeaponAsync(CancellationToken.None); await c.AttackAsync(bird); });
             return;
         }
 

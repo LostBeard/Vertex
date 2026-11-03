@@ -100,6 +100,24 @@ public class LiveSafetyReflexTests
         finally { reflexes.Enabled = false; tasks.Stop(); await _server.CommandAsync("kill @e[tag=vavoid]"); }
     }
 
+    /// <summary>TJ, 2026-11-03: "there are birds attacking him and apparently that does not bother him." A phantom that comes down within reach is hit (he does not run from a flier, and until now did nothing else).</summary>
+    [Test]
+    public async Task Idle_WithAPhantomWithinReach_HeHitsItUntilItIsDown()
+    {
+        var (client, ax, az) = await JoinAsync("VertexSwat");
+        await using var _ = client;
+        await _server.CommandAsync("effect give VertexSwat minecraft:resistance 600 4 true");
+        await _server.CommandAsync("give VertexSwat minecraft:iron_sword 1");
+        await Wait.UntilAsync(() => client.Inventory.Count("iron_sword") >= 1, Timeout, () => client.Inventory.ToString());
+        await _server.CommandAsync($"summon minecraft:phantom {ax + 2.5} 200 {az + 0.5} {{NoAI:1b,Tags:[\"vswat\"],active_effects:[{{id:\"minecraft:fire_resistance\",duration:1000000}}]}}");
+        await Wait.UntilAsync(() => client.Entities.Values.Any(e => e.Name == "minecraft:phantom"), Timeout, () => "the phantom");
+        var skills = new Skills(client);
+        var tasks = new TaskRunner();
+        using var reflexes = new Reflexes(client, skills, tasks, () => new PlayStyle { Bravery = 0.0 }) { Enabled = true };
+        try { await Wait.UntilAsync(() => !client.Entities.Values.Any(e => e.Name == "minecraft:phantom"), TimeSpan.FromSeconds(30), () => "the phantom is still there"); }
+        finally { reflexes.Enabled = false; tasks.Stop(); await _server.CommandAsync("kill @e[tag=vswat]"); }
+    }
+
     /// <summary>
     /// Live 2026-11-03, 15:48 to 15:52 and on: a spider and three zombies at 1 to 2 blocks, "stepping away from monsters: I could not get away from the monsters" every 10 seconds, nothing ever
     /// fought back, he ran between two spots and everything else (projects, requests) waited. Zombies walk as fast as he does: running cannot end it. A careful character (bravery 0) steps away the

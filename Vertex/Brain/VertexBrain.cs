@@ -392,7 +392,7 @@ public sealed class VertexBrain : IBody
     internal string? ProjectBlocker(DateTime now)
     {
         if (Client.GameMode != GameMode.Survival) return $"the game mode is {Client.GameMode.ToString().ToLowerInvariant()}, not survival";
-        if (Client.World.DayTime % 24000 is not (>= 0 and < 12000)) return "it is not daytime";
+        // Night is no reason to stand still (TJ, 2026-11-03: "he should either stay busy at night or sleep"): at night he sleeps if there is a bed (the idle loop), otherwise he keeps to projects near him.
         if (Client.Health < 14) return $"health is {Client.Health / 2:0.#} of 10 hearts (needs 7)";
         if (Client.Food < 12) return $"food is {Client.Food / 2:0.#} of 10 (needs 6){(Client.Inventory.Count("bread") + Client.Inventory.Count("cooked_beef") + Client.Inventory.Count("apple") == 0 ? " and he carries nothing common to eat" : "")}";
         if (now - _lastProjectAt < ProjectCooldown) return "the last project was less than " + ProjectCooldown.TotalMinutes.ToString("0") + " minutes ago";
@@ -402,7 +402,10 @@ public sealed class VertexBrain : IBody
         return null;
     }
 
-    private DateTime _lastBlockerLog = DateTime.MinValue;
+    private DateTime _lastBlockerLog = DateTime.MinValue, _nextSleepTry = DateTime.MinValue;
+
+    /// <summary>Is it night in the game (when a bed can be slept in: from sunset to just before sunrise)?</summary>
+    private bool IsNight() => Client.World.DayTime % 24000 is >= 12600 and < 23400;
 
     /// <summary>How close a monster may be for him to start a project of his own (blocks).</summary>
     internal const double ProjectHostileRadius = 16;
@@ -415,15 +418,16 @@ public sealed class VertexBrain : IBody
     /// chose "plant some carrots", the job failed, and it told everyone it had finished); planting needs seeds or crops, fishing needs a rod, everything else it can start from nothing.
     /// </summary>
     /// <param name="count">How many of an item (short name, "fishing_rod", "wheat_seeds") it carries.</param>
-    internal static List<string> OwnProjectIdeas(Func<string, int> count)
+    internal static List<string> OwnProjectIdeas(Func<string, int> count, bool night = false)
     {
         var ideas = new List<string>
         {
             // Only shapes build_shape has: offered "a shelter or garden" he chose "garden" twice and failed twice (2026-11-02), there being no such shape.
             "build something small with build_shape (a house, a platform or a pen for animals)",
-            "explore one direction (no farther than about 40 blocks) and tell what you find",
             "gather some wood, stone or dirt",
         };
+        // Wandering off over open ground is for the day; at night he builds and gathers close by.
+        if (!night) ideas.Insert(1, "explore one direction (no farther than about 40 blocks) and tell what you find");
         if (count("fishing_rod") > 0) ideas.Add("go fishing");
         if (new[] { "wheat_seeds", "beetroot_seeds", "melon_seeds", "pumpkin_seeds", "carrot", "potato" }.Any(seed => count(seed) > 0)) ideas.Add("plant the seeds or crops you carry");
         return ideas;
@@ -440,10 +444,12 @@ public sealed class VertexBrain : IBody
             string[] recent; lock (_recentProjects) recent = _recentProjects.ToArray();
             Log?.Invoke("choosing a project of my own");
             _choosing = true;
-            var ideas = OwnProjectIdeas(item => Client.Inventory.Count(item));
+            var night = IsNight();
+            var ideas = OwnProjectIdeas(item => Client.Inventory.Count(item), night);
             await Companion.RespondAsync("[Game update, not a friend talking: nobody needs you right now and you have no goal, so pick ONE small project of your own to do while you wait. "
                 + $"Something a friend would enjoy watching, and only what you can do right now: {string.Join("; ", ideas)}. "
-                + "Keep it small and safe, in daylight, near where you are. Never break or build on anything that looks like someone's build. "
+                + (night ? "It is night: stay close to where you are. " : "Keep it small and safe, in daylight, near where you are. ")
+                + "Never break or build on anything that looks like someone's build. "
                 + (recent.Length > 0 ? $"You recently did: {string.Join("; ", recent)}. Pick something different. " : "")
                 + "Call the ONE tool that starts it (set_goal only for something that really takes many steps), then say in one short sentence what you chose.]", ct);
         }
@@ -526,6 +532,16 @@ public sealed class VertexBrain : IBody
                 {
                     _lastBlockerLog = now;
                     Log?.Invoke("not starting a project of my own: " + why);      // not "choosing a project": the tests (and the panel) look for that phrase to see a project being chosen
+                }
+                // Night, nothing to do, a bed within 48 blocks (his own house's, or any): sleep until morning, as a player does (TJ, 2026-11-03: "he can sleep"). A failed try waits 3 minutes.
+                if (goal == null && !Staying && Client.IsSpawned && !_projectQueued && Client.GameMode == GameMode.Survival && IsNight() && now - _lastActivity >= TimeSpan.FromSeconds(20) && now >= _nextSleepTry
+                    && Skills.NearestHostile(10) == null && Client.FindBeds(48, 1).Count > 0)
+                {
+                    _nextSleepTry = now + TimeSpan.FromMinutes(3);
+                    _lastActivity = now;
+                    Log?.Invoke("night, nothing to do and a bed close by: going to sleep");
+                    Tasks.Start("sleeping until morning", Skills.SleepAsync);
+                    continue;
                 }
                 var action = IdlePolicy.Decide(Staying, Tasks.IsBusy, _goalQueued || _projectQueued, Client.IsSpawned, now - _lastActivity, IdleBeforeGoals, goal != null, StudyWhenIdle, unstudied,
                     SelfDirectedPlay, SelfDirectedIdle, SelfDirectedPlay && FitForOwnProject(now));
