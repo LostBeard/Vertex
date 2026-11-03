@@ -152,6 +152,7 @@ public class SelfDirectedPlayTests
         brain.SelfDirectedPlay = true;
         await Task.Delay(TimeSpan.FromSeconds(40));
         Assert.That(log.Any(l => l.Contains("choosing a project of my own")), Is.False, "in the water he chooses nothing: " + string.Join(" | ", log.TakeLast(5)));
+        Assert.That(log.Any(l => l.Contains("not starting a project of my own: he is in the water")), Is.True, "and says so: " + string.Join(" | ", log.TakeLast(5)));
 
         await _server.CommandAsync($"tp VertexSwim {ax + 6.5} 200 {az + 6.5}");
         await Wait.UntilAsync(() => log.Any(l => l.Contains("choosing a project of my own")), Slow, () => "on dry land he never chose; in water " + client.BodySnapshot().InWater + "; log: " + string.Join(" | ", log.TakeLast(6)));
@@ -168,5 +169,7 @@ public class SelfDirectedPlayTests
         log.Clear();
         await Task.Delay(TimeSpan.FromSeconds(45));
         Assert.That(log.Any(l => l.Contains("choosing a project of my own")), Is.False, "the skills' rules are survival's: in creative he leaves it alone");
+        Assert.That(log.Any(l => l.Contains("not starting a project of my own: the game mode is creative, not survival")), Is.True,
+            "and he says why (2026-11-03: idle for minutes with no way to tell what stopped him): " + string.Join(" | ", log.TakeLast(5)));
     }
 }

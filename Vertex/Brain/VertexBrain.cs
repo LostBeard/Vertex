@@ -382,13 +382,26 @@ public sealed class VertexBrain : IBody
     /// The conditions for choosing a project of its own that are not about how long it has been idle: survival (the skills' rules are survival's: breaking a block in creative drops nothing),
     /// daytime, at least 7 hearts and 6 of 10 food (the reflexes eat and heal first), and the cooldown since the last project.
     /// </summary>
-    private bool FitForOwnProject(DateTime now)
-        => Client.GameMode == GameMode.Survival
-        && Client.World.DayTime % 24000 is >= 0 and < 12000
-        && Client.Health >= 14 && Client.Food >= 12
-        && now - _lastProjectAt >= ProjectCooldown
-        && !Client.Flying // in the air nothing he does works; the landing reflex comes first
-        && SafeForOwnProject(Client.BodySnapshot().InWater, Skills.NearestHostile(ProjectHostileRadius) != null);
+    private bool FitForOwnProject(DateTime now) => ProjectBlocker(now) == null;
+
+    /// <summary>
+    /// What stops him choosing a project of his own right now, in words, or null when nothing does. He sat idle for minutes on 2026-11-03 at 11:43 in the morning with no way to tell from outside
+    /// which of these it was: this answers it, and the idle loop says it in the log.
+    /// </summary>
+    internal string? ProjectBlocker(DateTime now)
+    {
+        if (Client.GameMode != GameMode.Survival) return $"the game mode is {Client.GameMode.ToString().ToLowerInvariant()}, not survival";
+        if (Client.World.DayTime % 24000 is not (>= 0 and < 12000)) return "it is not daytime";
+        if (Client.Health < 14) return $"health is {Client.Health / 2:0.#} of 10 hearts (needs 7)";
+        if (Client.Food < 12) return $"food is {Client.Food / 2:0.#} of 10 (needs 6){(Client.Inventory.Count("bread") + Client.Inventory.Count("cooked_beef") + Client.Inventory.Count("apple") == 0 ? " and he carries nothing common to eat" : "")}";
+        if (now - _lastProjectAt < ProjectCooldown) return "the last project was less than " + ProjectCooldown.TotalMinutes.ToString("0") + " minutes ago";
+        if (Client.Flying) return "he is flying (the landing reflex comes first)";
+        if (Client.BodySnapshot().InWater) return "he is in the water";
+        if (Skills.NearestHostile(ProjectHostileRadius) is { } mob) return $"a {mob.Name.Bare().Replace('_', ' ')} is {mob.DistanceTo(Client.Position.X, Client.Position.Y, Client.Position.Z):0} blocks away (needs {ProjectHostileRadius:0})";
+        return null;
+    }
+
+    private DateTime _lastBlockerLog = DateTime.MinValue;
 
     /// <summary>How close a monster may be for him to start a project of his own (blocks).</summary>
     internal const double ProjectHostileRadius = 16;
@@ -506,6 +519,13 @@ public sealed class VertexBrain : IBody
                 if (Tasks.IsBusy) { _lastActivity = now; continue; }
                 var goal = Memory.ActiveGoals.FirstOrDefault();
                 var unstudied = goal == null && !Staying && StudyWhenIdle && Skills.UnstudiedBlocks(16).Count > 0;     // the scan only when it could matter
+                // Idle long enough to choose a project and not choosing one: say why, at most every 5 minutes, so that "he is idle" has an answer in the log.
+                if (SelfDirectedPlay && goal == null && !Staying && Client.IsSpawned && !_projectQueued && now - _lastActivity >= SelfDirectedIdle && now - _lastBlockerLog >= TimeSpan.FromMinutes(5)
+                    && ProjectBlocker(now) is { } why)
+                {
+                    _lastBlockerLog = now;
+                    Log?.Invoke("not starting a project of my own: " + why);      // not "choosing a project": the tests (and the panel) look for that phrase to see a project being chosen
+                }
                 var action = IdlePolicy.Decide(Staying, Tasks.IsBusy, _goalQueued || _projectQueued, Client.IsSpawned, now - _lastActivity, IdleBeforeGoals, goal != null, StudyWhenIdle, unstudied,
                     SelfDirectedPlay, SelfDirectedIdle, SelfDirectedPlay && FitForOwnProject(now));
                 if (action == IdleAction.ChooseProject && NextExperiment() is { } experiment)
