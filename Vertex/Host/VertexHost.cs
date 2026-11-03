@@ -381,6 +381,34 @@ public sealed class VertexHost : IAsyncDisposable
     public IReadOnlyList<string> Models { get; private set; } = [];
     public Companion? Companion => _companion;
     public MinecraftClient? Client => _client;
+
+    /// <summary>The server's clock for a time of day in ticks: 24000 ticks make a day, 1000 an hour, and tick 0 is 6:00 in the morning ("5700" is 11:42 AM).</summary>
+    public static string ClockText(long dayTimeTicks)
+    {
+        var tod = ((dayTimeTicks % 24000) + 24000) % 24000;
+        var minutes = (int)((tod * 3L / 50 + 6 * 60) % (24 * 60));
+        var hour = minutes / 60;
+        return $"{(hour % 12 == 0 ? 12 : hour % 12)}:{minutes % 60:00} {(hour < 12 ? "AM" : "PM")}";
+    }
+
+    /// <summary>What the Minecraft tab shows about the game right now, as the server last said it.</summary>
+    public sealed record InGameState(string Mode, bool Invulnerable, bool MayFly, string Health, string Food, string Time, string Phase, long Day, string Weather, string Where);
+
+    /// <summary>
+    /// The state of the game he is in: game mode, whether the server made him invulnerable, health and food, the server's time of day (tick 0 is 6:00 in the morning) and weather, and where he is.
+    /// Null when he is not in a world. (TJ, 2026-11-03: "the mode he is in should be on his Minecraft status page, along with server time of day and weather".)
+    /// </summary>
+    public InGameState? InGameNow()
+    {
+        if (_client is not { IsSpawned: true } c) return null;
+        var ticks = c.World.DayTime;
+        var tod = ((ticks % 24000) + 24000) % 24000;
+        var time = ClockText(ticks);
+        var phase = tod < 12000 ? "day" : tod < 13000 ? "sunset" : tod < 23000 ? "night" : "sunrise";
+        var (x, y, z) = c.Position;
+        return new InGameState(c.GameMode.ToString().ToLowerInvariant(), c.Invulnerable, c.MayFly, $"{c.Health / 2:0.#} of 10 hearts", $"{c.Food / 2:0.#} of 10", time, phase, ticks / 24000 + 1, c.Weather,
+            $"{x:0} {y:0} {z:0} in the {c.World.Dimension.Bare().Replace("the_", "")}");
+    }
     public SimpleVoiceChat? Voice => _voice;
     public VertexBrain? Brain => _brain;
     /// <summary>In a Minecraft world right now.</summary>

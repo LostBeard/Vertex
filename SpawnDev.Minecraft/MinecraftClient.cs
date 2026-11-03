@@ -94,6 +94,12 @@ public sealed partial class MinecraftClient : IAsyncDisposable
     public int EntityId { get; private set; }
     public string? WorldName { get; private set; }
     public GameMode GameMode { get; private set; }
+    /// <summary>How hard it rains (0 to 1) and how stormy (0 to 1), as the server last said (game events 1, 2, 7 and 8).</summary>
+    public float RainLevel { get; private set; }
+    public float ThunderLevel { get; private set; }
+
+    /// <summary>The weather in words: clear, rain or a thunderstorm.</summary>
+    public string Weather => ThunderLevel > 0.5f && RainLevel > 0.2f ? "thunderstorm" : RainLevel > 0.2f ? "rain" : "clear";
     public float Health { get; private set; } = 20;
     public int Food { get; private set; } = 20;
     public float Saturation { get; private set; }
@@ -540,6 +546,10 @@ public sealed partial class MinecraftClient : IAsyncDisposable
                 var e = r.ReadByte();
                 var value = r.ReadFloat();
                 if (e == 3) GameMode = (GameMode)(int)value; // change game mode
+                else if (e == 1) RainLevel = Math.Max(RainLevel, 1f);      // begin raining
+                else if (e == 2) { RainLevel = 0; ThunderLevel = 0; }      // end raining
+                else if (e == 7) RainLevel = value;                         // rain level change, 0 to 1
+                else if (e == 8) ThunderLevel = value;                      // thunder level change, 0 to 1
                 return null;
             }
             case CB.Play.Clientbound.SystemChat:

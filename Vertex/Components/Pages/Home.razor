@@ -211,6 +211,11 @@
             else if (Tab == "minecraft")
             {
                 <h2>Minecraft</h2>
+                @if (Host.InGameNow() is { } now)
+                {
+                    <p class="hint"><b>Right now:</b> game mode <b>@now.Mode</b>@(now.Invulnerable ? " (INVULNERABLE: the server says nothing can hurt him)" : " (can be hurt)")@(now.MayFly ? ", may fly" : ""); health @now.Health, food @now.Food.
+                        Server time <b>@now.Time</b> (@now.Phase, day @now.Day); weather <b>@now.Weather</b>. At @now.Where.</p>
+                }
                 <label>Server</label>
                 <div class="row">
                     <input @bind="Host.Settings.Server" disabled="@InGameOrBusy" />

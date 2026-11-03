@@ -375,6 +375,22 @@ public class LiveAwarenessTests
         Assert.That(lessons[0].Text, Does.Contain("12 blocks of water").And.Contain("It worked"), lessons[0].Text);
     }
 
+    /// <summary>The Minecraft tab shows the weather: the client follows the server's rain and thunder events.</summary>
+    [Test]
+    public async Task TheWeather_IsFollowedFromTheServer()
+    {
+        var (client, ax, az) = await StageAsync("VertexWeather", 10);
+        await using var _ = client;
+        await _server.CommandAsync("weather clear 600");
+        await Wait.UntilAsync(() => client.Weather == "clear", Timeout, () => $"weather {client.Weather} rain {client.RainLevel} thunder {client.ThunderLevel}");
+        await _server.CommandAsync("weather rain 600");
+        await Wait.UntilAsync(() => client.Weather == "rain", Timeout, () => $"weather {client.Weather} rain {client.RainLevel} thunder {client.ThunderLevel}");
+        await _server.CommandAsync("weather thunder 600");
+        await Wait.UntilAsync(() => client.Weather == "thunderstorm", Timeout, () => $"weather {client.Weather} rain {client.RainLevel} thunder {client.ThunderLevel}");
+        await _server.CommandAsync("weather clear 600");
+        await Wait.UntilAsync(() => client.Weather == "clear", Timeout, () => $"weather {client.Weather} rain {client.RainLevel} thunder {client.ThunderLevel}");
+    }
+
     [Test]
     public async Task OnPlainLand_TheStatusCostsNothing_ButAnEdgeAndLavaAreMentioned()
     {
