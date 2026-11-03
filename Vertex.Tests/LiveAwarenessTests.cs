@@ -168,6 +168,80 @@ public class LiveAwarenessTests
         Assert.That(lessons[0], Does.Contain("digging").Or.Contain("swimming"), "it says HOW: " + lessons[0]);
     }
 
+    /// <summary>
+    /// An island with two ways off: 2 blocks of dirt wall to the north (digging, the nearest land) and 6 blocks of water to a shore in the south (swimming, farther).
+    /// </summary>
+    private async Task<(MinecraftClient Client, int X, int Z, Skills Skills)> TwoWaysOffAsync(string name)
+    {
+        var (client, ax, az) = await StageAsync(name, 30);
+        await _server.CommandAsync($"fill {ax - 20} 198 {az - 20} {ax + 20} 199 {az + 20} minecraft:water");
+        await _server.CommandAsync($"fill {ax - 20} 198 {az - 20} {ax + 20} 199 {az - 2} minecraft:stone");            // real land to the north
+        await _server.CommandAsync($"fill {ax - 6} 198 {az - 1} {ax + 6} 202 {az - 1} minecraft:dirt");                // a wall of dirt between it and him
+        await _server.CommandAsync($"fill {ax - 20} 198 {az + 7} {ax + 20} 199 {az + 20} minecraft:stone");            // real land to the south, over 6 blocks of water
+        await _server.CommandAsync($"fill {ax} 198 {az} {ax} 199 {az} minecraft:stone");                               // his island: one block
+        await StandAsync(client, name, ax, 200, az);
+        await Wait.UntilAsync(() => client.OnGround && client.World.GetBlock(ax, 202, az - 1)?.Name == "minecraft:dirt" && client.World.IsLoaded(ax, az + 10), Timeout, () => $"at {client.Position}");
+        return (client, ax, az, new Skills(client));
+    }
+
+    private static Skills.Lesson Past(string text, bool worked, params string[] ways)
+        => new(text, Skills.TinyPatchKey, worked, ["stuck", worked ? "worked" : "failed", .. ways.Select(w => (worked ? "worked:" : "failed:") + w)]);
+
+    /// <summary>With no memory of an earlier time he does what he did: the nearest land first (digging through the wall).</summary>
+    [Test]
+    public async Task Stranded_WithNoLessons_TriesTheNearestLandFirst()
+    {
+        var (client, ax, az, skills) = await TwoWaysOffAsync("VertexNoLessons");
+        await using var _ = client;
+        var lessons = new List<string>();
+        skills.Learned += lessons.Add;
+        (bool ok, string text) result;
+        using (var c = new CancellationTokenSource(TimeSpan.FromSeconds(120))) result = await skills.GetOffATinyPatchAsync(c.Token);
+        TestContext.Out.WriteLine($"{result.ok}: {result.text}; at {client.Position}");
+        Assert.That(result.ok, Is.True, result.text);
+        Assert.That(client.Position.Z, Is.LessThan(az), "north, through the wall");
+        Assert.That(result.text, Does.Not.Contain("remembered"));
+    }
+
+    /// <summary>
+    /// TJ, 2026-11-02: "he needs to be able to learn and try things". Learning is only worth something if it is USED. He once dug out and it did not work, and once swam out and it did: stranded
+    /// again, he tries the swim first, says why, and the new lesson carries the way that worked.
+    /// </summary>
+    [Test]
+    public async Task Stranded_RemembersWhatWorked_AndTriesThatFirst()
+    {
+        var (client, ax, az, skills) = await TwoWaysOffAsync("VertexRemembers");
+        await using var _ = client;
+        skills.PriorLessons = key => key == Skills.TinyPatchKey
+            ? [Past("I was stuck on a tiny patch. I tried going N and could not get off.", false, "dig"), Past("I was stuck on a tiny patch. I got off by swimming.", true, "swim")]
+            : [];
+        var taught = new List<Skills.Lesson>();
+        skills.LessonLearned += taught.Add;
+        (bool ok, string text) result;
+        using (var c = new CancellationTokenSource(TimeSpan.FromSeconds(120))) result = await skills.GetOffATinyPatchAsync(c.Token);
+        TestContext.Out.WriteLine($"{result.ok}: {result.text}; at {client.Position}");
+        Assert.That(result.ok, Is.True, result.text);
+        Assert.That(client.Position.Z, Is.GreaterThan(az + 5), "south, swimming: the way that worked last time, though the wall was nearer");
+        Assert.That(result.text, Does.Contain("I remembered that swimming worked before, so I tried that first"), result.text);
+        Assert.That(taught, Has.Count.EqualTo(1));
+        Assert.That(taught[0].Has("worked") && taught[0].Has("worked:swim"), Is.True, string.Join(",", taught[0].Tags!));
+    }
+
+    /// <summary>The same memory, the other way round: what failed before (and nothing that worked) sends him the other way first.</summary>
+    [Test]
+    public async Task Stranded_RemembersWhatFailed_AndTriesAnotherWayFirst()
+    {
+        var (client, ax, az, skills) = await TwoWaysOffAsync("VertexAvoids");
+        await using var _ = client;
+        skills.PriorLessons = key => key == Skills.TinyPatchKey ? [Past("I was stuck on a tiny patch. I tried going N and could not get off.", false, "dig")] : [];
+        (bool ok, string text) result;
+        using (var c = new CancellationTokenSource(TimeSpan.FromSeconds(120))) result = await skills.GetOffATinyPatchAsync(c.Token);
+        TestContext.Out.WriteLine($"{result.ok}: {result.text}; at {client.Position}");
+        Assert.That(result.ok, Is.True, result.text);
+        Assert.That(client.Position.Z, Is.GreaterThan(az + 5), "south: digging had not worked, the swim was the other way");
+        Assert.That(result.text, Does.Contain("digging had not worked before, so I tried another way first"), result.text);
+    }
+
     /// <summary>The same predicament, with nobody calling the skill: idle on the island, the reflex notices he is stranded (twice, 3 seconds apart) and sets off by itself.</summary>
     [Test]
     public async Task Idle_OnAOneBlockIsland_TheReflexNoticesAndTriesBy_Itself()
@@ -228,7 +302,9 @@ public class LiveAwarenessTests
         Assert.That(client.Position.Z, Is.GreaterThan(az + 15), "on the far shore");
         Assert.That(client.BodySnapshot().InWater, Is.False);
         Assert.That(lessons, Has.Count.EqualTo(1));
-        Assert.That(lessons[0], Is.EqualTo(new Skills.Lesson(lessons[0].Text, Skills.SwimAcrossKey, true)));
+        Assert.That(lessons[0].Key, Is.EqualTo(Skills.SwimAcrossKey));
+        Assert.That(lessons[0].Worked, Is.True);
+        Assert.That(lessons[0].Has("experiment"), Is.True);
         Assert.That(lessons[0].Text, Does.Contain("12 blocks of water").And.Contain("It worked"), lessons[0].Text);
     }
 

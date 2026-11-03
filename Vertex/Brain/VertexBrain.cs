@@ -153,8 +153,8 @@ public sealed class VertexBrain : IBody
         Tasks.Starting += name => { Staying = false; if (_choosing) { lock (_recentProjects) { _recentProjects.Add(name); if (_recentProjects.Count > 5) _recentProjects.RemoveAt(0); } } };      // told to stay, then given something to do: the stay is over
         Tasks.GoalOf = () => _pursuing;
         Tasks.Finished += o => companion.Post(new TaskEvent(o));
-        Skills.Learned += RecordLesson;
         Skills.LessonLearned += RecordLesson;
+        Skills.PriorLessons = LessonsFor;
         companion.Attach(this);
         companion.AddChannel(Channel);
     }
@@ -243,16 +243,21 @@ public sealed class VertexBrain : IBody
         : age.TotalDays < 1 ? $"{(int)age.TotalHours} hour{((int)age.TotalHours == 1 ? "" : "s")} ago"
         : $"{(int)age.TotalDays} day{((int)age.TotalDays == 1 ? "" : "s")} ago";
 
-    /// <summary>Writes what he worked out by trying (a lesson) to long-term memory: kind Lesson, important (0.7: it is how he gets better at being somewhere).</summary>
-    private void RecordLesson(string lesson)
+    /// <summary>
+    /// Writes what he worked out by trying (a lesson) to long-term memory: kind Lesson, important (0.7: it is how he gets better at being somewhere), tagged with its situation
+    /// ("exp:&lt;key&gt;"), whether it worked, and the ways tried ("worked:swim", "failed:dig"), so that "have I tried this?" and "what worked here?" are exact lookups, not guesses from similar words.
+    /// </summary>
+    private void RecordLesson(Skills.Lesson lesson)
     {
-        Log?.Invoke("learned: " + lesson);
+        Log?.Invoke($"learned ({lesson.Key}, {(lesson.Worked ? "worked" : "did not work")}): {lesson.Text}");
+        lock (_sessionLessons) _sessionLessons.Add(lesson);
+        lock (_triedKeys) _triedKeys.Add(lesson.Key);
         var memory = LongTerm;
         if (memory == null) return;
         var entry = new SpawnDev.AI.AiMemoryEntry
         {
-            Kind = SpawnDev.AI.AiMemoryKind.Lesson, Text = lesson + $" (at {Client.Position.X:0} {Client.Position.Y:0} {Client.Position.Z:0})", Scope = MemoryScope, Source = "minecraft",
-            Tags = ["lesson", "stuck"], Importance = 0.7f,
+            Kind = SpawnDev.AI.AiMemoryKind.Lesson, Text = lesson.Text + $" (at {Client.Position.X:0} {Client.Position.Y:0} {Client.Position.Z:0})", Scope = MemoryScope, Source = "minecraft",
+            Tags = new[] { "lesson", ExperimentTag(lesson.Key), lesson.Worked ? "worked" : "failed" }.Concat(lesson.Tags ?? []).Distinct().ToList(), Importance = 0.7f,
         };
         _ = Task.Run(async () =>
         {
@@ -261,23 +266,22 @@ public sealed class VertexBrain : IBody
         });
     }
 
-    /// <summary>Writes an experiment's lesson to long-term memory with tags, so "have I tried this?" is an exact lookup (tag "exp:&lt;key&gt;"), not a guess from similar words.</summary>
-    private void RecordLesson(Skills.Lesson lesson)
+    private readonly List<Skills.Lesson> _sessionLessons = [];
+
+    /// <summary>
+    /// Everything he has learned about one situation: from his memory (this server, earlier runs too) and the ones written this run that the store may not have yet. What the skills ask before
+    /// they try.
+    /// </summary>
+    internal IReadOnlyList<Skills.Lesson> LessonsFor(string key)
     {
-        Log?.Invoke($"learned ({lesson.Key}, {(lesson.Worked ? "worked" : "did not work")}): {lesson.Text}");
-        var memory = LongTerm;
-        if (memory == null) return;
-        var entry = new SpawnDev.AI.AiMemoryEntry
-        {
-            Kind = SpawnDev.AI.AiMemoryKind.Lesson, Text = lesson.Text + $" (at {Client.Position.X:0} {Client.Position.Y:0} {Client.Position.Z:0})", Scope = MemoryScope, Source = "minecraft",
-            Tags = ["lesson", "experiment", ExperimentTag(lesson.Key), lesson.Worked ? "worked" : "failed"], Importance = 0.7f,
-        };
-        _ = Task.Run(async () =>
-        {
-            try { await memory.RecordAsync(entry); }
-            catch (Exception e) { Log?.Invoke("memory: could not record a lesson: " + e.Message); }
-        });
-        lock (_triedKeys) _triedKeys.Add(lesson.Key);
+        var tag = ExperimentTag(key);
+        List<Skills.Lesson> mine; lock (_sessionLessons) mine = _sessionLessons.Where(l => l.Key == key).ToList();
+        var all = new List<Skills.Lesson>(mine);
+        if (LongTerm is { } memory)
+            foreach (var e in memory.Store.List(new SpawnDev.AI.AiMemoryFilter { Scope = MemoryScope, Kinds = [SpawnDev.AI.AiMemoryKind.Lesson] }).Where(e => e.Tags.Contains(tag)))
+                if (!mine.Any(l => e.Text.StartsWith(l.Text, StringComparison.Ordinal)))      // the store's copy of a lesson written this run has " (at x y z)" added
+                    all.Add(new Skills.Lesson(e.Text, key, e.Tags.Contains("worked"), e.Tags.ToList()));
+        return all;
     }
 
     internal static string ExperimentTag(string key) => "exp:" + key;

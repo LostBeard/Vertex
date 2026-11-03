@@ -2010,15 +2010,41 @@ public sealed partial class Skills(MinecraftClient client)
         if (candidates.Count == 0)
         {
             var none = $"I was stuck on {what} and I could not see any other land within {look.Reach} blocks to try for.";
-            Learned?.Invoke(none);
+            Teach(none, false, ["stuck", "failed"]);
             return (false, none);
         }
+        // What he learned the last times (his memory, asked BEFORE trying): the way to try first moves toward what worked and away from what did not. Each candidate is planned (no moving) to
+        // see by which ways it would get him there. With no earlier lessons the order is simply nearest first, as before.
+        var prior = PriorLessons?.Invoke(TinyPatchKey) ?? [];
+        var remembered = "";
+        if (prior.Count > 0 && candidates.Count > 1)
+        {
+            var feet = client.FeetBlock;
+            var scored = candidates.Select(c =>
+            {
+                var (route, complete) = client.Pathfinder.FindPath(feet, Goal.Near(c.X + 0.5, c.Y + 1, c.Z + 0.5, 1.2), new PathOptions { CanDig = true, MaxNodes = 20_000, DigTicks = client.BestDigTicks });
+                var ways = MethodsOf(route);                return (Cand: c, Ways: ways, Score: ways.Sum(m => Preference(prior, m)));
+            }).ToList();
+            var ordered = scored.OrderByDescending(s => s.Score).ThenBy(s => s.Cand.Distance).ToList();
+            if (!ordered[0].Cand.Equals(candidates[0]))
+            {
+                var good = ordered[0].Ways.Where(m => Preference(prior, m) > 0).ToList();
+                var bad = scored.First(s => s.Cand.Equals(candidates[0])).Ways.Where(m => Preference(prior, m) < 0).ToList();
+                remembered = good.Count > 0 ? $" I remembered that {string.Join(" and ", good.Select(Gerund))} worked before, so I tried that first."
+                    : $" I remembered that {string.Join(" and ", bad.Select(Gerund))} had not worked before, so I tried another way first.";
+                candidates = ordered.Select(s => s.Cand).ToList();
+            }
+        }
+        var attempts = new List<(string[] Ways, bool Worked)>();
+        string[] Tags(bool worked) => ["stuck", worked ? "worked" : "failed", .. attempts.SelectMany(a => a.Ways.Select(w => (a.Worked ? "worked:" : "failed:") + w)).Distinct()];
         foreach (var cand in candidates)
         {
             int swim = 0, dig = 0, climb = 0;
+            string[] ways = [];
             void OnPlan(IReadOnlyList<PathStep> steps)
             {
                 swim = steps.Count(s => s.Kind == MoveKind.Swim); dig = steps.Sum(s => s.Dig.Length); climb = steps.Count(s => s.Kind is MoveKind.JumpUp or MoveKind.Pillar or MoveKind.Climb);
+                if (ways.Length == 0) ways = MethodsOf(steps);      // the first plan: the way he set out by
             }
             var direction = look.Rays.First(r => r.Samples.Contains(cand)).Direction;
             using var attempt = CancellationTokenSource.CreateLinkedTokenSource(ct);
@@ -2028,17 +2054,26 @@ public sealed partial class Skills(MinecraftClient client)
             try { arrived = await client.GoToAsync(Goal.Near(cand.X + 0.5, cand.Y + 1, cand.Z + 0.5, 1.2), new PathOptions { CanDig = true, MaxNodes = 20_000 }, attempt.Token); }   // 1.2, not more: land 2 blocks away is "within range" of where he already stands
             catch (OperationCanceledException) when (!ct.IsCancellationRequested) { arrived = false; }
             finally { client.PathPlanned -= OnPlan; }
-            if (arrived && WalkablePatch().Count >= TinyPatch)
+            var gotOff = arrived && WalkablePatch().Count >= TinyPatch;
+            attempts.Add((ways, gotOff));
+            if (gotOff)
             {
                 var how = string.Join(" and ", new[] { swim > 0 ? $"swimming about {swim} blocks" : null, dig > 0 ? $"digging through {dig} block{(dig == 1 ? "" : "s")}" : null, climb > 0 ? $"climbing up {climb}" : null }.Where(h => h != null));
-                var lesson = $"I was stuck on {what}. I got off by going {direction} to land {cand.Distance} blocks away{(how.Length > 0 ? ", " + how : "")}. That works.";
-                Learned?.Invoke(lesson);
+                var lesson = $"I was stuck on {what}. I got off by going {direction} to land {cand.Distance} blocks away{(how.Length > 0 ? ", " + how : "")}. That works.{remembered}";
+                Teach(lesson, true, Tags(true));
                 return (true, lesson);
             }
         }
-        var failed = $"I was stuck on {what}. I tried going toward land {candidates.Count} way{(candidates.Count == 1 ? "" : "s")} ({string.Join(", ", candidates.Select(c => $"{look.Rays.First(r => r.Samples.Contains(c)).Direction} {c.Distance}"))}) and could not get off.";
-        Learned?.Invoke(failed);
+        var failed = $"I was stuck on {what}. I tried going toward land {candidates.Count} way{(candidates.Count == 1 ? "" : "s")} ({string.Join(", ", candidates.Select(c => $"{look.Rays.First(r => r.Samples.Contains(c)).Direction} {c.Distance}"))}) and could not get off.{remembered}";
+        Teach(failed, false, Tags(false));
         return (false, failed);
+    }
+
+    /// <summary>Hands a tiny-patch lesson on: structured for the brain's memory (with the ways tried as tags) and as a plain sentence for whoever only wants to read it.</summary>
+    private void Teach(string text, bool worked, string[] tags)
+    {
+        LessonLearned?.Invoke(new Lesson(text, TinyPatchKey, worked, tags));
+        Learned?.Invoke(text);
     }
 
     // ---------------------------------------------------------------- trying things on purpose
@@ -2052,7 +2087,43 @@ public sealed partial class Skills(MinecraftClient client)
     public event Action<Lesson>? LessonLearned;
 
     /// <summary>What an experiment taught: the sentence, the experiment's key and whether the thing worked.</summary>
-    public sealed record Lesson(string Text, string Key, bool Worked);
+    public sealed record Lesson(string Text, string Key, bool Worked, IReadOnlyList<string>? Tags = null)
+    {
+        /// <summary>Has the lesson this tag?</summary>
+        public bool Has(string tag) => Tags?.Contains(tag) == true;
+    }
+
+    /// <summary>The situation key of the tiny-patch lessons.</summary>
+    public const string TinyPatchKey = "tiny-patch";
+
+    /// <summary>
+    /// His earlier lessons for a situation (by its key), asked before he tries: the brain answers from his memory. Null: no memory, nothing to go on.
+    /// </summary>
+    public Func<string, IReadOnlyList<Lesson>>? PriorLessons { get; set; }
+
+    /// <summary>
+    /// What past lessons say about one way of getting somewhere (swim, dig, climb): +1 when it worked before and not more often failed, -1 when it failed more than it worked, 0 when he
+    /// has no experience of it. One lesson is a hint, not a rule: it moves the way to try FIRST, nothing is ever ruled out.
+    /// </summary>
+    internal static int Preference(IReadOnlyList<Lesson> prior, string method)
+    {
+        int worked = prior.Count(l => l.Has("worked:" + method)), failed = prior.Count(l => l.Has("failed:" + method));
+        return Math.Sign(worked - failed);
+    }
+
+    /// <summary>The ways a planned route gets somewhere: swim, dig and/or climb (walking is not a way worth a lesson).</summary>
+    internal string[] MethodsOf(IReadOnlyList<PathStep> steps)
+    {
+        var methods = new List<string>();
+        // Swimming is also moving along the top of the water or its bottom (the planner calls that Walk, seen in the 6-block test lake): a step whose feet, or the block under them, is water.
+        bool Wet(int x, int y, int z) => client.World.GetState(x, y, z) is > 0 and var st && (D.StateFlags[st] & GameData.FlagWater) != 0;
+        if (steps.Any(s => s.Kind == MoveKind.Swim || Wet(s.X, s.Y, s.Z) || Wet(s.X, s.Y - 1, s.Z))) methods.Add("swim");
+        if (steps.Any(s => s.Dig.Length > 0)) methods.Add("dig");
+        if (steps.Any(s => s.Kind is MoveKind.JumpUp or MoveKind.Pillar or MoveKind.Climb)) methods.Add("climb");
+        return methods.ToArray();
+    }
+
+    private static string Gerund(string method) => method switch { "swim" => "swimming", "dig" => "digging", _ => "climbing" };
 
     /// <summary>
     /// A pond or lake with a far shore he can see: where to swim to, how many blocks of water, and which way. Null when nothing fits (no water within 24 blocks, water wider than 30 or narrower
@@ -2108,7 +2179,7 @@ public sealed partial class Skills(MinecraftClient client)
         var text = ok
             ? $"I tried swimming across {t.Width} blocks of water to the {t.Direction} shore. It worked, in {sw.Elapsed.TotalSeconds:0} seconds{(lost >= 0.5 ? $", and it cost me {lost:0.#} hearts" : ", and it cost me no health")}. I can cross water that wide."
             : $"I tried swimming across {t.Width} blocks of water to the {t.Direction} shore and I did not get there.";
-        var lesson = new Lesson(text, SwimAcrossKey, ok);
+        var lesson = new Lesson(text, SwimAcrossKey, ok, ["experiment"]);
         LessonLearned?.Invoke(lesson);      // not also Learned: the brain writes each lesson to memory once, and would write this one twice
         if (!ok && InWaterNow()) await LeaveWaterAsync(ct);
         return (ok, text);

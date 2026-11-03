@@ -121,7 +121,8 @@ public sealed partial class MinecraftClient
         }
     }
 
-    private int? BestDigTicks(int state)
+    /// <summary>Ticks to break a block state with the best tool carried; null = he will not (unbreakable, someone's build, a modded block nothing is known about). What PathOptions.DigTicks wants, for planning without moving.</summary>
+    public int? BestDigTicks(int state)
     {
         if (World.Data.Hardness[state] < 0) return null;
         // Never through someone's build, nor through modded blocks we know nothing about.

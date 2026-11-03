@@ -144,8 +144,13 @@ on a one-block island with water on three sides and a three-high dirt wall on th
 - **Trying new things alone** (with "Play on his own" on): when it is time to choose a project of his own, he first checks for an experiment he has no lesson for yet and can set up right here. The
   first one is **swimming across a pond**: water 6 to 30 blocks wide within 24 blocks, a shore he can see on the far side, no lava on the way. He swims over, and the lesson ("I tried swimming
   across 12 blocks of water to the S shore. It worked, in 24 seconds, and it cost me no health.") is stored with the tags `experiment`, `exp:swim-across` and `worked` or `failed`. He looks
-  for that tag (an exact lookup, not a guess from similar words) before an experiment and does not repeat one he has a lesson for, on this server, across restarts. Not done yet: using the
-  lessons to choose HOW to get out of a predicament (the tiny-patch lesson is only found by the recall tool), and more experiments than this one.
+  for that tag (an exact lookup, not a guess from similar words) before an experiment and does not repeat one he has a lesson for, on this server, across restarts.
+- **Using what he learned.** Stranded on a tiny patch, he asks his memory BEFORE trying: the lessons for that situation (tag `exp:tiny-patch`) carry the ways that worked or failed (`worked:swim`,
+  `failed:dig`; ways are swim, dig, climb). Each candidate shore is planned without moving, and the order of tries moves toward a way that worked and away from one that failed; with no earlier
+  lessons it stays nearest first. It is only the ORDER: nothing is ruled out, a way that failed is still tried if the others do not work. When the order changed he says why in the lesson
+  ("I remembered that swimming worked before, so I tried that first."). Tested on an island with 2 blocks of dirt wall to the north and 6 blocks of water to a shore in the south: no lessons,
+  north (digging); a lesson that digging failed and one that swimming worked, south (swimming). Not done yet: lessons choosing among other predicaments (only the tiny patch asks), and more
+  experiments than the pond.
 
 ## Remembering
 
