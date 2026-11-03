@@ -151,7 +151,8 @@ are comparable between the two columns. One run each.
 ## Libraries and their versions
 
 Vertex is built on the released `SpawnDev.AI.Server` 1.4.0 (nuget.org, 2026-11-03, which brings `SpawnDev.AI` 1.3.0, `SpawnDev.ILGPU.ML` 5.8.1 and `SpawnDev.ILGPU` 5.4.15) and on `SpawnDev.Reachy`
-0.1.0-local.24 from the local feed: a restore from nuget.org alone (checked with an empty package folder) succeeds but resolves Reachy to 0.1.0-preview.1, a different build from the one that is deployed
-and not tried here. Until 2026-11-03 the AI chain also ran on local-feed builds (1.4.0-local.15 to local.18) while it was verified. A new package is
+0.1.0-local.24 from the local feed, pinned exactly (`[0.1.0-local.24]`): nuget.org has only `SpawnDev.Reachy` 0.1.0-preview.1 to preview.4, all OLDER than local.24, and with a plain version number
+(only a minimum) a restore without the local feed quietly took preview.1; now it fails with NU1102 instead (checked with an empty package folder). A preview.5 published from the local.24 source would end
+that dependency on the local feed. Until 2026-11-03 the AI chain also ran on local-feed builds (1.4.0-local.15 to local.18) while it was verified. A new package is
 verified with the full GPU test category on the RTX 2060 before it is deployed (and `bin`/`obj` are deleted first). Local builds live in a folder feed on the development machine (never copy a package
 into it: add it with `nuget add`), and a library defect found here is fixed in the library and covered by a test there.
