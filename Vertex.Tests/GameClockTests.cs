@@ -13,4 +13,12 @@ public class GameClockTests
     [TestCase(23999L, "5:59 AM")]
     [TestCase(24000L + 1000L, "7:00 AM")]       // the day counter keeps counting: only the time of day matters
     public void TheServerClock_IsReadFromTheTicks(long ticks, string expected) => Assert.That(VertexHost.ClockText(ticks), Is.EqualTo(expected));
+
+    /// <summary>EssentialsX's /whois says it in a line; the client's abilities flag does not (god mode cancels damage inside the plugin).</summary>
+    [TestCase(" - God mode: true", true)]
+    [TestCase("God mode: false", false)]
+    [TestCase(" - God mode: enabled", true)]
+    [TestCase(" - Fly mode: true", null)]
+    [TestCase("HereticSpawn joined the game", null)]
+    public void TheServersGodModeLine_IsRead(string line, bool? expected) => Assert.That(Vertex.Brain.VertexBrain.GodModeIn(line), Is.EqualTo(expected));
 }

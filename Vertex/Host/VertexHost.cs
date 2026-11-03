@@ -392,7 +392,7 @@ public sealed class VertexHost : IAsyncDisposable
     }
 
     /// <summary>What the Minecraft tab shows about the game right now, as the server last said it.</summary>
-    public sealed record InGameState(string Mode, bool Invulnerable, bool MayFly, string Health, string Food, string Time, string Phase, long Day, string Weather, string Where);
+    public sealed record InGameState(string Mode, bool Invulnerable, bool MayFly, string Health, string Food, string Time, string Phase, long Day, string Weather, string Where, bool? GodMode = null);
 
     /// <summary>
     /// The state of the game he is in: game mode, whether the server made him invulnerable, health and food, the server's time of day (tick 0 is 6:00 in the morning) and weather, and where he is.
@@ -407,7 +407,7 @@ public sealed class VertexHost : IAsyncDisposable
         var phase = tod < 12000 ? "day" : tod < 13000 ? "sunset" : tod < 23000 ? "night" : "sunrise";
         var (x, y, z) = c.Position;
         return new InGameState(c.GameMode.ToString().ToLowerInvariant(), c.Invulnerable, c.MayFly, $"{c.Health / 2:0.#} of 10 hearts", $"{c.Food / 2:0.#} of 10", time, phase, ticks / 24000 + 1, c.Weather,
-            $"{x:0} {y:0} {z:0} in the {c.World.Dimension.Bare().Replace("the_", "")}");
+            $"{x:0} {y:0} {z:0} in the {c.World.Dimension.Bare().Replace("the_", "")}", _brain?.GodMode);
     }
     public SimpleVoiceChat? Voice => _voice;
     public VertexBrain? Brain => _brain;

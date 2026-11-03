@@ -153,6 +153,7 @@ public sealed class VertexBrain : IBody
         Tasks.Starting += name => { Staying = false; if (_choosing) { lock (_recentProjects) { _recentProjects.Add(name); if (_recentProjects.Count > 5) _recentProjects.RemoveAt(0); } } };      // told to stay, then given something to do: the stay is over
         Tasks.GoalOf = () => _pursuing;
         Tasks.Finished += o => companion.Post(new TaskEvent(o));
+        Client.ChatReceived += OnServerText;
         Skills.LessonLearned += RecordLesson;
         Skills.Trace += m => Log?.Invoke("  (" + m + ")");
         Skills.PriorLessons = LessonsFor;
@@ -404,6 +405,27 @@ public sealed class VertexBrain : IBody
 
     private DateTime _lastBlockerLog = DateTime.MinValue, _nextSleepTry = DateTime.MinValue;
     private string _lastStatus = "";
+    private bool _whoisAsked;
+
+    /// <summary>
+    /// What the server's EssentialsX says about God mode for this account, once he has asked (a <c>/whois</c> of his own name, once per join, 20 seconds in): true, false, or null when it did not say
+    /// (no EssentialsX, or not asked yet). God mode cancels damage inside the plugin and does NOT set the abilities flag the client reads, so the flag alone cannot tell (TJ, 2026-11-03: a spider and
+    /// three zombies on him for minutes and his health never moved).
+    /// </summary>
+    public bool? GodMode { get; private set; }
+
+    private static readonly System.Text.RegularExpressions.Regex GodModeLine = new(@"God mode:\s*(?<v>true|false|enabled|disabled|on|off)", System.Text.RegularExpressions.RegexOptions.IgnoreCase | System.Text.RegularExpressions.RegexOptions.Compiled);
+
+    /// <summary>True or false when a line from the server says "God mode: ..." (EssentialsX's /whois), else null.</summary>
+    internal static bool? GodModeIn(string text) =>
+        GodModeLine.Match(text) is { Success: true } g ? g.Groups["v"].Value.ToLowerInvariant() is "true" or "enabled" or "on" : null;
+
+    private void OnServerText(ChatMessage m)
+    {
+        if (m.Kind == ChatKind.Player || GodModeIn(m.Content) is not bool god) return;
+        GodMode = god;
+        Log?.Invoke($"the server says God mode is {(god ? "ON for this account (damage is cancelled)" : "off")}");
+    }
 
     /// <summary>Is it night in the game (when a bed can be slept in: from sunset to just before sunrise)?</summary>
     private bool IsNight() => Client.World.DayTime % 24000 is >= 12600 and < 23400;
@@ -526,9 +548,15 @@ public sealed class VertexBrain : IBody
                 foreach (var p in Client.Players.Values.Where(p => p.Id != Client.Profile.Id)) Memory.Seen(p.Id, now);
                 // What the server says he is: game mode and abilities (invulnerable is set by creative mode, god mode and the like). Said when it first becomes known and whenever it changes, so "is he
                 // really in survival, can he be hurt?" is answered in the log, not by someone typing commands (TJ, 2026-11-03).
+                // Once per join, 20 seconds in: ask the server about himself. A fixed command with his own name, nothing a model wrote.
+                if (Client.IsSpawned && !_whoisAsked && now - _startedAt > TimeSpan.FromSeconds(20))
+                {
+                    _whoisAsked = true;
+                    _ = Task.Run(async () => { try { await Client.SendChatAsync("/whois " + Client.Profile.Name); } catch (Exception e) { Log?.Invoke("could not ask the server about myself: " + e.Message); } });
+                }
                 if (Client.IsSpawned)
                 {
-                    var status = $"game mode {Client.GameMode.ToString().ToLowerInvariant()}, {(Client.Invulnerable ? "INVULNERABLE (the server says nothing can hurt him)" : "can be hurt")}, {(Client.MayFly ? "may fly" : "cannot fly")}";
+                    var status =$"game mode {Client.GameMode.ToString().ToLowerInvariant()}, {(Client.Invulnerable ? "INVULNERABLE (the server says nothing can hurt him)" : "can be hurt")}, {(Client.MayFly ? "may fly" : "cannot fly")}";
                     if (status != _lastStatus) { _lastStatus = status; Log?.Invoke($"status: {status}; health {Client.Health / 2:0.#} of 10 hearts"); }
                 }
                 if (Tasks.IsBusy) { _lastActivity = now; continue; }
