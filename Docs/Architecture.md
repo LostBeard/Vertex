@@ -126,9 +126,32 @@ The speech stack is the second biggest thing on the card (about 3.7 GB: the spea
 (A second run of the same test gave the same totals to within 2 MiB.) With Vertex running in the game, Windows' per-process counters showed 11,115 MiB
 dedicated and 76 MiB shared (spilled into system RAM): nothing meaningful spills, but under 1 GB is left for anything else (a browser, a game).
 
+**Again on the released packages** (2026-11-03, the same card and test, `SpawnDev.AI.Server` 1.4.0 from nuget.org: `SpawnDev.ILGPU.ML` 5.8.1, `SpawnDev.ILGPU` 5.4.15; one run):
+
+| Part | 2026-11-02 (1.4.0-local.15) | 2026-11-03 (1.4.0) |
+|---|---|---|
+| The context and the accelerator | +80 | +81 |
+| The language model (weights, cache, first pass) | +6,846 | +5,932 |
+| The command matcher (MiniLM) | +112 | +110 |
+| Speech to text (Parakeet) | +1,477 | +1,462 |
+| Who is talking (the speaker model) | +2,089 | +842 |
+| Has the speaker finished (Smart Turn) | +110 | +64 |
+| One voice, one short sentence (Kokoro) | +46 | +420 |
+| Live words (streaming speech) | about 0 | +1,494 |
+| Faces | +50 | +180 |
+| Long-term memory (a second MiniLM) | about 0 | +112 |
+| After one call with a long prompt | +348 | -40 |
+| **Total** | **11,511 used, 777 free** | **11,064 used, 1,224 free** |
+
+The total is 447 MiB lower. Two parts account for much more than that, and they are the two the libraries changed: the language model is 914 MiB smaller (the cache is held in half precision) and the
+speaker model 1,247 MiB smaller (buffers are given back at their last use instead of being kept in a pool). The parts loaded AFTER them show the memory coming back to be used (live words +1,494, Kokoro
++374, faces +130, the long-term memory +112 against 0 before): the card's allocator reuses what was freed, so a part's own line depends on what was loaded before it and only the total and the big two
+are comparable between the two columns. One run each.
+
 ## Libraries and their versions
 
-Vertex is built on local-feed builds of `SpawnDev.AI.Server` (1.4.0-local.15, 2026-11-02, which brings `SpawnDev.ILGPU.ML` 5.8.1-local.10 and
-`SpawnDev.ILGPU` 5.4.15-local.4) and `SpawnDev.Reachy` while the chain is verified; the released versions on nuget.org lag behind. A new package is
+Vertex is built on the released `SpawnDev.AI.Server` 1.4.0 (nuget.org, 2026-11-03, which brings `SpawnDev.AI` 1.3.0, `SpawnDev.ILGPU.ML` 5.8.1 and `SpawnDev.ILGPU` 5.4.15) and on `SpawnDev.Reachy`
+0.1.0-local.24 from the local feed: a restore from nuget.org alone (checked with an empty package folder) succeeds but resolves Reachy to 0.1.0-preview.1, a different build from the one that is deployed
+and not tried here. Until 2026-11-03 the AI chain also ran on local-feed builds (1.4.0-local.15 to local.18) while it was verified. A new package is
 verified with the full GPU test category on the RTX 2060 before it is deployed (and `bin`/`obj` are deleted first). Local builds live in a folder feed on the development machine (never copy a package
 into it: add it with `nuget add`), and a library defect found here is fixed in the library and covered by a test there.
