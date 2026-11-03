@@ -158,11 +158,19 @@ public static class SelfTalk
 {
     private static readonly Regex FriendsLine = new(@"(?<![\p{L}'])[\p{L}][\p{L}' ]{0,30} says \((?:out loud|in chat)[^)]*\)\s*:", RegexOptions.Compiled | RegexOptions.CultureInvariant);
 
-    /// <summary>Where in <paramref name="text"/> a made-up friend's line begins, or null.</summary>
+    /// <summary>
+    /// The header of the background block the prompt carries (Companion.DescribeNow's caller): the model sometimes writes it out as its reply, and everything after it (the position,
+    /// health, who is nearby) with it. It was spoken and typed into game chat in about one run in three (2026-11-03), and it is never something to say.
+    /// </summary>
+    private static readonly Regex BackgroundBlock = new(@"What is going on around you \(background for you", RegexOptions.Compiled | RegexOptions.CultureInvariant);
+
+    /// <summary>Where in <paramref name="text"/> a made-up friend's line (or a copy of the background block) begins, or null.</summary>
     public static int? IndexOfFriendsLine(string text)
     {
         var m = FriendsLine.Match(text);
-        return m.Success ? m.Index : null;
+        var b = BackgroundBlock.Match(text);
+        if (m.Success && b.Success) return Math.Min(m.Index, b.Index);
+        return m.Success ? m.Index : b.Success ? b.Index : null;
     }
 
     /// <summary>The reply up to a made-up friend's line (all of it when there is none; nothing when it starts with one).</summary>

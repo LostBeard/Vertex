@@ -66,6 +66,19 @@ cards' memory bandwidths, so the 2060 is performing as expected and the cost is 
 local.15; the wait for the first word (PromptEvalMs) median 1.9 s against 2.5 to 2.7 s; the rate on the NEW prompt tokens median 101 a second against 43 to 86. The whole GPU category on that
 package: 77 passed, 0 failed, 8 not executed by design (85 tests, 57 minutes). One run each, and the second run of anything here is faster than the first, so these are indications.
 
+**On SpawnDev.AI.Server 1.4.0-local.18** (2026-11-03, the same card; ML 5.8.1-local.14 and SpawnDev.ILGPU 5.4.15-local.5; the first run of its Turing tensor-core prefill kernels on a real sm_75
+card, they had only run forced on an sm_89 card): the whole GPU category 77 passed, 0 failed, 8 not executed by design (85 results, 47 minutes against 57), and no error, NaN or odd text anywhere in
+the log. `EachRequestGetsTheRightTool` alone, five rounds, replies after the first: tensor cores on (the default), the wait for the first word median 223, 222 and 234 ms and decode 24.6, 24.4 and
+24.4 tokens a second, 20 of 20 right each time, the test 2 m 0 s to 2 m 3 s; with `GGUF_GEMM_MMA=0` and `GGUF_FLASH_MMA=0` (the older kernels) median 1,835 and 1,827 ms and decode 24.2 and 24.3,
+20 and 19 of 20 right, 3 m 41 s to 3 m 46 s. So about 8 times sooner to the first word and decode unchanged (decode is not a prefill path). The first reply of the process took 4.2 s with the new
+kernels, 20 s without (kernels compiled on first use). Three on and two off, in the order on, off, off, on, on; per reply the two groups do not overlap (the slowest "on" wait of any reply, 586 ms, is below the
+fastest "off" wait of any reply, 932 ms).
+Setting `VERTEX_TEST_CLIENTLOG=1` prints Vertex's own connection log in that test and `VERTEX_TEST_CASES=n` runs only the first n requests; a dropped connection now fails the test at once (before,
+every later request waited 90 s for a tool that could not come: 27 minutes). **A trap found there:** with the answers 1.6 s sooner the test server kicked Vertex ("Kicked for spamming") in 5 of 7 early
+rounds: Vertex typed a chat line about every second, the server counts 20 per line against a limit of 200 that sinks by one per SERVER tick, and a test server beside a busy GPU ticks slowly.
+Chat lines are now sent at least 1.5 s apart (`MinecraftChannel.MinChatGap`), and the model's habit of writing the prompt's background block out as its reply (it was in about one run in three) is cut
+like a made-up friend's line; with both, 0 kicks in 5 rounds.
+
 **Engine A/B on Vertex's own work: inconclusive** (2026-11-02, same card, `VERTEX_ENGINE=batch` or `session`, this test, one run each way in each order). Batch decoder: 6 m 55 s (first
 in its pair), then 5 m 39 s (second). Session engine: 4 m 32 s (second in its pair), then 6 m 13 s (first). The second run of a pair was faster in both pairs whichever engine it was, and
 the same engine varied by 30 to 40 percent between runs; both engines chose the same tools. The first pair alone looked like a 34 percent win for the session engine: it was the order. So

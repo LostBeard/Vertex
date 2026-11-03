@@ -75,10 +75,12 @@ public class ToolChoiceTests
     public async Task EachRequestGetsTheRightTool()
     {
         var log = new ConcurrentQueue<string>();
-        var vertex = new MinecraftClient(GameProfile.Offline("VertexTools"), new ClientOptions());
+        var vertexLog = Environment.GetEnvironmentVariable("VERTEX_TEST_CLIENTLOG") == "1";      // to see what Vertex's own connection did (a server kick had no log to read)
+        var vertex = new MinecraftClient(GameProfile.Offline("VertexTools"), vertexLog ? new ClientOptions { Log = m => TestContext.Out.WriteLine("[vertex-client] " + m) } : new ClientOptions());
         var aubs = new MinecraftClient(GameProfile.Offline("Aubri"));
         // A client the server drops (a keep-alive timeout while the machine is busy) makes every later prompt read "no tool": say so in the log (a full run once went silent after two prompts).
-        vertex.Disconnected += reason => { log.Enqueue("!! Vertex's connection ended: " + reason); TestContext.Out.WriteLine("!! Vertex's connection ended: " + reason); };
+        string? vertexDropped = null;
+        vertex.Disconnected += reason => { vertexDropped = reason; log.Enqueue("!! Vertex's connection ended: " + reason); TestContext.Out.WriteLine("!! Vertex's connection ended: " + reason); };
         aubs.Disconnected += reason => { log.Enqueue("!! Aubri's connection ended: " + reason); TestContext.Out.WriteLine("!! Aubri's connection ended: " + reason); };
         using var cts = new CancellationTokenSource(Timeout);
         await vertex.ConnectAsync("127.0.0.1", Port, cts.Token);
@@ -105,8 +107,12 @@ public class ToolChoiceTests
         await vertex.WaitTicksAsync(20);
 
         var results = new List<(string Says, string Wanted, string Got, bool Ok)>();
-        foreach (var (says, wanted, argsContain) in Cases)
+        // VERTEX_TEST_CASES=n runs only the first n requests (a quick look at one thing, not the measure).
+        var limit = int.TryParse(Environment.GetEnvironmentVariable("VERTEX_TEST_CASES"), out var only) ? only : Cases.Length;
+        foreach (var (says, wanted, argsContain) in Cases.Take(limit))
         {
+            // A dropped connection answers every later request with "no tool", 90 s each (27 minutes in two isolated runs on 2026-11-03): stop at once and say why.
+            Assert.That(vertexDropped, Is.Null, "Vertex's connection ended before: " + says + " (" + vertexDropped + ")");
             brain.Tasks.Stop();
             await Wait.UntilAsync(() => !brain.Companion.IsThinking && !brain.Tasks.IsBusy, Timeout, () => "still busy before: " + says);
             while (log.TryDequeue(out _)) { }
@@ -114,7 +120,7 @@ public class ToolChoiceTests
             string? chosen = null, args = "";
             var started = DateTime.UtcNow;
             var deadline = started + TimeSpan.FromSeconds(90);
-            while (DateTime.UtcNow < deadline && chosen == null)
+            while (DateTime.UtcNow < deadline && chosen == null && vertexDropped == null)
             {
                 await Task.Delay(300);
                 foreach (var line in log.ToArray())

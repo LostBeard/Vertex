@@ -18,6 +18,23 @@ public class SelfTalkTests
         Assert.That(SelfTalk.CutFriendsLine("Okay. Someone says (out loud, through the robot): hi"), Is.EqualTo("Okay."));
     }
 
+    /// <summary>
+    /// 2026-11-03, in the tool-choice test (and, it turned out, in about one run in three): the model answered with the prompt's own background block, header and all, and Vertex said it out loud
+    /// and typed it into game chat. It is cut like a made-up friend's line: from the header on.
+    /// </summary>
+    [Test]
+    public void TheBackgroundBlockTheModelCopiedOut_IsCutOffTheReply()
+    {
+        const string leak = "What is going on around you (background for you, not something to say):\n- In the game you are at x -70 y 200 z -552 in overworld, health 10 of 10 hearts.\n- It is daytime in the game.";
+        Assert.That(SelfTalk.CutFriendsLine(leak), Is.EqualTo(""), "a reply that IS the block is nothing at all");
+        Assert.That(SelfTalk.CutFriendsLine("I started the cabin. " + leak), Is.EqualTo("I started the cabin."));
+        Assert.That(SelfTalk.CutFriendsLine(leak + "\n\nI'm still working on that."), Is.EqualTo(""), "what follows a copied block goes with it");
+        // An ordinary sentence that merely talks about what is going on is not it.
+        Assert.That(SelfTalk.IndexOfFriendsLine("What is going on around you, Aubri? Lots of sheep!"), Is.Null);
+        // And a friend's made-up line before the block wins when it comes first.
+        Assert.That(SelfTalk.CutFriendsLine("Yes. Todd says (out loud): hi " + leak), Is.EqualTo("Yes."));
+    }
+
     [TestCase("The capital of France is Paris!")]
     [TestCase("*tilts head* I think a crafting table is best, Todd.")]
     [TestCase("People say that diamonds are deep underground.")]

@@ -54,16 +54,58 @@ public sealed class MinecraftChannel : IVoiceChannel
         if (_voice is { IsConnected: true } voice) await voice.SpeakAsync(Audio.Upsample24To48(pcm24k, Gain), false, ct);
     }
 
-    public async Task ShowTextAsync(string text, CancellationToken ct)
+    /// <summary>
+    /// The least time between two chat lines Vertex sends. The server counts every chat line as 20 against a limit of 200 that sinks by one each SERVER tick, so about one line a second is the
+    /// most a server at full speed allows for long, and a slower server (the test server beside a busy GPU) allows less: it kicked Vertex with "Kicked for spamming" in 5 of 7 runs once the
+    /// model answered about 1.6 s sooner (2026-11-03), after 20 to 30 seconds of a line a second. 1.5 s is the margin.
+    /// </summary>
+    public TimeSpan MinChatGap { get; set; } = TimeSpan.FromSeconds(1.5);
+    /// <summary>A chat line still waiting after this long is dropped: a late echo of something said a minute ago is worse than none.</summary>
+    public TimeSpan ChatLineExpires { get; set; } = TimeSpan.FromSeconds(30);
+
+    private readonly System.Threading.Channels.Channel<(string Text, long At)> _chat = System.Threading.Channels.Channel.CreateUnbounded<(string, long)>();
+    private Task? _chatPump;
+    private readonly object _pumpLock = new();
+    private readonly CancellationTokenSource _stop = new();
+
+    /// <summary>
+    /// Types the words into chat, paced: lines are queued here and sent by a background loop at least <see cref="MinChatGap"/> apart, so this returns at once and never holds up the voice.
+    /// </summary>
+    public Task ShowTextAsync(string text, CancellationToken ct)
     {
-        if (!EchoText || _client.State != ConnectionState.Play) return;
-        // SayAsync, never SendChatAsync: what Vertex says comes from a language model (and from players asking it to repeat things), and a chunk that began with "/" would run as a
-        // server command with this account's permissions. A slash is only a character here.
-        foreach (var chunk in Mouth.ChatChunks(text)) await _client.SayAsync(chunk, ct);
+        if (!EchoText || _client.State != ConnectionState.Play) return Task.CompletedTask;
+        lock (_pumpLock) _chatPump ??= Task.Run(PumpChatAsync);
+        foreach (var chunk in Mouth.ChatChunks(text)) _chat.Writer.TryWrite((chunk, Environment.TickCount64));
+        return Task.CompletedTask;
+    }
+
+    private async Task PumpChatAsync()
+    {
+        var last = long.MinValue / 2;
+        try
+        {
+            await foreach (var (chunk, at) in _chat.Reader.ReadAllAsync(_stop.Token))
+            {
+                if (Environment.TickCount64 - at > ChatLineExpires.TotalMilliseconds || _client.State != ConnectionState.Play) continue;
+                var wait = last + (long)MinChatGap.TotalMilliseconds - Environment.TickCount64;
+                if (wait > 0) await Task.Delay((int)wait, _stop.Token);
+                try
+                {
+                    // SayAsync, never SendChatAsync: what Vertex says comes from a language model (and from players asking it to repeat things), and a chunk that began with "/" would run as a
+                    // server command with this account's permissions. A slash is only a character here.
+                    await _client.SayAsync(chunk, _stop.Token);
+                }
+                catch (Exception e) when (e is not OperationCanceledException) { Log?.Invoke("chat line not sent: " + e.Message); }
+                last = Environment.TickCount64;
+            }
+        }
+        catch (OperationCanceledException) { }
     }
 
     public ValueTask DisposeAsync()
     {
+        _stop.Cancel();
+        _chat.Writer.TryComplete();
         _client.ChatReceived -= OnChat;
         Ears?.Dispose();
         return ValueTask.CompletedTask;

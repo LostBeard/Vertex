@@ -28,6 +28,33 @@ public class LiveSlashSafetyTests
         catch (Exception) { return false; }
     }
 
+    /// <summary>
+    /// 2026-11-03: with a model that answered 1.6 s sooner, Vertex's chat reached about a line a second and Paper kicked it ("Kicked for spamming": the server counts 20 a line against 200,
+    /// sinking one a SERVER tick). Lines are now paced. A control channel with no gap sends the same lines at once, so the measure can see a burst.
+    /// </summary>
+    [Test]
+    public async Task ChatLines_AreSentAtLeastTheGapApart_AndWithNoGapTheyComeAsABurst()
+    {
+        await using var vertex = new MinecraftClient(GameProfile.Offline("VertexPace"));
+        await using var listener = new MinecraftClient(GameProfile.Offline("PaceListener"));
+        using var cts = new CancellationTokenSource(Timeout);
+        await vertex.ConnectAsync("127.0.0.1", Port, cts.Token);
+        await listener.ConnectAsync("127.0.0.1", Port, cts.Token);
+        var heard = new List<(string Text, long At)>();
+        listener.ChatReceived += m => { lock (heard) heard.Add((m.Content, Environment.TickCount64)); };
+        await using var paced = new MinecraftChannel(vertex, null, (_, _) => Task.FromResult(""));
+        await using var burst = new MinecraftChannel(vertex, null, (_, _) => Task.FromResult("")) { MinChatGap = TimeSpan.Zero };
+
+        for (var i = 1; i <= 5; i++) await paced.ShowTextAsync($"paced {i}", cts.Token);
+        for (var i = 1; i <= 5; i++) await burst.ShowTextAsync($"burst {i}", cts.Token);
+        await Wait.UntilAsync(() => { lock (heard) return heard.Count(h => h.Text.StartsWith("paced")) == 5 && heard.Count(h => h.Text.StartsWith("burst")) == 5; }, TimeSpan.FromSeconds(30), () => "heard " + string.Join(", ", heard.Select(h => h.Text)));
+
+        List<long> Gaps(string prefix) { lock (heard) { var t = heard.Where(h => h.Text.StartsWith(prefix)).Select(h => h.At).OrderBy(x => x).ToList(); return t.Zip(t.Skip(1), (a, b) => b - a).ToList(); } }
+        TestContext.Out.WriteLine("paced gaps (ms): " + string.Join(", ", Gaps("paced")) + "; burst gaps (ms): " + string.Join(", ", Gaps("burst")));
+        Assert.That(Gaps("paced").Min(), Is.GreaterThanOrEqualTo(1300), "five lines, each at least about the gap after the one before");
+        Assert.That(Gaps("burst").Max(), Is.LessThan(400), "the control: with no gap the same five lines go out together, so the pacing above is what spread them");
+    }
+
     [Test]
     public async Task WhatVertexSays_IsChat_EvenWhenItStartsWithASlash_AndNothingRuns()
     {
