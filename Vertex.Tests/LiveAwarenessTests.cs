@@ -112,6 +112,73 @@ public class LiveAwarenessTests
         Assert.That(client.BodySnapshot().InWater, Is.False);
     }
 
+    /// <summary>
+    /// TJ, 2026-11-02, live: "He is in the water trying to get onto land but the blocks in front of him are 1 block too high for him to jump up... but instead of trying to go around he just keeps trying
+    /// FOREVER to jump up on that block." The nearest bank is a wall that stands 2 blocks above the water; a shore he can climb out onto (level with the water) is 12 blocks away. A swimmer can pull
+    /// himself out onto a block level with the surface, not one a whole block above it, so the way out is the far shore.
+    /// </summary>
+    [Test]
+    public async Task InWater_BesideABankTooHighToClimb_SwimsToAShoreHeCanReach()
+    {
+        var (client, ax, az) = await StageAsync("VertexBank", 30);
+        await using var _ = client;
+        await _server.CommandAsync($"fill {ax - 20} 198 {az - 20} {ax + 20} 199 {az + 20} minecraft:water");
+        await _server.CommandAsync($"fill {ax - 20} 198 {az - 20} {ax + 20} 200 {az - 3} minecraft:stone");          // a bank 3 blocks north, its top a block above the water's
+        await _server.CommandAsync($"fill {ax - 20} 198 {az + 12} {ax + 20} 199 {az + 20} minecraft:stone");         // a shore level with the water, 12 blocks south
+        await StandAsync(client, "VertexBank", ax, 200, az);
+        await Wait.UntilAsync(() => SurroundingsView.Look(client.World, client.Position, 12).InWater && client.World.GetBlock(ax, 200, az - 3)?.Name == "minecraft:stone" && client.World.IsLoaded(ax, az + 18), Timeout, () => $"at {client.Position}");
+        var skills = new Skills(client);
+        (bool ok, string text) result;
+        var sw = System.Diagnostics.Stopwatch.StartNew();
+        using (var c = new CancellationTokenSource(TimeSpan.FromSeconds(90))) result = await skills.LeaveWaterAsync(c.Token);
+        TestContext.Out.WriteLine($"{result.ok}: {result.text}; at {client.Position}; {sw.Elapsed.TotalSeconds:0} s");
+        Assert.That(result.ok, Is.True, result.text);
+        Assert.That(client.Position.Z, Is.GreaterThan(az + 11), "on the south shore, not up on the bank");
+        Assert.That(client.BodySnapshot().InWater, Is.False);
+    }
+
+    /// <summary>
+    /// TJ, 2026-11-02, watching him swim: he moved 2 or 3 blocks, "looked around like a madman", moved again. The path follower aimed his head at the middle of the next block on every tick, and
+    /// in the water the next block is often straight above him or a hair away, where the direction is noise. A swim to a shore 13 blocks off must not whip his head round.
+    /// </summary>
+    [Test]
+    public async Task Swimming_HeKeepsHisHeadSteady()
+    {
+        var (client, ax, az) = await StageAsync("VertexSteady", 30);
+        await using var _ = client;
+        await _server.CommandAsync($"fill {ax - 20} 198 {az - 20} {ax + 20} 199 {az + 12} minecraft:water");
+        await StandAsync(client, "VertexSteady", ax, 200, az);
+        await Wait.UntilAsync(() => SurroundingsView.Look(client.World, client.Position, 12).InWater && client.World.IsLoaded(ax, az + 18), Timeout, () => $"at {client.Position}");
+        var skills = new Skills(client);
+        int ticks = 0, swings = 0;
+        double biggest = 0, lastYaw = client.Rotation.Yaw;
+        using var stop = new CancellationTokenSource();
+        var watcher = Task.Run(async () =>
+        {
+            try
+            {
+                while (!stop.IsCancellationRequested)
+                {
+                    await client.WaitTicksAsync(1, stop.Token);
+                    var yaw = client.Rotation.Yaw;
+                    var d = Math.Abs(((yaw - lastYaw + 540) % 360) - 180);
+                    lastYaw = yaw;
+                    ticks++;
+                    biggest = Math.Max(biggest, d);
+                    if (d > 25) { swings++; TestContext.Out.WriteLine($"  swing {d:0} deg at tick {ticks}: yaw {yaw:0}, at {client.Position.X:0.00} {client.Position.Y:0.00} {client.Position.Z:0.00}, feet {client.FeetBlock}"); }
+                }
+            }
+            catch (OperationCanceledException) { }
+        });
+        (bool ok, string text) result;
+        using (var c = new CancellationTokenSource(TimeSpan.FromSeconds(90))) result = await skills.LeaveWaterAsync(c.Token);
+        stop.Cancel();
+        await watcher;
+        TestContext.Out.WriteLine($"{result.ok}: {result.text}; {ticks} ticks, {swings} head swings over 25 degrees in one tick, the biggest {biggest:0} degrees");
+        Assert.That(result.ok, Is.True, result.text);
+        Assert.That(swings, Is.LessThanOrEqualTo(3), $"{swings} swings in {ticks} ticks (the biggest {biggest:0} degrees)");
+    }
+
     [Test]
     public async Task WithNoLandInSight_HeSaysSo_AfterLookingAround()
     {

@@ -266,11 +266,16 @@ public sealed partial class MinecraftClient
             if (dist < bestDist - 0.01) { bestDist = dist; sinceProgress = 0; }
             else if (++sinceProgress > 40 && !(step.Kind is MoveKind.Swim or MoveKind.Climb)) { Controls.Clear(); return false; }
 
-            var yaw = (float)(Math.Atan2(-dx, dz) * 180 / Math.PI);
-            Look(yaw, 0);
+            // Aim at the block only while it is somewhere else: within a third of a block the direction to its middle is noise, and in the water (a swim-up step is straight above him, and he
+            // drifts) the head swung round on every tick (TJ, 2026-11-02: "looking around like a madman" between short hops).
+            // In the water he coasts: pushing forward at a block half a step away overshot it, aiming turned him round to face it, he overshot back, and so on, every 14 ticks (measured: 76 swings
+            // of the head of up to 180 degrees on a 13 block swim). In the water (and on swim steps) the dead zone is the same half block the step counts as reached from; what is left is up or down.
+            var coasting = step.Kind == MoveKind.Swim || (body.InWater && step.Kind != MoveKind.Climb);      // not a ladder: up a ladder he has to keep pressing against it
+            var aim = dist > (coasting ? 0.5 : 0.3);
+            if (aim) Look((float)(Math.Atan2(-dx, dz) * 180 / Math.PI), 0);
             // Coasting distance on the ground after letting go: v * f / (1 - f), f = 0.546 on normal blocks.
             var speed = Math.Sqrt(body.VelX * body.VelX + body.VelZ * body.VelZ);
-            Controls.Forward = !(last && dist < speed * 1.2 + 0.02);
+            Controls.Forward = !(last && dist < speed * 1.2 + 0.02) && (aim || !coasting);      // straight up (or down) a ladder or the water: no pushing sideways
             Controls.Sprint = sprint && !last && step.Kind is MoveKind.Walk or MoveKind.Diagonal;
             Controls.Jump = step.Kind switch
             {

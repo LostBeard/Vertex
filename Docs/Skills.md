@@ -137,6 +137,11 @@ on a one-block island with water on three sides and a three-high dirt wall on th
   within 96 blocks); lava within 10 blocks; a drop of 4 blocks or more within 6; a tiny patch of land. On ordinary ground nothing is added, so a normal moment costs nothing in the prompt.
 - **Getting out of the water follows what he sees**, however far (40 blocks by the nearest dry spot; beyond that, the nearest land in the look, up to 96): a 56 block swim in the test.
   Swimming is allowed and wanted; "stepping away from monsters" ends on dry land, not in the middle of a lake, and says so when there is nowhere to go.
+  The shore is the nearest one he can plan a way to (up to 12 are tried, a bank he cannot climb counts once for the 6 blocks round it), and one he failed to reach is not tried again for 5
+  minutes. A swimmer can pull himself out onto a block level with the water, not onto one a whole block above it (vanilla's water jump reaches about 0.6), so the path finder no longer plans a
+  jump out of the water's surface onto such a bank. Live 2026-11-02 he jumped at one forever: now, with a bank 3 blocks off and a level shore 12 blocks off, he swims to the shore (test, 22 s).
+  While swimming his head stays put: within half a block of the next step he neither aims at it nor pushes toward it (it had swung the head up to 180 degrees every 14 ticks, 76 times in a
+  13 block swim; now 0).
 - **Stranded on a tiny patch** (fewer than 12 blocks he can walk to: an island, a pillar, a pit): idle for 3 seconds, he looks, picks the nearest other land, and TRIES to get there with
   everything he can do (swim, dig through soft blocks, climb), a few candidates, nearest first. What he did and whether it worked is written to his memory as a LESSON ("I was stuck on a
   tiny patch of land (1 block)... I got off by going N to land 2 blocks away, digging through 2 blocks. That works."), where the recall tool can find it. The first two tries are quiet; a

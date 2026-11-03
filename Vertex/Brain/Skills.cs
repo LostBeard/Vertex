@@ -1915,17 +1915,33 @@ public sealed partial class Skills(MinecraftClient client)
         var (px, py, pz) = client.Position;
         int bx = (int)Math.Floor(px), bz = (int)Math.Floor(pz), by = (int)Math.Floor(py + 1e-6);
         (int X, int Y, int Z)? best = null;
-        var bestD = int.MaxValue;
-        // Within 40 blocks (it was 16: out in a lake he said "I can't see dry land close by", the shore being behind him at a distance nobody measured). The nearest dry spot first.
+        // Within 40 blocks (it was 16: out in a lake he said "I can't see dry land close by", the shore being behind him at a distance nobody measured). The nearest dry spot first, but the
+        // nearest one he can actually GET to: a bank a whole block above the water is dry and close and no way out of it (live 2026-11-02: he jumped at it forever instead of going around).
         const int reach = 40;
+        var spots = new List<(int D2, int X, int Y, int Z)>();
         for (var dx = -reach; dx <= reach; dx++)
         for (var dz = -reach; dz <= reach; dz++)
         {
             var d2 = dx * dx + dz * dz;
-            if (d2 > reach * reach || d2 >= bestD || !client.World.IsLoaded(bx + dx, bz + dz)) continue;
+            if (d2 > reach * reach || !client.World.IsLoaded(bx + dx, bz + dz)) continue;
             for (var y = by + 3; y >= by - 3; y--)
-                if (DryStand(bx + dx, y, bz + dz)) { best = (bx + dx, y, bz + dz); bestD = d2; break; }
+                if (DryStand(bx + dx, y, bz + dz)) { spots.Add((d2, bx + dx, y, bz + dz)); break; }
         }
+        spots.Sort((a, b) => a.D2.CompareTo(b.D2));
+        var feet = client.FeetBlock;
+        var rejected = new List<(int X, int Z)>();
+        var planned = 0;
+        foreach (var s in spots)
+        {
+            if (rejected.Any(r => (r.X - s.X) * (r.X - s.X) + (r.Z - s.Z) * (r.Z - s.Z) < 36) || RecentlyFailedStand(s.X, s.Z)) continue;   // the rest of a bank he cannot climb is no better
+            if (++planned > 12) break;
+            var (route, complete) = client.Pathfinder.FindPath(feet, Goal.Block(s.X, s.Y, s.Z), new PathOptions { MaxNodes = 12_000 });
+            if (complete && route.Count > 0) { best = (s.X, s.Y, s.Z); break; }
+            rejected.Add((s.X, s.Z));
+        }
+        // None had a way he could plan (or all were tried and failed lately): the nearest not tried lately, as before, and the path finder's escalations (a harder fall, digging) may find one.
+        if (best == null && spots.FindIndex(s => !RecentlyFailedStand(s.X, s.Z)) is var fi and >= 0)
+            best = (spots[fi].X, spots[fi].Y, spots[fi].Z);
         if (best is not var (x, y2, z))
         {
             // Nothing dry within 40: look around, as a player in the water does, and swim toward the nearest land seen at any distance.
@@ -1952,7 +1968,17 @@ public sealed partial class Skills(MinecraftClient client)
             var (ax, _, az) = client.Position;
             if (!ok && Math.Sqrt((ax - x - 0.5) * (ax - x - 0.5) + (az - z - 0.5) * (az - z - 0.5)) > before - 3) break; // not getting closer: stop
         }
+        if (!ok) _failedStands.Add((x, z, DateTime.UtcNow));      // not that one again for a while: the next try goes elsewhere
         return ok ? (true, "I got out of the water.") : (false, "I couldn't get out of the water.");
+    }
+
+    private readonly List<(int X, int Z, DateTime At)> _failedStands = [];
+
+    /// <summary>Did he fail to get to a dry spot near here in the last 5 minutes (within 6 blocks)?</summary>
+    private bool RecentlyFailedStand(int x, int z)
+    {
+        _failedStands.RemoveAll(f => DateTime.UtcNow - f.At > TimeSpan.FromMinutes(5));
+        return _failedStands.Any(f => (f.X - x) * (f.X - x) + (f.Z - z) * (f.Z - z) < 36);
     }
 
     // ---------------------------------------------------------------- being stuck

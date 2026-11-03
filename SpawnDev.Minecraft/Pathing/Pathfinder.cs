@@ -270,6 +270,7 @@ public sealed class Pathfinder
     {
         var hereFeet = FeetHeight(n.X, n.Y, n.Z);
         var inWater = IsWater(State(n.X, n.Y, n.Z));
+        var afloat = !inWater && IsWater(State(n.X, n.Y - 1, n.Z));      // floating at the surface: the air block over the water counts as a standing place, and a swimmer's feet are really a tenth BELOW its floor
         var onClimbable = IsClimbable(State(n.X, n.Y, n.Z));
         var fromFloor = hereFeet ?? n.Y;
         var hereDoor = State(n.X, n.Y, n.Z) is var hd && IsDoorway(hd) ? hd : 0;
@@ -308,8 +309,11 @@ public sealed class Pathfinder
                     moved = true;
                     break;
                 }
-                // A jump: the head must clear floor + 1.8 + the rise (a 3-high tunnel still allows a 1-block step).
-                if (rise > 0.6 && rise <= 1.25 && JumpHeadroom(n.X, n.Z, fromFloor, rise) && JumpHeadroom(x, z, fromFloor, rise))
+                // A jump: the head must clear floor + 1.8 + the rise (a 3-high tunnel still allows a 1-block step). Not from the surface of the water: a swimmer cannot jump, he can only pull
+                // himself out onto a block up to 0.6 above where he floats (vanilla's water jump), so a bank a whole block above the surface is a wall to him (live 2026-11-02: he planned the same
+                // JumpUp out of the water onto such a bank, over and over, and never went around). From a water block itself (floor = its bottom, he floats about 0.9 higher) a block level with the
+                // surface is still a 1.0 "rise" here and fine.
+                if (rise > 0.6 && rise <= 1.25 && !afloat && JumpHeadroom(n.X, n.Z, fromFloor, rise) && JumpHeadroom(x, z, fromFloor, rise))
                 {
                     yield return (new Node(x, ny, z), 2.0, new PathStep(x, ny, z, MoveKind.JumpUp, [], null));
                     moved = true;
