@@ -87,6 +87,41 @@ public sealed class GameWorld
     }
 
     /// <summary>
+    /// Every loaded position of a block within <paramref name="horizontalRadius"/> blocks sideways of a point at ANY height (the whole loaded depth of the world), nearest first (in three
+    /// dimensions). A sphere of 48 around someone at y 62 reaches down to y 14 only at the very centre, and diamonds lie below y 16: he "could not find any" when they were 40 blocks away and 70 down.
+    /// </summary>
+    public List<(int X, int Y, int Z)> FindBlocksTall(Func<int, bool> stateMatches, (double X, double Y, double Z) from, double horizontalRadius, int maxCount = 64)
+    {
+        var found = new List<(int X, int Y, int Z, double D)>();
+        var max2 = horizontalRadius * horizontalRadius;
+        foreach (var column in _columns.Values)
+        {
+            var cx = column.X << 4;
+            var cz = column.Z << 4;
+            var dx = Math.Max(Math.Max(cx - from.X, from.X - (cx + 16)), 0);
+            var dz = Math.Max(Math.Max(cz - from.Z, from.Z - (cz + 16)), 0);
+            if (dx * dx + dz * dz > max2) continue;
+            for (var s = 0; s < column.Sections.Length; s++)
+            {
+                var section = column.Sections[s];
+                var sy = column.MinY + (s << 4);
+                if (section.IsUniform && !stateMatches(Data.Known(section.Get(0, 0, 0)))) continue;
+                for (var y = 0; y < 16; y++)
+                for (var z = 0; z < 16; z++)
+                for (var x = 0; x < 16; x++)
+                {
+                    if (!stateMatches(Data.Known(section.Get(x, y, z)))) continue;
+                    double ex = cx + x + 0.5 - from.X, ey = sy + y + 0.5 - from.Y, ez = cz + z + 0.5 - from.Z;
+                    if (ex * ex + ez * ez > max2) continue;
+                    found.Add((cx + x, sy + y, cz + z, ex * ex + ey * ey + ez * ez));
+                }
+            }
+        }
+        found.Sort((a, b) => a.D.CompareTo(b.D));
+        return found.Take(maxCount).Select(f => (f.X, f.Y, f.Z)).ToList();
+    }
+
+    /// <summary>
     /// Every loaded position of a block (by name), nearest first, within maxDistance of a point. A whole-world
     /// scan of the sections that can contain it (uniform sections are skipped unless they are that block).
     /// </summary>

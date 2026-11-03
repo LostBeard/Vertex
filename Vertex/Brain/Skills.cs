@@ -217,14 +217,39 @@ public sealed partial class Skills(MinecraftClient client)
         var failures = 0;
         var tried = new HashSet<(int, int, int)>();
         var nextToLava = 0;
+        var legs = 0;
+        double walked = 0;
         while (broken < count && failures < 6 && !ct.IsCancellationRequested)
         {
-            var found = client.World.FindBlocks(Wanted, client.Position, 48, 32).Where(p => !tried.Contains(p)).ToList();
+            // 64 blocks sideways at ANY depth (a sphere of 48 never reached the diamonds 70 blocks down: "I couldn't find any diamond ore", in two seconds, 2026-11-03).
+            var found = client.World.FindBlocksTall(Wanted, client.Position, 64, 32).Where(p => !tried.Contains(p)).ToList();
             // Opening a block with lava beside it (or lava above it, which falls in) lets the lava out onto whoever is digging: leave it (found 2026-10-15: a diamond ringed with lava took 11 of 20 health).
             var targets = found.Where(p => !LavaAround(p.Item1, p.Item2, p.Item3)).ToList();
             nextToLava += found.Count - targets.Count;
             foreach (var skipped in found.Except(targets)) tried.Add(skipped);
-            if (targets.Count == 0) break;
+            if (targets.Count == 0)
+            {
+                // None in what he has seen: go and look somewhere else (a leg of 48 blocks, a different way each time), then look again. Not "I couldn't find any" while there is more world to walk.
+                if (found.Count > 0 || legs >= 4) break;
+                legs++;
+                var (lx, _, lz) = client.Position;
+                var (dx, dz) = new[] { (0, -1), (1, 0), (0, 1), (-1, 0) }[(legs + (int)(Math.Abs(lx) + Math.Abs(lz))) % 4];
+                var before = client.Position;
+                for (var hop = 0; hop < 8; hop++)
+                {
+                    var (px, _, pz) = client.Position;
+                    if (Math.Abs((px - lx) * dx + (pz - lz) * dz) >= 46) break;
+                    using var step = CancellationTokenSource.CreateLinkedTokenSource(ct);
+                    step.CancelAfter(TimeSpan.FromSeconds(6));
+                    try { await client.GoToAsync(Goal.XZ((int)lx + dx * 48, (int)lz + dz * 48), new PathOptions { CanDig = true, MaxNodes = 20_000 }, step.Token); }
+                    catch (OperationCanceledException) when (!ct.IsCancellationRequested) { }
+                    var (nx, _, nz) = client.Position;
+                    if (Math.Abs((nx - px) * dx + (nz - pz) * dz) < 1) break;       // not getting anywhere that way: try the next leg
+                }
+                var after = client.Position;
+                walked += Math.Sqrt((after.X - before.X) * (after.X - before.X) + (after.Z - before.Z) * (after.Z - before.Z));
+                continue;
+            }
             var (bx, by, bz) = targets[0];
             tried.Add((bx, by, bz));
             if (!await client.GoToAsync(new GoalReachBlock(bx, by, bz, 4.0), new PathOptions { CanDig = true, MaxNodes = 30_000 }, ct)) { failures++; continue; }
@@ -252,7 +277,9 @@ public sealed partial class Skills(MinecraftClient client)
         var lavaNote = nextToLava > 0 ? $" {nextToLava} {(nextToLava == 1 ? "was" : "were")} next to lava, so I left {(nextToLava == 1 ? "it" : "them")} alone." : "";
         return broken > 0
             ? (broken >= count, $"I mined {broken} {what}{(broken < count ? $" (wanted {count}, couldn't find more nearby)" : "")}. I have: {have}.{lavaNote}")
-            : (false, nextToLava > 0 ? $"I won't mine that {what}: it is next to lava, which would pour out onto me." : $"I couldn't find any {what} I could reach nearby.");
+            : (false, nextToLava > 0 ? $"I won't mine that {what}: it is next to lava, which would pour out onto me."
+                : legs > 0 ? $"I looked for {what}: 64 blocks around me at every depth, and I walked about {walked:0} blocks in {legs} different directions to look further, but I haven't found any."
+                : $"I couldn't find any {what} I could reach nearby.");
     }
 
     /// <summary>Lava beside a block, below it, or above it (two up: it flows down into the hole once the block is gone).</summary>
@@ -686,6 +713,163 @@ public sealed partial class Skills(MinecraftClient client)
         return null;
     }
 
+    // ---------------------------------------------------------------- making a site (the whole world can be dug and built on)
+
+    /// <summary>What the top of one column of the world is like for building on it: the feet level over the natural ground, where water stands over it, and lava.</summary>
+    private readonly record struct SiteColumn(int Top, int WaterTop, bool Lava);
+
+    /// <summary>
+    /// The ground of column x,z near height `aroundY`. Trees (logs and leaves), grass and flowers are seen through: they are cleared with the rest. Water over the ground is noted (it is filled
+    /// in), lava and someone's build are not to be touched (null, or Lava). Null too where the world is not loaded.
+    /// </summary>
+    private SiteColumn? SiteColumnAt(int x, int z, int aroundY)
+    {
+        var w = client.World;
+        var waterTop = int.MinValue;
+        for (var y = aroundY + 16; y >= aroundY - 16; y--)
+        {
+            var s = w.GetState(x, y, z);
+            if (s < 0) return null;
+            if (s == 0 || D.IsAir(s)) continue;
+            var f = D.StateFlags[s];
+            if ((f & GameData.FlagLava) != 0) return new SiteColumn(y + 1, waterTop, true);
+            if ((f & GameData.FlagWater) != 0) { if (waterTop == int.MinValue) waterTop = y + 1; continue; }
+            var name = D.BlockOf(s).Name;
+            if (name.EndsWith("_log") || name.EndsWith("_leaves") || (f & GameData.FlagReplaceable) != 0 || !D.HasCollision(s)) continue;
+            if (client.IsBuiltBlock(D.BlockOf(s))) return null;
+            if (Standable(s)) return new SiteColumn(y + 1, waterTop, false);
+        }
+        return null;
+    }
+
+    /// <summary>Where a footprint will be built, at which level, and what it takes: blocks to cut away and blocks to fill.</summary>
+    public sealed record SitePlan(int X0, int Z0, int Level, int Dig, int Fill);
+
+    /// <summary>
+    /// Picks where to build a width x depth footprint with `clear` open blocks above it, within 24 blocks of (nearX, nearZ): the cheapest place to MAKE level (blocks to cut away, blocks to fill,
+    /// a little for the walk), never over lava or water deeper than the floor, someone's build, or a person. Nothing has to be flat or clear already: that is what leveling is for. Null only when
+    /// there is nowhere at all (all of it lava, built on or not loaded).
+    /// </summary>
+    public SitePlan? PlanSite(double nearX, double nearY, double nearZ, int width, int depth, int clear, Entity? keepClear)
+    {
+        int by = (int)Math.Floor(nearY + 1e-6), cx = (int)Math.Floor(nearX), cz = (int)Math.Floor(nearZ);
+        var cache = new Dictionary<(int, int), SiteColumn?>();
+        SiteColumn? Col(int x, int z) { if (!cache.TryGetValue((x, z), out var c)) cache[(x, z)] = c = SiteColumnAt(x, z, by); return c; }
+        SitePlan? best = null;
+        var bestCost = double.MaxValue;
+        const int R = 24;
+        var tops = new List<int>(width * depth);
+        for (var dx = -R; dx <= R; dx += 2)
+        for (var dz = -R; dz <= R; dz += 2)
+        {
+            var dist = Math.Sqrt(dx * dx + dz * dz);
+            if (dist > R) continue;
+            int x0 = cx + dx - width / 2, z0 = cz + dz - depth / 2, x1 = x0 + width - 1, z1 = z0 + depth - 1;
+            if (client.Entities.Values.Any(e => e.IsPlayer && e.X > x0 - 1.5 && e.X < x1 + 2.5 && e.Z > z0 - 1.5 && e.Z < z1 + 2.5 && e.Uuid != client.Profile.Id)) continue;
+            if (keepClear != null && keepClear.X > x0 - 1.5 && keepClear.X < x1 + 2.5 && keepClear.Z > z0 - 1.5 && keepClear.Z < z1 + 2.5) continue;
+            tops.Clear();
+            var bad = false;
+            var waterTops = new List<int>();
+            for (var x = x0; x <= x1 && !bad; x++)
+            for (var z = z0; z <= z1 && !bad; z++)
+            {
+                if (Col(x, z) is not { } c || c.Lava) { bad = true; break; }
+                tops.Add(c.Top);
+                if (c.WaterTop != int.MinValue) waterTops.Add(c.WaterTop);
+            }
+            if (bad) continue;
+            var sorted = tops.OrderBy(t => t).ToList();
+            var level = sorted[sorted.Count / 2];
+            if (waterTops.Any(t => t > level) || waterTops.Count > tops.Count / 2) continue;       // water standing above the floor, or mostly a pond
+            long dig = 0, fill = 0;
+            foreach (var t in tops) { if (t > level) dig += t - level; else fill += level - t; }
+            if (sorted[^1] - level > 6 || level - sorted[0] > 6 || dig + fill > 220) continue;
+            var cost = dig + fill * 1.3 + dist * 0.6 + Math.Abs(level - by) * 2;
+            if (cost < bestCost) { bestCost = cost; best = new SitePlan(x0, z0, level, (int)dig, (int)fill); }
+        }
+        return best;
+    }
+
+    /// <summary>What he fills a hollow with: dirt and ordinary stone (what digging the high ground gives him), never sand or gravel (they fall).</summary>
+    private static bool IsFiller(ItemStack s) => s.Name is "minecraft:dirt" or "minecraft:coarse_dirt" or "minecraft:cobblestone" or "minecraft:stone" or "minecraft:andesite" or "minecraft:diorite"
+        or "minecraft:granite" or "minecraft:tuff" or "minecraft:netherrack" or "minecraft:cobbled_deepslate" or "minecraft:deepslate";
+
+    /// <summary>
+    /// Makes the footprint of a plan level: goes there, cuts away everything standing in it above the floor level (hill, trees, leaves), picks up what that gave (dirt, stone, wood), fills every
+    /// column up to the floor level with it (getting more dirt when it is short) and leaves a solid, open, level site. The cost of not having a "perfect" place.
+    /// </summary>
+    public async Task<(bool, string?)> LevelSiteAsync(SitePlan plan, int width, int depth, int clear, CancellationToken ct)
+    {
+        int x0 = plan.X0, z0 = plan.Z0, x1 = x0 + width - 1, z1 = z0 + depth - 1, level = plan.Level;
+        double mx = x0 + width / 2.0, mz = z0 + depth / 2.0;
+        var by = level;
+        await client.GoToAsync(Goal.Near(mx, level, mz, 3 + Math.Max(width, depth) / 2.0), new PathOptions { CanDig = true, MaxNodes = 30_000 }, ct);
+
+        // Cut away: every solid thing in the footprint from the floor level up (over the tallest ground in it too), highest first.
+        var maxY = level + clear;
+        for (var x = x0; x <= x1; x++)
+        for (var z = z0; z <= z1; z++)
+            if (SiteColumnAt(x, z, by) is { } c) maxY = Math.Max(maxY, c.Top + 12);
+        var cells = new List<(int X, int Y, int Z)>();
+        for (var x = x0; x <= x1; x++)
+        for (var z = z0; z <= z1; z++)
+            for (var y = level; y < maxY; y++)
+            {
+                var s = client.World.GetState(x, y, z);
+                if (s <= 0 || D.IsAir(s) || (D.StateFlags[s] & (GameData.FlagLava | GameData.FlagWater)) != 0) continue;
+                if (Open(s)) continue;
+                if (client.IsBuiltBlock(D.BlockOf(s)) && !D.BlockOf(s).Name.EndsWith("_log")) return (false, "Someone has built there, and I won't take their build apart.");
+                cells.Add((x, y, z));
+            }
+        var dug = 0;
+        foreach (var (x, y, z) in cells.OrderByDescending(c => c.Y).ThenBy(c => Math.Abs(c.X - mx) + Math.Abs(c.Z - mz)))
+        {
+            ct.ThrowIfCancellationRequested();
+            var state = client.World.GetState(x, y, z);
+            if (Open(state) || state <= 0) continue;
+            if (D.Hardness[state] < 0) return (false, "There's something I can't break in the way.");
+            if (client.DistanceToBlock(x, y, z) > client.BlockReach - 0.7)
+                await client.GoToAsync(new GoalReachBlock(x, y, z, client.BlockReach - 1.0), new PathOptions { CanDig = true, MaxNodes = 10_000 }, ct);
+            await client.EquipBestToolAsync(state, ct);
+            if (await client.DigAsync(x, y, z, ct)) dug++;
+            if (dug % 12 == 11) await PickUpNearbyAsync((int)mx, level, (int)mz, ct);
+        }
+        // Everything that dropped lies in or by the footprint: pick it up (dirt and stone are the fill, logs are for the walls).
+        for (var i = 0; i < 12; i++)
+        {
+            if (!client.Entities.Values.Any(e => e.IsItem && e.X > x0 - 4 && e.X < x1 + 5 && e.Z > z0 - 4 && e.Z < z1 + 5)) break;
+            await PickUpNearbyAsync((int)mx, level, (int)mz, ct);
+        }
+
+        // Fill: every column up to the floor level, bottom first, with what he carries (dirt, cobblestone...), getting more dirt when short.
+        var fill = new List<Placement>();
+        for (var x = x0; x <= x1; x++)
+        for (var z = z0; z <= z1; z++)
+        {
+            var top = SiteColumnAt(x, z, by)?.Top ?? level;
+            for (var y = top; y < level; y++) fill.Add(new Placement(x, y, z, IsFiller, "dirt or stone to fill with"));
+        }
+        if (fill.Count > 0)
+        {
+            var need = fill.Count - Have(IsFiller);
+            if (need > 0) await CollectAsync("dirt", need, ct);
+            var (placed, failed, missing) = await client.BuildAsync(fill.OrderBy(p => p.Y).ThenBy(p => Math.Abs(p.X - mx) + Math.Abs(p.Z - mz)).ToList(), ct);
+            if (missing != null && placed < fill.Count / 2) return (false, $"I couldn't get enough dirt or stone to level the ground (I placed {placed} of {fill.Count}).");
+        }
+        return (true, dug + fill.Count > 0 ? $"I levelled the ground first ({dug} blocks cut away, {fill.Count} filled in)." : null);
+    }
+
+    /// <summary>A flat site as it stands, or one MADE level near the player: cut down the hill and the trees in the way, fill the hollow. False only when there is nowhere at all.</summary>
+    private async Task<((int X, int Y, int Z)? Site, string? Note, string? Failure)> SiteForAsync(double ox, double oy, double oz, int width, int depth, int clear, Entity? player, CancellationToken ct)
+    {
+        if (FindFlatRect(ox, oy, oz, width, depth, clear, player) is { } flat) return (flat, null, null);
+        if (PlanSite(ox, oy, oz, width, depth, clear, player) is not { } plan)
+            return (null, null, "There's nowhere I can build that within about 24 blocks: it's all lava, water or other people's builds, or I haven't seen the ground yet.");
+        var (ok, note) = await LevelSiteAsync(plan, width, depth, clear, ct);
+        if (!ok) return (null, null, note);
+        return ((plan.X0, plan.Level, plan.Z0), note, null);
+    }
+
     // ---------------------------------------------------------------- custom builds (scripts and shapes)
 
     /// <summary>The last build that was started: its script and where its corner is, so "keep building" can finish it (blocks already standing are skipped).</summary>
@@ -744,9 +928,11 @@ public sealed partial class Skills(MinecraftClient client)
 
         var player = FindPlayer(nearPlayer);
         var (ox, oy, oz) = player != null ? (player.X, player.Y, player.Z) : client.Position;
-        if (FindFlatRect(ox, oy, oz, script.Width, script.Depth, script.Height + 1, player) is not { } site)
-            return (false, $"I can't find a flat, clear spot {script.Width} by {script.Depth} blocks around here.");
-        return await BuildAtAsync(scriptText, site, ct);
+        // Nothing has to be flat or clear: a spot is MADE level (the hill and the trees cut away, the hollow filled in), never refused for being uneven.
+        var (found, levelNote, failure) = await SiteForAsync(ox, oy, oz, script.Width, script.Depth, script.Height + 1, player, ct);
+        if (found is not { } site) return (false, failure!);
+        var (built, text) = await BuildAtAsync(scriptText, site, ct);
+        return (built, levelNote == null ? text : levelNote + " " + text);
     }
 
     /// <summary>Checks that we carry what a script needs, remembers it as the build in progress, and builds it with its corner at <paramref name="corner"/>.</summary>
@@ -781,8 +967,10 @@ public sealed partial class Skills(MinecraftClient client)
         var rise = kind == "house" ? (Math.Min(w, d) + 1) / 2 : kind == "pyramid" ? (w + 1) / 2 : 1;
         var player = FindPlayer(nearPlayer);
         var (ox, oy, oz) = player != null ? (player.X, player.Y, player.Z) : client.Position;
-        if (FindFlatRect(ox, oy, oz, w, d, h + rise + 2, player) is not { } site)
-            return (false, $"I can't find a flat, clear spot {w} by {d} blocks around here for a {kind}.");
+        // Nothing has to be flat or clear: a spot is MADE level (the hill and the trees cut away, the hollow filled in), never refused for being uneven (TJ, 2026-11-03: "the entire game world is
+        // buildable"; every one of his own projects for two hours ended in two seconds with "can't find a flat, clear spot").
+        var (found, levelNote, siteFailure) = await SiteForAsync(ox, oy, oz, w, d, h + rise + 2, player, ct);
+        if (found is not { } site) return (false, siteFailure!);
 
         // The doorway (or gate) faces whoever asked, so they can walk right in, unless a side was given.
         var side = doorSide?.Trim().ToLowerInvariant() switch
@@ -802,7 +990,8 @@ public sealed partial class Skills(MinecraftClient client)
         }
         // Wood or stone that is missing is fetched first (the spot is already chosen, so the walk to the trees does not lose it).
         var (gathered, gatherNote) = await GatherForBuildAsync(script, ct);
-        if (!gathered) return (false, gatherNote!);
+        if (!gathered) return (false, (levelNote == null ? "" : levelNote + " ") + gatherNote!);
+        if (levelNote != null) gatherNote = levelNote + (gatherNote == null ? "" : " " + gatherNote);
         var (ok, text) = await BuildAtAsync(script, site, ct);
         if (!ok) return (false, (gatherNote == null ? "" : gatherNote + " ") + text.Replace("build that", $"build a {w} by {d} {wallPretty} {kind}"));
         if (gatherNote != null) text = gatherNote + " " + text;
