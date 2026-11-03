@@ -1,4 +1,5 @@
 using SpawnDev.Minecraft;
+using SpawnDev.Minecraft.Pathing;
 using Vertex.Brain;
 using Vertex.Tests.Live;
 
@@ -187,6 +188,21 @@ public class LiveGatherTests
         var (ok, text) = await skills.GiveAsync("AubriGets", "wood", 6, cts.Token);
         TestContext.Out.WriteLine(text);
         Assert.That(ok, Is.True, text);
-        await Wait.UntilAsync(() => aubs.Inventory.Slots.Where(s => !s.IsEmpty && s.Name.EndsWith("_log")).Sum(s => s.Count) >= 6, Timeout, () => aubs.Inventory.ToString());
+        // A person who is handed something picks it up: walks to the dropped logs when they are not within reach (they did not always land at their feet: flaky in full runs, 2026-11-03, with a
+        // friend who stood still; the drop is thrown a few blocks and Vertex only drops them, it does not check who picked them up).
+        int Logs() => aubs.Inventory.Slots.Where(s => !s.IsEmpty && s.Name.EndsWith("_log")).Sum(s => s.Count);
+        var deadline = DateTime.UtcNow + Timeout;
+        while (Logs() < 6 && DateTime.UtcNow < deadline)
+        {
+            var (bx, by, bz) = aubs.Position;
+            var drop = aubs.Entities.Values.Where(e => e.IsItem && e.DistanceTo(bx, by, bz) < 12).OrderBy(e => e.DistanceTo(bx, by, bz)).FirstOrDefault();
+            if (drop != null && drop.DistanceTo(bx, by, bz) > 0.6)
+            {
+                using var step = new CancellationTokenSource(TimeSpan.FromSeconds(4));
+                try { await aubs.GoToAsync(Goal.Near(drop.X, drop.Y, drop.Z, 0.8), new PathOptions { MaxNodes = 5_000 }, step.Token); } catch (OperationCanceledException) { }
+            }
+            await aubs.WaitTicksAsync(10);
+        }
+        Assert.That(Logs(), Is.GreaterThanOrEqualTo(6), aubs.Inventory.ToString());
     }
 }
