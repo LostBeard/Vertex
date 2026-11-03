@@ -2159,6 +2159,45 @@ public sealed partial class Skills(MinecraftClient client)
             .OrderBy(e => e.DistanceTo(x, y, z)).FirstOrDefault();
     }
 
+    /// <summary>
+    /// Takes cover when he is losing a fight he cannot win by running or hitting (phantoms in a swarm killed him 70 seconds after god mode went off, 2026-11-03): digs a 1 by 1 shaft 3 blocks down
+    /// into solid ground, seals the top with a block of what he dug, and waits below until nothing hostile is near and his health is back, then digs out and builds himself up to the surface.
+    /// Nothing flies or walks into a sealed hole. Refuses (honestly) only where it would be wrong: water or lava round the shaft, no solid ground, no block to seal with.
+    /// </summary>
+    public async Task<(bool, string)> TakeCoverAsync(CancellationToken ct)
+    {
+        var (px, py, pz) = client.Position;
+        int x = (int)Math.Floor(px), y0 = (int)Math.Floor(py + 1e-6), z = (int)Math.Floor(pz);
+        if (InWaterNow()) return (false, "I can't dig in while I'm in the water.");
+        for (var d = 1; d <= 4; d++)
+        {
+            var s = client.World.GetState(x, y0 - d, z);
+            if (s <= 0 || !Standable(s) || client.IsBuiltBlock(D.BlockOf(s)) || D.Hardness[s] < 0 || LavaAround(x, y0 - d, z)) return (false, "The ground here is no good for digging in (not solid, someone's build, or lava near).");
+            foreach (var (dx, dz) in new[] { (1, 0), (-1, 0), (0, 1), (0, -1) })
+                if (client.World.GetState(x + dx, y0 - d, z + dz) is var n && n > 0 && (D.StateFlags[n] & GameData.FlagWater) != 0) return (false, "There is water beside the ground here: it would flood the hole.");
+        }
+        // Down three blocks: the path finder digs straight down (the cheapest way to a goal below).
+        await client.EquipBestToolAsync(client.World.GetState(x, y0 - 1, z), ct);
+        var down = await client.GoToAsync(Goal.Block(x, y0 - 3, z), new PathOptions { CanDig = true, MaxNodes = 4_000 }, ct);
+        if (!down || client.FeetBlock.Y > y0 - 3) return (false, "I couldn't dig down.");
+        await PickUpNearbyAsync(x, y0 - 3, z, ct);
+        // Seal the hole above: a block of what he dug (or any he carries) in the top cell of the shaft, which has solid ground beside it to click against.
+        var (placed, _, _) = await client.BuildAsync([new Placement(x, y0 - 1, z, IsFiller, "something to seal the hole with")], ct);
+        var sealed_ = client.World.GetState(x, y0 - 1, z) is var top && top > 0 && Standable(top);
+        // Wait below: until nothing hostile is within 12 blocks (the walkers; fliers cannot get in) and health is back to 8 hearts, at most two minutes.
+        var waited = 0;
+        while (waited < 120 && !ct.IsCancellationRequested && (NearestHostile(12) != null || NearestFlier(16) != null || client.Health < 16))
+        {
+            await client.WaitTicksAsync(20, ct);
+            waited++;
+        }
+        // Out: break the seal and build himself up three blocks.
+        if (sealed_) { await client.EquipBestToolAsync(client.World.GetState(x, y0 - 1, z), ct); await client.DigAsync(x, y0 - 1, z, ct); }
+        await client.GoToAsync(Goal.Block(x, y0, z), new PathOptions { CanDig = true, CanPlace = true, MaxNodes = 6_000 }, ct);
+        var out_ = client.FeetBlock.Y >= y0;
+        return (out_, $"I dug in {(sealed_ ? "and sealed the hole" : "(I had nothing to seal it with)")}, waited {waited} seconds below, and {(out_ ? "came back up" : "am still down there")}.");
+    }
+
     /// <summary>The nearest flying hostile mob (a phantom...) within `within` blocks, if any: not one to walk away from, one to hit when it comes down to him.</summary>
     public Entity? NearestFlier(double within)
     {

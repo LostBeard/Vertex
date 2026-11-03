@@ -20,7 +20,7 @@ public class LiveRoughGroundTests
     [OneTimeSetUp]
     public async Task StartServer()
     {
-        _server = await PaperServer.StartAsync("rough", Port, TimeSpan.FromMinutes(4), new Dictionary<string, string> { ["difficulty"] = "peaceful", ["view-distance"] = "8" });
+        _server = await PaperServer.StartAsync("rough", Port, TimeSpan.FromMinutes(4), new Dictionary<string, string> { ["difficulty"] = "easy", ["view-distance"] = "8" });       // not peaceful: that heals him at once and removes the zombies (mob spawning is off below)
         await _server.CommandAsync("gamerule doMobSpawning false");
         await _server.CommandAsync("gamerule randomTickSpeed 0");
         await _server.CommandAsync("time set day");
@@ -165,6 +165,41 @@ public class LiveRoughGroundTests
         TestContext.Out.WriteLine($"{text}; at {x:0} {y:0} {z:0}; pond x {px0}..{px0 + 8} z {pz0}..{pz0 + 8}");
         Assert.That(text, Does.Not.Contain("didn't find any"), text);
         Assert.That(Math.Abs(x - (px0 + 4)) + Math.Abs(z - (pz0 + 4)), Is.LessThan(12), "he is at the pond");
+    }
+
+    /// <summary>
+    /// Live 2026-11-03, 18:04: "HereticSpawn was slain by Phantom", 70 seconds after god mode was turned off: phantoms cannot be walked away from and a swarm cannot be out-fought. At five hearts or
+    /// fewer with monsters close he digs three blocks down, seals the hole and waits. Here: three zombies chase him at 6 health points; he ends underground, alive, with the zombies still outside.
+    /// </summary>
+    [Test]
+    public async Task LowOnHealthWithMonstersCloseIn_HeDigsInAndLives()
+    {
+        const string name = "VertexCover";
+        var (client, ax, az) = await JoinOnRoughGroundAsync(name);
+        await using var _ = client;
+        for (var z0 = az - 30; z0 <= az + 30; z0 += 8)
+            await _server.CommandAsync($"fill {ax - 30} 150 {z0} {ax + 30} 196 {Math.Min(z0 + 7, az + 30)} minecraft:stone");
+        var stand = 200 + StripeHeight(ax, ax);
+        await _server.CommandAsync($"effect give {name} minecraft:instant_damage 1 1");        // 12 points: 20 down to 8
+        await Wait.UntilAsync(() => client.Health is > 0 and <= 10, Timeout, () => $"health {client.Health}");
+        for (var i = 0; i < 3; i++)
+            await _server.CommandAsync($"summon minecraft:zombie {ax + 6.5 + i} {stand} {az + 0.5 + i} {{Tags:[\"vcover\"],active_effects:[{{id:\"minecraft:fire_resistance\",duration:1000000}}]}}");
+        await Wait.UntilAsync(() => client.Entities.Values.Count(e => e.Name == "minecraft:zombie") >= 3, Timeout, () => "the zombies");
+        var skills = new Skills(client);
+        var tasks = new TaskRunner();
+        var jobs = new System.Collections.Concurrent.ConcurrentQueue<string>();
+        tasks.Starting += jobs.Enqueue;
+        using var reflexes = new Reflexes(client, skills, tasks, () => new PlayStyle { Bravery = 0.0 }) { Enabled = true };
+        try
+        {
+            await Wait.UntilAsync(() => client.Position.Y <= stand - 2 || client.Health <= 0, TimeSpan.FromSeconds(40), () => $"at {client.Position}, health {client.Health}; jobs {string.Join(" | ", jobs)}");
+            Assert.That(client.Health, Is.GreaterThan(0), "he is alive; jobs " + string.Join(" | ", jobs));
+            await Task.Delay(TimeSpan.FromSeconds(8));
+            TestContext.Out.WriteLine($"at {client.Position}, health {client.Health}, zombies {client.Entities.Values.Count(e => e.Name == "minecraft:zombie")}; jobs {string.Join(" | ", jobs)}");
+            Assert.That(client.Health, Is.GreaterThan(0), "and still alive eight seconds later, underground");
+            Assert.That(jobs.Any(j => j.StartsWith("taking cover")), Is.True, string.Join(" | ", jobs));
+        }
+        finally { reflexes.Enabled = false; tasks.Stop(); await _server.CommandAsync("kill @e[tag=vcover]"); }
     }
 
     [Test]

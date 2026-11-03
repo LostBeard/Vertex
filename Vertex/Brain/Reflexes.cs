@@ -23,7 +23,7 @@ public sealed class Reflexes : IDisposable
     private long _nextAvoidTick, _nextLeaveWaterTick, _nextLandTick, _nextPatchTick;
     private int _tinyPatchLooks, _patchFailures;
     private int _avoidRepeats;
-    private long _nextSwatTick;
+    private long _nextSwatTick, _nextCoverTick;
     private long _lastAvoidTick;
 
     /// <summary>How close a monster may be, idle, before he walks away from it (blocks).</summary>
@@ -78,6 +78,14 @@ public sealed class Reflexes : IDisposable
         {
             _nextLandTick = _tick + 100;
             _tasks.StartReflex("landing", ct => _skills.LandAsync(ct));
+            return;
+        }
+
+        // Losing: five hearts or fewer with a monster close (a flier counts: they killed him in 70 seconds): dig in and wait it out. He fights or flees on the ordinary rules until then.
+        if (!_tasks.IsBusy && c.Health <= 10 && c.GameMode == GameMode.Survival && _tick >= _nextCoverTick && (_skills.NearestHostile(10) != null || _skills.NearestFlier(10) != null))
+        {
+            _nextCoverTick = _tick + 600;
+            _tasks.Start("taking cover underground", ct => _skills.TakeCoverAsync(ct));
             return;
         }
 
