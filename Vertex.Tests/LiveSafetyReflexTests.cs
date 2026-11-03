@@ -79,6 +79,8 @@ public class LiveSafetyReflexTests
         await Wait.UntilAsync(() => client.Entities.Values.Any(e => e.Name == "minecraft:" + mob), Timeout, () => "the " + mob);
         var monster = client.Entities.Values.First(e => e.Name == "minecraft:" + mob);
         var skills = new Skills(client);
+        var traced = new System.Collections.Concurrent.ConcurrentQueue<string>();
+        skills.Trace += traced.Enqueue;
         var tasks = new TaskRunner();
         using var reflexes = new Reflexes(client, skills, tasks, () => new PlayStyle { Bravery = 1.0 }) { Enabled = false };
         try
@@ -89,6 +91,8 @@ public class LiveSafetyReflexTests
 
             reflexes.Enabled = true;
             await Wait.UntilAsync(() => Away(client, monster) >= 9.5, TimeSpan.FromSeconds(30), () => $"{Away(client, monster):0.0} blocks from the {mob}; task {tasks.Current}");
+            Assert.That(traced.Any(t => t.StartsWith("stepping away from: ") && t.Contains(mob + " 5") && !t.Contains("out of sight")), Is.True,
+                "he says what he is stepping away from, how far, and that he can see it (2026-11-03: half an hour of \"could not get away\" with no word on which monster): " + string.Join(" | ", traced));
             Assert.That(client.Health, Is.EqualTo(20f), "never hurt");
             Assert.That(client.Entities.ContainsKey(monster.Id), "and he did not attack it (a brave character does not pick fights)");
             Assert.That(monster.Health ?? 20f, Is.GreaterThanOrEqualTo(20f));

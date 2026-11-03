@@ -154,6 +154,7 @@ public sealed class VertexBrain : IBody
         Tasks.GoalOf = () => _pursuing;
         Tasks.Finished += o => companion.Post(new TaskEvent(o));
         Skills.LessonLearned += RecordLesson;
+        Skills.Trace += m => Log?.Invoke("  (" + m + ")");
         Skills.PriorLessons = LessonsFor;
         companion.Attach(this);
         companion.AddChannel(Channel);

@@ -1852,6 +1852,22 @@ public sealed partial class Skills(MinecraftClient client)
         return line;
     }
 
+    /// <summary>
+    /// The hostile mobs within `within` blocks in words, nearest first: what, how far, whether he could see it, and when it is well above or below (through a floor or a cave wall). A
+    /// "could not get away from the monsters" every 30 seconds for half an hour (2026-11-03) did not say which monsters or where, so nobody could tell a creeper at his heels from a zombie in a cave.
+    /// </summary>
+    public string DescribeHostiles(double within)
+    {
+        var (x, y, z) = client.Position;
+        var eye = client.EyePosition;
+        var parts = client.Entities.Values.Where(e => Hostile.Contains(e.Name) && e.DistanceTo(x, y, z) < within).OrderBy(e => e.DistanceTo(x, y, z)).Take(4)
+            .Select(e => $"{e.Name.Bare().Replace('_', ' ')} {e.DistanceTo(x, y, z):0.#} blocks away"
+                + (Math.Abs(e.Y - y) >= 3 ? (e.Y > y ? $", {e.Y - y:0} above" : $", {y - e.Y:0} below") : "")
+                + (Sight.CanSeeBody(client.World, eye, e.X, e.Y, e.Z) ? "" : ", out of sight"))
+            .ToList();
+        return parts.Count == 0 ? "none within " + within.ToString("0") : string.Join("; ", parts);
+    }
+
     /// <summary>The nearest hostile mob within `within` blocks, if any.</summary>
     public Entity? NearestHostile(double within)
     {
@@ -1884,6 +1900,7 @@ public sealed partial class Skills(MinecraftClient client)
             var safe = near.Count == 0 || near.Min(e => e.DistanceTo(px, py, pz)) >= clearOf;
             if (safe && !InWaterNow()) return (true, "I stepped away from the monsters.");
             if (cx is not double awayX || cz is not double awayZ) return (true, "There was nothing to step away from.");
+            if (hop == 0) Trace?.Invoke($"stepping away from: {DescribeHostiles(clearOf + 6)}; I am at {px:0} {py:0} {pz:0}{(InWaterNow() ? ", in the water" : "")}");
             using var step = CancellationTokenSource.CreateLinkedTokenSource(ct);
             step.CancelAfter(TimeSpan.FromSeconds(4));
             // "Away" ends on DRY LAND (he swam out into a lake with no land in sight, 2026-11-02, because any far-enough place counted, water included). Swimming across to a far shore is fine
@@ -1893,8 +1910,12 @@ public sealed partial class Skills(MinecraftClient client)
         }
         var (x, y, z) = client.Position;
         var closest = client.Entities.Values.Where(e => Hostile.Contains(e.Name)).Select(e => e.DistanceTo(x, y, z)).DefaultIfEmpty(double.MaxValue).Min();
+        Trace?.Invoke($"could not get away: {DescribeHostiles(clearOf + 6)}; I am at {x:0} {y:0} {z:0}{(InWaterNow() ? ", in the water" : "")}");
         return closest >= clearOf && !InWaterNow() ? (true, "I stepped away from the monsters.") : (false, "I could not get away from the monsters.");
     }
+
+    /// <summary>A line for the log about what a skill is dealing with (the brain shows it in the panel); nothing is said to anyone.</summary>
+    public event Action<string>? Trace;
 
     /// <summary>Is there solid dry ground under (x, y, z) and open air for feet and head? (Water and lava are not open, and neither is a fire or a cactus's spot.)</summary>
     private bool DryStand(int x, int y, int z)
