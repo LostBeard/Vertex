@@ -22,6 +22,8 @@ public sealed class Reflexes : IDisposable
     private int _waterHistory;
     private long _nextAvoidTick, _nextLeaveWaterTick, _nextLandTick, _nextPatchTick;
     private int _tinyPatchLooks, _patchFailures;
+    private int _avoidRepeats;
+    private long _lastAvoidTick;
 
     /// <summary>How close a monster may be, idle, before he walks away from it (blocks).</summary>
     public const double AvoidWithin = 8;
@@ -80,9 +82,20 @@ public sealed class Reflexes : IDisposable
 
         // Idle with a monster close: do not stand there (live on AubsCraft, 2026-11-01, he stood among four creepers). Creepers are always walked away from; any other monster gets the
         // same fight-or-flight rule as one that hurt us. Not while a job runs (jobs have their own care), and at most once every 10 seconds.
-        if (!_tasks.IsBusy && _tick >= _nextAvoidTick && _skills.NearestHostile(AvoidWithin) != null)
+        if (!_tasks.IsBusy && _tick >= _nextAvoidTick && _skills.NearestHostile(AvoidWithin) is { } threat)
         {
+            // Stepping away that keeps being needed is not working: live 2026-11-03 15:48 to 15:52 and beyond, a spider and three zombies at 1 to 2 blocks, "could not get away from the monsters"
+            // every 10 seconds, nothing ever fought back, and he went round in circles. A third time in a minute, he turns on them (creepers are never fought: they blow up).
+            if (_tick - _lastAvoidTick > 1200) _avoidRepeats = 0;
+            _lastAvoidTick = _tick;
             _nextAvoidTick = _tick + 200;
+            if (++_avoidRepeats >= 3 && threat.Name != "minecraft:creeper")
+            {
+                _avoidRepeats = 0;
+                var kind = threat.Name.Bare();
+                _tasks.Start($"fighting the {kind.Replace('_', ' ')} that kept following me", ct => _skills.AttackAsync(kind, ct));
+                return;
+            }
             _tasks.StartReflex("stepping away from monsters", ct => _skills.StepAwayFromMonstersAsync(AvoidWithin + 2, ct));
             return;
         }

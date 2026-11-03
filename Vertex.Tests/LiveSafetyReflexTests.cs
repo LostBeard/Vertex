@@ -101,6 +101,38 @@ public class LiveSafetyReflexTests
     }
 
     /// <summary>
+    /// Live 2026-11-03, 15:48 to 15:52 and on: a spider and three zombies at 1 to 2 blocks, "stepping away from monsters: I could not get away from the monsters" every 10 seconds, nothing ever
+    /// fought back, he ran between two spots and everything else (projects, requests) waited. Zombies walk as fast as he does: running cannot end it. A careful character (bravery 0) steps away the
+    /// first two times; the third time in a minute he turns and kills them.
+    /// </summary>
+    [Test]
+    public async Task Idle_WithZombiesThatKeepFollowingHim_StepsAwayTwiceThenFightsThem()
+    {
+        var (client, ax, az) = await JoinAsync("VertexChased");
+        await using var _ = client;
+        await _server.CommandAsync("effect give VertexChased minecraft:resistance 600 4 true");        // they hit him, they cannot hurt him: the test is about what he DOES
+        await _server.CommandAsync("give VertexChased minecraft:iron_sword 1");
+        await Wait.UntilAsync(() => client.Inventory.Count("iron_sword") >= 1, Timeout, () => client.Inventory.ToString());
+        for (var i = 0; i < 3; i++)
+            await _server.CommandAsync($"summon minecraft:zombie {ax + 4.5 + i} 200 {az + 0.5 + i} {{Tags:[\"vchase\"],active_effects:[{{id:\"minecraft:fire_resistance\",duration:1000000}}]}}");
+        await Wait.UntilAsync(() => client.Entities.Values.Count(e => e.Name == "minecraft:zombie") >= 3, Timeout, () => "the zombies");
+        var skills = new Skills(client);
+        var tasks = new TaskRunner();
+        var started = new System.Collections.Concurrent.ConcurrentQueue<string>();
+        tasks.Starting += started.Enqueue;
+        skills.Trace += t => { if (t.StartsWith("stepping away from: ")) started.Enqueue("stepping away from monsters"); };       // quiet reflex jobs do not raise Starting
+        using var reflexes = new Reflexes(client, skills, tasks, () => new PlayStyle { Bravery = 0.0 }) { Enabled = true };
+        try
+        {
+            await Wait.UntilAsync(() => !client.Entities.Values.Any(e => e.Name == "minecraft:zombie"), TimeSpan.FromSeconds(120), () => $"{client.Entities.Values.Count(e => e.Name == "minecraft:zombie")} zombies left; jobs: {string.Join(" | ", started)}");
+            Assert.That(started.Any(s => s.StartsWith("stepping away from monsters")), Is.True, "he tried stepping away first: " + string.Join(" | ", started));
+            Assert.That(started.Any(s => s.StartsWith("fighting the zombie")), Is.True, "and then fought them: " + string.Join(" | ", started));
+            TestContext.Out.WriteLine("jobs: " + string.Join(" | ", started));
+        }
+        finally { reflexes.Enabled = false; tasks.Stop(); await _server.CommandAsync("kill @e[tag=vchase]"); }
+    }
+
+    /// <summary>
     /// Live 2026-11-03: "not starting a project of my own: a skeleton is 13 blocks away (needs 16)", for minutes. A monster he cannot see cannot see him: out to the avoid distance (8) any monster
     /// counts, beyond that only one in sight. The same skeleton 12 blocks away behind a wall does not stop a project; with the wall gone it does.
     /// </summary>
