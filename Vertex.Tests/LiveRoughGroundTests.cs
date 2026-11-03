@@ -111,6 +111,62 @@ public class LiveRoughGroundTests
         Assert.That(client.Inventory.Count("diamond"), Is.GreaterThanOrEqualTo(1), "a diamond is in his pockets: " + client.Inventory);
     }
 
+    /// <summary>
+    /// "Shear the sheep" / "milk the cow" (TJ's kids, live): "I don't see any sheep with wool on near me", "I don't see a cow to milk", within 24 blocks only. A sheep and a cow 28 blocks off, with the
+    /// shears and the bucket in his pockets: he walks there and does it.
+    /// </summary>
+    [Test]
+    public async Task AnimalsABitFarOff_AreWalkedToAndShearedAndMilked_InsteadOfNotSeen()
+    {
+        const string name = "VertexFarm";
+        var (client, ax, az) = await JoinOnRoughGroundAsync(name);
+        await using var _ = client;
+        var sx = ax + 28;
+        var y = 200 + StripeHeight(sx, ax);
+        await _server.CommandAsync($"summon minecraft:sheep {sx + 0.5} {y} {az + 0.5} {{NoAI:1b,Tags:[\"vfar\"]}}");
+        await _server.CommandAsync($"summon minecraft:cow {sx + 0.5} {y} {az + 3.5} {{NoAI:1b,Tags:[\"vfar\"]}}");
+        await _server.CommandAsync($"give {name} minecraft:shears 1");
+        await _server.CommandAsync($"give {name} minecraft:bucket 1");
+        await Wait.UntilAsync(() => client.Inventory.Count("shears") >= 1 && client.Inventory.Count("bucket") >= 1 && client.Entities.Values.Any(e => e.Name == "minecraft:sheep") && client.Entities.Values.Any(e => e.Name == "minecraft:cow"), Timeout, () => client.Inventory.ToString());
+        var skills = new Skills(client);
+        try
+        {
+            (bool ok, string text) shear, milk;
+            using (var c = new CancellationTokenSource(TimeSpan.FromMinutes(3))) shear = await skills.ShearSheepAsync(1, c.Token);
+            TestContext.Out.WriteLine($"shear: {shear.ok}: {shear.text}");
+            Assert.That(shear.ok, Is.True, shear.text);
+            using (var c = new CancellationTokenSource(TimeSpan.FromMinutes(3))) milk = await skills.MilkCowAsync(c.Token);
+            TestContext.Out.WriteLine($"milk: {milk.ok}: {milk.text}");
+            Assert.That(milk.ok, Is.True, milk.text);
+        }
+        finally { await _server.CommandAsync("kill @e[tag=vfar]"); }
+    }
+
+    /// <summary>"Let's go fishing!" with no water within 16 blocks: "I can't find open water to fish in near here". A pond 25 blocks off: he walks there and casts.</summary>
+    [Test]
+    public async Task Fishing_WithTheWaterFarOff_HeWalksToThePond_InsteadOfSayingThereIsNone()
+    {
+        const string name = "VertexFisher";
+        var (client, ax, az) = await JoinOnRoughGroundAsync(name);
+        await using var _ = client;
+        // A pond 25 blocks east: a 9 by 9 hollow cut 3 deep into the base, filled with water, level with the ground at its edge.
+        int px0 = ax + 24, pz0 = az - 4;
+        await _server.CommandAsync($"fill {px0} 199 {pz0} {px0 + 8} 215 {pz0 + 8} minecraft:air");
+        await _server.CommandAsync($"fill {px0} 196 {pz0} {px0 + 8} 199 {pz0 + 8} minecraft:water");
+        await _server.CommandAsync($"fill {px0 - 1} 197 {pz0 - 1} {px0 + 9} 199 {pz0 - 1} minecraft:stone");
+        await _server.CommandAsync($"give {name} minecraft:fishing_rod 1");
+        await Wait.UntilAsync(() => client.Inventory.Count("fishing_rod") >= 1 && client.World.GetBlock(px0 + 4, 198, pz0 + 4)?.Name == "minecraft:water", Timeout, () => client.Inventory.ToString());
+        var skills = new Skills(client);
+        Assert.That(skills.FindFishingSpotNear(), Is.False, "the setup: no fishing spot within 16 blocks");
+        using var c = new CancellationTokenSource(TimeSpan.FromSeconds(40));
+        string text;
+        try { text = (await skills.FishAsync(1, c.Token)).Item2; } catch (OperationCanceledException) { text = "(still fishing after 40 s)"; }
+        var (x, y, z) = client.Position;
+        TestContext.Out.WriteLine($"{text}; at {x:0} {y:0} {z:0}; pond x {px0}..{px0 + 8} z {pz0}..{pz0 + 8}");
+        Assert.That(text, Does.Not.Contain("didn't find any"), text);
+        Assert.That(Math.Abs(x - (px0 + 4)) + Math.Abs(z - (pz0 + 4)), Is.LessThan(12), "he is at the pond");
+    }
+
     [Test]
     public async Task ABuild_OnGroundThatIsNowhereFlat_LevelsItAndBuilds_InsteadOfRefusing()
     {

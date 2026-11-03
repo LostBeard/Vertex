@@ -1646,7 +1646,8 @@ public sealed partial class Skills(MinecraftClient client)
             if (now.DistanceTo(client.Position.X, client.Position.Y, client.Position.Z) <= within) return true;
             using var hop = CancellationTokenSource.CreateLinkedTokenSource(ct);
             hop.CancelAfter(TimeSpan.FromSeconds(2));
-            try { await client.GoToAsync(Goal.Near(now.X, now.Y, now.Z, Math.Max(1.5, within - 1.0)), new PathOptions { MaxNodes = 8_000 }, hop.Token); }
+            // Digging allowed: hills and walls are no reason not to reach an animal (never through someone's build: the path finder will not dig those).
+            try { await client.GoToAsync(Goal.Near(now.X, now.Y, now.Z, Math.Max(1.5, within - 1.0)), new PathOptions { CanDig = true, MaxNodes = 15_000 }, hop.Token); }
             catch (OperationCanceledException) when (!ct.IsCancellationRequested) { }
         }
         // Behind a fence we cannot get closer, but an animal inside a pen can still be fed across it: the server lets us interact up to 3 blocks of the animal's box (about 3.2 to its middle) (seen 2026-10-15 on the AubsCraft dev world).
@@ -1656,8 +1657,41 @@ public sealed partial class Skills(MinecraftClient client)
     private List<Entity> AnimalsNear(string kind, bool adultsOnly)
     {
         var (x, y, z) = client.Position;
-        return client.Entities.Values.Where(e => e.Name == kind && (!adultsOnly || !IsBaby(e)) && e.DistanceTo(x, y, z) < 24).OrderBy(e => e.DistanceTo(x, y, z)).ToList();
+        return client.Entities.Values.Where(e => e.Name == kind && (!adultsOnly || !IsBaby(e)) && e.DistanceTo(x, y, z) < 44).OrderBy(e => e.DistanceTo(x, y, z)).ToList();
     }
+
+    /// <summary>
+    /// Goes and looks: walks up to `maxLegs` legs of about 48 blocks, a different way each time, and stops as soon as `found()` is true. "I don't see any sheep" is not an answer while there is more world
+    /// to walk (he said it, and "I couldn't find any diamond ore", without moving a block: TJ, 2026-11-03). Returns whether it was found, how many legs, and how far he walked.
+    /// </summary>
+    private async Task<(bool Found, int Legs, double Walked)> LookFurtherAsync(Func<bool> found, int maxLegs, CancellationToken ct)
+    {
+        var legs = 0;
+        double walked = 0;
+        while (!found() && legs < maxLegs && !ct.IsCancellationRequested)
+        {
+            legs++;
+            var (lx, _, lz) = client.Position;
+            var (dx, dz) = new[] { (0, -1), (1, 0), (0, 1), (-1, 0) }[(legs + (int)(Math.Abs(lx) + Math.Abs(lz))) % 4];
+            var before = client.Position;
+            for (var hop = 0; hop < 8 && !found(); hop++)
+            {
+                var (px, _, pz) = client.Position;
+                if (Math.Abs((px - lx) * dx + (pz - lz) * dz) >= 46) break;
+                using var step = CancellationTokenSource.CreateLinkedTokenSource(ct);
+                step.CancelAfter(TimeSpan.FromSeconds(6));
+                try { await client.GoToAsync(Goal.XZ((int)lx + dx * 48, (int)lz + dz * 48), new PathOptions { CanDig = true, MaxNodes = 20_000 }, step.Token); }
+                catch (OperationCanceledException) when (!ct.IsCancellationRequested) { }
+                var (nx, _, nz) = client.Position;
+                if (Math.Abs((nx - px) * dx + (nz - pz) * dz) < 1) break;
+            }
+            var after = client.Position;
+            walked += Math.Sqrt((after.X - before.X) * (after.X - before.X) + (after.Z - before.Z) * (after.Z - before.Z));
+        }
+        return (found(), legs, walked);
+    }
+
+    private static string Looked(int legs, double walked) => legs == 0 ? "" : $" (I walked about {walked:0} blocks in {legs} {(legs == 1 ? "direction" : "different directions")} to look)";
 
     /// <summary>
     /// Breeds two adults of a kind of farm animal by feeding both the food they like (wheat for cows and sheep, carrots for pigs, seeds for chickens), then waits to see the baby arrive.
@@ -1675,7 +1709,13 @@ public sealed partial class Skills(MinecraftClient client)
         for (var pair = 0; pair < pairs && !ct.IsCancellationRequested; pair++)
         {
             var adults = AnimalsNear(kind, adultsOnly: true).Where(a => !fedAlready.Contains(a.Id)).ToList();
-            if (adults.Count < 2) return babies > 0 ? (true, $"{Report(babies)} I need two more adult {Plain(kind)}s close by for another pair.") : (false, $"I need two adult {Plain(kind)}s close by to breed them, and I only see {adults.Count}.");
+            var lookedLegs = 0; double lookedWalked = 0;
+            if (adults.Count < 2)
+            {
+                (_, lookedLegs, lookedWalked) = await LookFurtherAsync(() => AnimalsNear(kind, adultsOnly: true).Count(a => !fedAlready.Contains(a.Id)) >= 2, 4, ct);
+                adults = AnimalsNear(kind, adultsOnly: true).Where(a => !fedAlready.Contains(a.Id)).ToList();
+            }
+            if (adults.Count < 2) return babies > 0 ? (true, $"{Report(babies)} I need two more adult {Plain(kind)}s close by for another pair.") : (false, $"I need two adult {Plain(kind)}s to breed them, and I only found {adults.Count}{Looked(lookedLegs, lookedWalked)}.");
             var food = foods.FirstOrDefault(f => client.Inventory.Count(f) >= 2);
             if (food == null) return babies > 0 ? (true, $"{Report(babies)} I ran out of {foodNames}.") : (false, $"I need two {foodNames} to breed {Plain(kind)}s and I only have {foods.Sum(f => client.Inventory.Count(f))}.");
 
@@ -1708,12 +1748,14 @@ public sealed partial class Skills(MinecraftClient client)
         var sheared = 0;
         var wool = Have(s => s.Name.EndsWith("_wool"));
         var done = new HashSet<int>();
+        var (_, legs, walked) = await LookFurtherAsync(() => AnimalsNear("minecraft:sheep", adultsOnly: true).Any(s => !IsSheared(s)), 4, ct);
+        var unreached = 0;
         while (!ct.IsCancellationRequested && (count <= 0 || sheared < count))
         {
             var sheep = AnimalsNear("minecraft:sheep", adultsOnly: true).FirstOrDefault(s => !IsSheared(s) && !done.Contains(s.Id));
             if (sheep == null) break;
             done.Add(sheep.Id);
-            if (!await ApproachAsync(sheep, 2.6, ct)) continue;
+            if (!await ApproachAsync(sheep, 2.6, ct)) { unreached++; continue; }
             if (!await client.EquipAsync(s => s.Name == "minecraft:shears", ct)) return (false, "I couldn't get the shears into my hand.");
             client.LookAt(sheep.X, sheep.Y + sheep.Type.Height * 0.5, sheep.Z);
             await client.InteractAsync(client.Entities.GetValueOrDefault(sheep.Id) ?? sheep, Hand.Main, ct);
@@ -1724,7 +1766,7 @@ public sealed partial class Skills(MinecraftClient client)
                 await PickUpNearbyAsync((int)Math.Floor(sheep.X), (int)Math.Floor(sheep.Y), (int)Math.Floor(sheep.Z), ct);
             }
         }
-        if (sheared == 0) return (false, "I don't see any sheep with wool on near me.");
+        if (sheared == 0) return (false, unreached > 0 ? $"I saw {unreached} sheep with wool on but I couldn't get to {(unreached == 1 ? "it" : "them")}." : "I looked for sheep with wool on and didn't find any" + Looked(legs, walked) + ".");
         var got = Have(s => s.Name.EndsWith("_wool")) - wool;
         return (true, $"I sheared {sheared} sheep and got {got} wool.");
     }
@@ -1733,8 +1775,10 @@ public sealed partial class Skills(MinecraftClient client)
     public async Task<(bool, string)> MilkCowAsync(CancellationToken ct)
     {
         if (Have(s => s.Name == "minecraft:bucket") == 0) return (false, "I need an empty bucket to milk a cow.");
-        var cow = AnimalsNear("minecraft:cow", adultsOnly: true).FirstOrDefault() ?? AnimalsNear("minecraft:mooshroom", adultsOnly: true).FirstOrDefault();
-        if (cow == null) return (false, "I don't see a cow to milk.");
+        Entity? FindCow() => AnimalsNear("minecraft:cow", adultsOnly: true).FirstOrDefault() ?? AnimalsNear("minecraft:mooshroom", adultsOnly: true).FirstOrDefault();
+        var (_, legs, walked) = await LookFurtherAsync(() => FindCow() != null, 4, ct);
+        var cow = FindCow();
+        if (cow == null) return (false, "I looked for a cow to milk and didn't find one" + Looked(legs, walked) + ".");
         if (!await ApproachAsync(cow, 2.6, ct)) return (false, "I couldn't catch up with the cow.");
         if (!await client.EquipAsync(s => s.Name == "minecraft:bucket", ct)) return (false, "I couldn't get the bucket into my hand.");
         var before = Have(s => s.Name == "minecraft:milk_bucket");
@@ -1829,14 +1873,24 @@ public sealed partial class Skills(MinecraftClient client)
         if (Have(s => s.Name == "minecraft:bow") == 0) return (false, "I need a bow to shoot.");
         var matches = MobMatcher(what);
         int shots = 0, kills = 0;
+        var lookedForTarget = false;
+        var lookedLegs = 0;
+        double lookedWalked = 0;
         var down = new HashSet<int>();                                  // a mob stays listed for its death animation: once it is down it is not a target and not counted again
         while (!ct.IsCancellationRequested)
         {
             if (client.Health < 6) return (kills > 0, $"I had to stop shooting, I'm hurt (health {client.Health / 2:0} hearts). {Report(shots, kills)}");
             if (Have(s => s.Name == "minecraft:arrow") == 0) return (kills > 0, $"I ran out of arrows. {Report(shots, kills)}");
             var (px, py, pz) = client.Position;
-            var target = client.Entities.Values.Where(e => !e.IsPlayer && matches(e) && !down.Contains(e.Id) && e.Health is not <= 0 && e.DistanceTo(px, py, pz) < 40)
-                .OrderBy(e => e.DistanceTo(px, py, pz)).FirstOrDefault();
+            Entity? Pick() => client.Entities.Values.Where(e => !e.IsPlayer && matches(e) && !down.Contains(e.Id) && e.Health is not <= 0 && e.DistanceTo(client.Position.X, client.Position.Y, client.Position.Z) < 44)
+                .OrderBy(e => e.DistanceTo(client.Position.X, client.Position.Y, client.Position.Z)).FirstOrDefault();
+            var target = Pick();
+            if (target == null && shots == 0 && kills == 0 && !lookedForTarget)
+            {
+                lookedForTarget = true;
+                (_, lookedLegs, lookedWalked) = await LookFurtherAsync(() => Pick() != null, 4, ct);
+                target = Pick();
+            }
             if (target == null) break;
             var distance = target.DistanceTo(px, py, pz);
             if (distance < 5)
@@ -1873,7 +1927,7 @@ public sealed partial class Skills(MinecraftClient client)
             await client.WaitTicksAsync(14, ct);                       // the flight, and the mob's death
             if (!client.Entities.ContainsKey(id) || client.Entities.TryGetValue(id, out var after) && after.Health is <= 0) { kills++; down.Add(id); }
         }
-        if (shots == 0 && kills == 0) return (false, $"I don't see any {what} to shoot at.");
+        if (shots == 0 && kills == 0) return (false, $"I looked for {what} to shoot at and didn't find any{Looked(lookedLegs, lookedWalked)}.");
         return (true, Report(shots, kills));
 
         string Report(int s, int k) => $"I shot {s} arrow{(s == 1 ? "" : "s")} and {(k == 0 ? "none of the " + what + " are down yet" : $"brought down {k} {what}")}. I have {Have(a => a.Name == "minecraft:arrow")} arrows left.";

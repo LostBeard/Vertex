@@ -49,6 +49,9 @@ public sealed partial class Skills
         return best is { } b ? (b.X, b.Y, b.Z, b.Yaw) : null;
     }
 
+    /// <summary>Is there open water to fish in within 16 blocks of here (for the tests: the setup of "the water is far off").</summary>
+    public bool FindFishingSpotNear() => FindFishingSpot() != null;
+
     private Entity? MyBobber() => client.Entities.Values.FirstOrDefault(e => e.Name == "minecraft:fishing_bobber" && e.Data == client.EntityId);
 
     /// <summary>
@@ -59,7 +62,15 @@ public sealed partial class Skills
     {
         count = count <= 0 ? 1 : Math.Min(count, 20);
         if (Have(s => s.Name == "minecraft:fishing_rod") == 0) return (false, "I need a fishing rod to fish. (It is three sticks and two string.)");
-        if (FindFishingSpot() is not var (sx, sy, sz, yaw)) return (false, "I can't find open water to fish in near here.");
+        // No open water close by: go and look for some (water he has already seen within 64 blocks first, then further afield), and fish where it is.
+        var lookLegs = 0; double lookWalked = 0;
+        if (FindFishingSpot() == null)
+        {
+            if (client.World.FindBlocksTall(s => s > 0 && (D.StateFlags[s] & SpawnDev.Minecraft.Data.GameData.FlagWater) != 0, client.Position, 64, 4).FirstOrDefault() is var wat && wat != default)
+                await client.GoToAsync(Goal.Near(wat.Item1 + 0.5, wat.Item2 + 1, wat.Item3 + 0.5, 3), new PathOptions { CanDig = true, MaxNodes = 30_000 }, ct);
+            if (FindFishingSpot() == null) (_, lookLegs, lookWalked) = await LookFurtherAsync(() => FindFishingSpot() != null, 4, ct);
+        }
+        if (FindFishingSpot() is not var (sx, sy, sz, yaw)) return (false, "I looked for open water to fish in and didn't find any" + Looked(lookLegs, lookWalked) + ".");
         await client.GoToAsync(Goal.Near(sx + 0.5, sy, sz + 0.5, 0.45), new PathOptions { MaxNodes = 10_000 }, ct);
         if (!await client.EquipAsync(s => s.Name == "minecraft:fishing_rod", ct)) return (false, "I couldn't get the fishing rod into my hand.");
 
