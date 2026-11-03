@@ -403,6 +403,7 @@ public sealed class VertexBrain : IBody
     }
 
     private DateTime _lastBlockerLog = DateTime.MinValue, _nextSleepTry = DateTime.MinValue;
+    private string _lastStatus = "";
 
     /// <summary>Is it night in the game (when a bed can be slept in: from sunset to just before sunrise)?</summary>
     private bool IsNight() => Client.World.DayTime % 24000 is >= 12600 and < 23400;
@@ -523,6 +524,13 @@ public sealed class VertexBrain : IBody
             {
                 var now = Now();
                 foreach (var p in Client.Players.Values.Where(p => p.Id != Client.Profile.Id)) Memory.Seen(p.Id, now);
+                // What the server says he is: game mode and abilities (invulnerable is set by creative mode, god mode and the like). Said when it first becomes known and whenever it changes, so "is he
+                // really in survival, can he be hurt?" is answered in the log, not by someone typing commands (TJ, 2026-11-03).
+                if (Client.IsSpawned)
+                {
+                    var status = $"game mode {Client.GameMode.ToString().ToLowerInvariant()}, {(Client.Invulnerable ? "INVULNERABLE (the server says nothing can hurt him)" : "can be hurt")}, {(Client.MayFly ? "may fly" : "cannot fly")}";
+                    if (status != _lastStatus) { _lastStatus = status; Log?.Invoke($"status: {status}; health {Client.Health / 2:0.#} of 10 hearts"); }
+                }
                 if (Tasks.IsBusy) { _lastActivity = now; continue; }
                 var goal = Memory.ActiveGoals.FirstOrDefault();
                 var unstudied = goal == null && !Staying && StudyWhenIdle && Skills.UnstudiedBlocks(16).Count > 0;     // the scan only when it could matter
