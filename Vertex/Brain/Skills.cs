@@ -2286,17 +2286,52 @@ public sealed partial class Skills(MinecraftClient client)
         return (!client.OnFire, client.OnFire ? "I'm still on fire." : "I put the fire out in the water.");
     }
 
-    /// <summary>Straight up until he has his breath back. Up to 25 seconds; a roof over the water he will not get through this way, and he says so.</summary>
+    /// <summary>
+    /// Until he has his breath back, up to 25 seconds. Straight up if there is air straight up. Under a roof: to the nearest air he can swim to, and with none in reach, up through the roof (water does not rise into the hole). Straight up was all
+    /// he had: live he jumped at the rock over a flooded cave at y 50 until he drowned, in iron tools, 11 minutes of work gone (2026-11-04).
+    /// </summary>
     public async Task<(bool, string)> ComeUpForAirAsync(CancellationToken ct)
     {
+        var until = DateTime.UtcNow.AddSeconds(25);
+        var swims = 0;
         try
         {
-            for (var tick = 0; tick < 500 && client.Air < PlayerFullAir - 20; tick++)
+            while (DateTime.UtcNow < until && client.Air < PlayerFullAir - 20)
             {
                 ct.ThrowIfCancellationRequested();
-                client.Controls.Forward = false;
+                var (x, y, z) = client.FeetBlock;
+                if (RoofOver(x, y, z) is not { } roof)
+                {
+                    client.Controls.Forward = false;
+                    client.Controls.Jump = true;
+                    await client.WaitTicksAsync(1, ct);
+                    continue;
+                }
+                client.Controls.Clear();
+                if (swims < 2 && NearestBreath(x, y, z) is { } air)
+                {
+                    swims++;
+                    Trace?.Invoke($"under a roof with {client.Air / 20} seconds of breath: swimming for the air at {air.X} {air.Y} {air.Z}");
+                    using var hop = CancellationTokenSource.CreateLinkedTokenSource(ct);
+                    hop.CancelAfter(TimeSpan.FromSeconds(6));
+                    try { await client.GoToAsync(Goal.Block(air.X, air.Y, air.Z), new PathOptions { MaxNodes = 3_000 }, hop.Token); }
+                    catch (OperationCanceledException) when (!ct.IsCancellationRequested) { }
+                    continue;
+                }
+                // Nothing to swim to. A roof out of reach he goes up to first.
+                if (roof > y + 2 || client.DistanceToBlock(x, roof, z) > client.BlockReach)
+                {
+                    client.Controls.Jump = true;
+                    await client.WaitTicksAsync(1, ct);
+                    continue;
+                }
+                var state = client.World.GetState(x, roof, z);
+                if (D.Hardness[state] < 0 || LavaAround(x, roof, z)) return (false, "There's no air I can reach, and I can't break through the roof over me.");
+                Trace?.Invoke($"under a roof with no air in reach and {client.Air / 20} seconds of breath: digging up through {x} {roof} {z}");
+                await client.EquipBestToolAsync(state, ct);
+                await client.DigAsync(x, roof, z, ct);
                 client.Controls.Jump = true;
-                await client.WaitTicksAsync(1, ct);
+                await client.WaitTicksAsync(10, ct);
             }
         }
         finally { client.Controls.Clear(); }
@@ -2304,6 +2339,44 @@ public sealed partial class Skills(MinecraftClient client)
     }
 
     private const int PlayerFullAir = 300;
+
+    /// <summary>Is there rock between him and the air, head under water? For the reflex: under a roof half a breath is not enough, and he goes sooner.</summary>
+    public bool UnderRoofUnderWater() { var (x, y, z) = client.FeetBlock; return RoofOver(x, y, z) != null; }
+
+    /// <summary>The first solid block over his head with only water between, or null if the water opens to the air (or his head is not in water at all).</summary>
+    private int? RoofOver(int x, int y, int z)
+    {
+        for (var by = y + 1; by < y + 48; by++)
+        {
+            var s = client.World.GetState(x, by, z);
+            if (s < 0) return null;
+            if (D.HasCollision(s)) return by == y + 1 ? null : by;     // (a block at his very head is being buried, not a roof: DigOut has that)
+            if ((D.StateFlags[s] & GameData.FlagWater) == 0) return null;
+        }
+        return null;
+    }
+
+    /// <summary>Where his feet go to have his head in the air, by the fewest moves through open water, or null if none within what half a breath can swim (about 2 blocks a second).</summary>
+    private (int X, int Y, int Z)? NearestBreath(int x, int y, int z)
+    {
+        bool Open(int ax, int ay, int az) { var s = client.World.GetState(ax, ay, az); return s >= 0 && !D.HasCollision(s) && (D.StateFlags[s] & GameData.FlagLava) == 0; }
+        bool Air(int ax, int ay, int az) => Open(ax, ay, az) && (D.StateFlags[client.World.GetState(ax, ay, az)] & GameData.FlagWater) == 0;
+        var seen = new HashSet<(int, int, int)> { (x, y, z) };
+        var queue = new Queue<(int X, int Y, int Z, int Moves)>();
+        queue.Enqueue((x, y, z, 0));
+        while (queue.Count > 0)
+        {
+            var c = queue.Dequeue();
+            if (Air(c.X, c.Y + 1, c.Z)) return (c.X, c.Y, c.Z);
+            if (c.Moves >= 16) continue;
+            foreach (var (dx, dy, dz) in new[] { (1, 0, 0), (-1, 0, 0), (0, 0, 1), (0, 0, -1), (0, 1, 0), (0, -1, 0) })
+            {
+                var n = (c.X + dx, c.Y + dy, c.Z + dz);
+                if (Open(n.Item1, n.Item2, n.Item3) && Open(n.Item1, n.Item2 + 1, n.Item3) && seen.Add(n)) queue.Enqueue((n.Item1, n.Item2, n.Item3, c.Moves + 1));
+            }
+        }
+        return null;
+    }
 
     // ---------------------------------------------------------------- where it is hot and where it is not (his own readings)
 

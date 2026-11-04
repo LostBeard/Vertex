@@ -462,6 +462,87 @@ public class LiveDangerChoiceTests
     }
 
     [Test]
+    public async Task UnderARoofInAFloodedCave_HeSwimsToTheAirThereIs()
+    {
+        // Two-high flooded tunnel in solid rock, open water nowhere over him; a pocket of air six or so blocks along. Straight up is all he used to know: he drowned like this in iron tools, live.
+        var (client, skills, tasks, ax, az) = await JoinAsync("Caver",
+            (x, z) => $"fill {x + 2} 183 {z - 4} {x + 18} 199 {z + 4} minecraft:stone",
+            (x, z) => $"fill {x + 4} 187 {z - 1} {x + 11} 188 {z + 1} minecraft:water",
+            (x, z) => $"fill {x + 12} 187 {z - 1} {x + 14} 191 {z + 1} minecraft:air");
+        await using var _ = client;
+        var hurts = new List<string>();
+        client.Damaged += d => { lock (hurts) hurts.Add(d.Type); };
+        using var reflexes = new Reflexes(client, skills, tasks, () => Character.BuiltIn[0].Style);
+        skills.Trace += m => TestContext.Out.WriteLine(m);
+        await _server.CommandAsync($"tp Caver {ax + 5.5} 187 {az + 0.5}");
+        await Wait.UntilAsync(() => client.FeetBlock.Y == 187 && client.Air < 280, Timeout, () => $"going under, at {client.FeetBlock}, air {client.Air}");
+        await Wait.UntilAsync(() => tasks.Current == "coming up for air", Timeout, () => $"coming up (air {client.Air}, doing {tasks.Current})");
+        await Wait.UntilAsync(() => client.Air >= 280, TimeSpan.FromSeconds(30), () => $"breath back (air {client.Air}, at {client.FeetBlock}, doing {tasks.Current})");
+        Assert.That(client.FeetBlock.X, Is.GreaterThanOrEqualTo(ax + 11), "he went to the pocket");
+        lock (hurts) Assert.That(hurts, Does.Not.Contain("drown"));
+        tasks.Stop();
+    }
+
+    [Test]
+    public async Task WithNoAirInReach_HeDigsUpThroughTheRoof()
+    {
+        var (client, skills, tasks, ax, az) = await JoinAsync("Roofed",
+            (x, z) => $"fill {x + 2} 183 {z - 4} {x + 12} 199 {z + 4} minecraft:stone",
+            (x, z) => $"fill {x + 4} 187 {z - 2} {x + 8} 188 {z + 2} minecraft:water",
+            (x, z) => $"fill {x + 4} 190 {z - 2} {x + 8} 192 {z + 2} minecraft:air");
+        await using var _ = client;
+        await _server.CommandAsync("give Roofed minecraft:iron_pickaxe");
+        await Wait.UntilAsync(() => skills.InventorySummary().Contains("iron pickaxe"), Timeout, () => skills.InventorySummary());
+        var hurts = new List<string>();
+        client.Damaged += d => { lock (hurts) hurts.Add(d.Type); };
+        using var reflexes = new Reflexes(client, skills, tasks, () => Character.BuiltIn[0].Style);
+        skills.Trace += m => TestContext.Out.WriteLine(m);
+        await _server.CommandAsync($"tp Roofed {ax + 6.5} 187 {az + 0.5}");
+        await Wait.UntilAsync(() => client.FeetBlock.Y == 187 && client.Air < 280, Timeout, () => $"going under, at {client.FeetBlock}, air {client.Air}");
+        await Wait.UntilAsync(() => client.Air >= 280, TimeSpan.FromSeconds(30), () => $"breath back (air {client.Air}, at {client.FeetBlock}, doing {tasks.Current})");
+        Assert.That(client.World.GetState(ax + 6, 189, az), Is.EqualTo(client.World.GetState(ax + 6, 190, az)), "the roof over him is gone");
+        lock (hurts) Assert.That(hurts, Does.Not.Contain("drown"));
+        tasks.Stop();
+    }
+
+    [Test]
+    public async Task HeDies_AndGoesBackForHisThings_AndWithNothingOnHimThereIsNothingToGoBackFor()
+    {
+        var (client, skills, _, ax, az) = await JoinAsync("Fetcher");
+        await using var __ = client;
+        skills.Trace += m => TestContext.Out.WriteLine(m);
+        client.Died += _ => { var (x, y, z) = client.Position; skills.NoteDiedHere(x, y, z); };
+        var spawned = 0;
+        client.Spawned += () => Interlocked.Increment(ref spawned);
+
+        // Nothing on him: nothing to fetch.
+        skills.NoteKit();
+        Assert.That(skills.ThingsToFetch, Is.False);
+
+        await _server.CommandAsync("give Fetcher minecraft:iron_pickaxe");
+        await _server.CommandAsync("give Fetcher minecraft:cobblestone 12");
+        await Wait.UntilAsync(() => skills.InventorySummary().Contains("iron pickaxe"), Timeout, () => skills.InventorySummary());
+        skills.NoteKit();
+        await _server.CommandAsync($"tp Fetcher {ax + 15.5} 200 {az + 0.5}");
+        await Wait.UntilAsync(() => client.FeetBlock.X == ax + 15, Timeout, () => $"at {client.FeetBlock}");
+        await _server.CommandAsync("damage Fetcher 100 minecraft:arrow");
+        await Wait.UntilAsync(() => Volatile.Read(ref spawned) > 0 && client.Health >= 20f, Timeout, () => $"the respawn (health {client.Health})");
+        Assert.That(skills.ThingsToFetch, Is.True);
+        Assert.That(skills.InventorySummary(), Does.Not.Contain("iron pickaxe"));
+        // Comes back on the far side of the stage, 30 blocks off: a hop first, then the drops.
+        await _server.CommandAsync($"tp Fetcher {ax - 15.5} 200 {az + 0.5}");
+        await Wait.UntilAsync(() => client.FeetBlock.X == ax - 16 && client.OnGround, Timeout, () => $"at {client.FeetBlock}");
+
+        using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(90));
+        var (ok, said) = await skills.FetchThingsAsync(cts.Token);
+        TestContext.Out.WriteLine(said);
+        Assert.That(ok, Is.True, said);
+        Assert.That(skills.InventorySummary(), Does.Contain("iron pickaxe"));
+        Assert.That(skills.InventorySummary(), Does.Contain("cobblestone"));
+        Assert.That(skills.ThingsToFetch, Is.False, "once is enough");
+    }
+
+    [Test]
     public async Task WithNoTools_HeDoesNotSettleOnBareCoolGround_HeGoesOnToCoolTrees()
     {
         // From burning desert with a tree in it, past cool bare ground, to a cool tree further on. The nearest wood burns; the nearest cool ground has none.

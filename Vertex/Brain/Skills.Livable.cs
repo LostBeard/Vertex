@@ -254,7 +254,7 @@ public sealed partial class Skills
                     _heading ??= new[] { (0, -1), (1, 0), (0, 1), (-1, 0) }[Random.Shared.Next(4)];
                     goal = ((int)fx + _heading.Value.X * 96, (int)fz + _heading.Value.Z * 96);
                 }
-                Trace?.Invoke($"too hot to live here ({t:0.#} degrees, {here?.Replace('_', ' ')}): heading for {goal.X} {goal.Z}{(land == null ? ", no land in sight" : "")}");
+                Trace?.Invoke($"somewhere to live ({t:0.#} degrees, {here?.Replace('_', ' ')}{(needsWood ? ", no tools yet" : "")}): heading for {goal.X} {goal.Z}{(land == null ? ", no land in sight" : "")}");
                 using var step = CancellationTokenSource.CreateLinkedTokenSource(ct);
                 step.CancelAfter(TimeSpan.FromSeconds(8));
                 try { await client.GoToAsync(Goal.XZ(goal.X, goal.Z), new PathOptions { MaxNodes = 15_000, Sprint = true }, step.Token); }

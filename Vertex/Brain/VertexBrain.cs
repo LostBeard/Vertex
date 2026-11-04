@@ -558,6 +558,7 @@ public sealed class VertexBrain : IBody
             _diedAndNotBack = true;
             var (x, y, z) = Client.Position;
             LastDeath = (x, y, z, DateTime.UtcNow, message);
+            Skills.NoteDiedHere(x, y, z);
             var pains = _experience.PainSummary();
             RecordLesson(_experience.Died(MomentNow(), message));
             RefreshCoverThreshold();
@@ -847,6 +848,7 @@ public sealed class VertexBrain : IBody
                     var status =$"game mode {Client.GameMode.ToString().ToLowerInvariant()}, {(Client.Invulnerable ? "INVULNERABLE (the server says nothing can hurt him)" : "can be hurt")}, {(Client.MayFly ? "may fly" : "cannot fly")}";
                     if (status != _lastStatus) { _lastStatus = status; Log?.Invoke($"status: {status}; health {Client.Health / 2:0.#} of 10 hearts"); }
                 }
+                Skills.NoteKit();
                 if (Tasks.IsBusy) { _lastActivity = now; continue; }
                 var goal = Memory.ActiveGoals.FirstOrDefault();
                 var unstudied = goal == null && !Staying && StudyWhenIdle && Skills.UnstudiedBlocks(16).Count > 0;     // the scan only when it could matter
@@ -875,6 +877,20 @@ public sealed class VertexBrain : IBody
                     _lastActivity = now;
                     Log?.Invoke($"hungry (food {Client.Food / 2.0:0.#} of 10) and nothing to eat: going to hunt");
                     Tasks.Start("finding food", ct => Skills.GetFoodThenSummaryAsync([], hunt: true, ct));
+                    continue;
+                }
+                // His things first, while they last: everything he worked for lies where he died for five minutes, and on the way back he has nothing to lose.
+                if (SelfDirectedPlay && goal == null && !Staying && Client.IsSpawned && !_projectQueued && Client.GameMode == GameMode.Survival && Skills.ThingsToFetch)
+                {
+                    _lastActivity = now;
+                    Log?.Invoke("going back for my things");
+                    Tasks.StartReflex("going back for my things", async ct =>
+                    {
+                        var result = await Skills.FetchThingsAsync(ct);
+                        Log?.Invoke((result.Item1 ? "got my things back: " : "did not get my things back: ") + result.Item2);
+                        if (result.Item1) Companion.Post(new MilestoneEvent("your things back from where you died"));
+                        return result;
+                    });
                     continue;
                 }
                 // Before anything else, somewhere he can live: nothing gets built on land that burns him down in a minute. He has this from his own readings (the biome he stands in has read too hot, or he reads too hot now), so it is

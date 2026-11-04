@@ -104,7 +104,7 @@ public sealed class Reflexes : IDisposable
         }
         // Short of breath, whatever he is doing: up. The older rule further down only holds for an idle body, and he is never idle now: he drowned chasing fish, a job at a time (2026-11-04). Half a breath left is about what it
         // takes to come up from ten blocks down.
-        if (!_surfacing && c.Air < AirToSurfaceAt && _tick >= _nextAirTick)
+        if (!_surfacing && (c.Air < AirToSurfaceAt || (c.Air < 240 && _skills.UnderRoofUnderWater())) && _tick >= _nextAirTick)
         {
             _surfacing = true;
             _tasks.Interrupt("coming up for air", async ct =>

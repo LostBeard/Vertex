@@ -3,6 +3,7 @@ using SpawnDev.Minecraft.Crafting;
 using SpawnDev.Minecraft.Data;
 using SpawnDev.Minecraft.Entities;
 using SpawnDev.Minecraft.Items;
+using SpawnDev.Minecraft.Pathing;
 
 namespace Vertex.Brain;
 
@@ -413,6 +414,70 @@ public sealed partial class Skills
         HomeBed = (bx, by, bz);
         Home = (bx, bz);
         return (true, set ? $"I set up my bed at {bx} {by} {bz}: this is where I come back to now." : $"I lay down in the bed at {bx} {by} {bz}.");
+    }
+
+    // ---------------------------------------------------------------- his things, where he died
+
+    private bool _hadTools;
+    private (int X, int Y, int Z, DateTime At)? _dropped;
+
+    /// <summary>What he carries, looked at while he is alive: by the time the death packet comes the inventory may already be empty.</summary>
+    public void NoteKit() { if (client.Health > 0) _hadTools = HasPickaxe(1); }
+
+    /// <summary>He died here. His things lie here for five minutes, if he had any worth the walk.</summary>
+    public void NoteDiedHere(double x, double y, double z)
+    {
+        _dropped = _hadTools ? ((int)Math.Floor(x), (int)Math.Floor(y), (int)Math.Floor(z), DateTime.UtcNow) : null;
+        _hadTools = false;
+    }
+
+    /// <summary>Do his things still lie where he died? Items last five minutes in the game; the walk takes time and the last half minute is no use.</summary>
+    public bool ThingsToFetch => _dropped is { } d && DateTime.UtcNow - d.At < TimeSpan.FromMinutes(4.5);
+
+    /// <summary>
+    /// Back to where he died for what he dropped, as a player does: dying cost him the tools of 11 minutes' work, lying about 310 blocks away from where he came back, and he started again from a tree (live 2026-11-04). Dying on the way costs nothing, he
+    /// has nothing on him. Over when he has been: restarted after an interruption, it carries on.
+    /// </summary>
+    public async Task<(bool, string)> FetchThingsAsync(CancellationToken ct)
+    {
+        if (_dropped is not { } d) return (false, "I have nothing to go back for.");
+        var stuck = 0;
+        while (ThingsToFetch)
+        {
+            ct.ThrowIfCancellationRequested();
+            var (fx, _, fz) = client.Position;
+            if (Math.Sqrt((fx - d.X) * (fx - d.X) + (fz - d.Z) * (fz - d.Z)) <= 24) break;
+            Trace?.Invoke($"going back for my things at {d.X} {d.Y} {d.Z}");
+            using var step = CancellationTokenSource.CreateLinkedTokenSource(ct);
+            step.CancelAfter(TimeSpan.FromSeconds(8));
+            try { await client.GoToAsync(Goal.XZ(d.X, d.Z), new PathOptions { MaxNodes = 15_000, Sprint = true }, step.Token); }
+            catch (OperationCanceledException) when (!ct.IsCancellationRequested) { }
+            var (ax, _, az) = client.Position;
+            if (Math.Sqrt((ax - fx) * (ax - fx) + (az - fz) * (az - fz)) >= 2) { stuck = 0; continue; }
+            if (++stuck >= 4) { _dropped = null; return (false, $"I couldn't get back to where I died, at {d.X} {d.Y} {d.Z}."); }
+            await client.WaitTicksAsync(20, ct);
+        }
+        // Near enough to see them. They may be down in a cave, so he may dig.
+        var given = new HashSet<int>();
+        var been = false;
+        for (var tries = 0; tries < 16 && ThingsToFetch; tries++)
+        {
+            ct.ThrowIfCancellationRequested();
+            var (px, py, pz) = client.Position;
+            var drop = client.Entities.Values.Where(e => e.IsItem && !given.Contains(e.Id) && e.DistanceTo(d.X + 0.5, d.Y + 0.5, d.Z + 0.5) < 20).OrderBy(e => e.DistanceTo(px, py, pz)).FirstOrDefault();
+            if (drop == null && been) break;
+            using var step = CancellationTokenSource.CreateLinkedTokenSource(ct);
+            step.CancelAfter(TimeSpan.FromSeconds(15));
+            var options = new PathOptions { MaxNodes = 8_000, CanDig = true };
+            var reached = false;
+            try { reached = await client.GoToAsync(drop != null ? Goal.Near(drop.X, drop.Y, drop.Z, 0.8) : Goal.Near(d.X + 0.5, d.Y, d.Z + 0.5, 3), options, step.Token); }
+            catch (OperationCanceledException) when (!ct.IsCancellationRequested) { }
+            if (drop == null) been = true;
+            else if (!reached) given.Add(drop.Id);
+            await client.WaitTicksAsync(4, ct);
+        }
+        _dropped = null;
+        return HasPickaxe(1) ? (true, $"I went back to where I died and picked up my things. I have: {InventorySummary()}.") : (false, "I went back to where I died and my tools weren't there any more.");
     }
 
     /// <summary>Where he last made his bed the place he comes back to, or null. Kept by the brain across restarts.</summary>

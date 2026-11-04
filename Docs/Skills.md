@@ -110,7 +110,9 @@ Built in, without being asked:
 - A creeper whose **fuse is lit** is hit once and then run from until the fuse stops (and again if it follows).
 - It **backs off at three hearts** instead of fighting on.
 - **Reflexes** run without waiting for the language model: eating when hungry and idle, getting away from a lit creeper, coming up for air under
-  water, wearing better armor as soon as it has it, and fight-or-flight when a mob hurts it (a small trained policy, with a hand-written rule behind it).
+  water (straight up if the water is open; under a roof, to the nearest air he can swim to, and with none in reach, up through the roof), wearing better armor
+  as soon as it has it, and fight-or-flight when a mob hurts it (a small trained policy, with a hand-written rule behind it).
+- **After a death with tools on him** he goes back for his things first, within the 4.5 minutes they are sure to last, digging down to them if he must.
 - **Idle safety** (added 2026-11-01 after he stood in a river among four creepers): with no job running, a hostile mob within 8 blocks makes him
   walk away from it (always away: a brave character fights one that hurt it, it does not pick fights with whatever wanders by; he heads for ground
   at least 10 blocks from the middle of all the monsters near him), and standing in water for about 2.5 seconds makes him walk to the nearest dry
