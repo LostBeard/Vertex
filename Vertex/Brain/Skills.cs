@@ -2241,32 +2241,88 @@ public sealed partial class Skills(MinecraftClient client)
         return (!client.OnFire, client.OnFire ? "I'm still on fire." : "I put the fire out in the water.");
     }
 
-    /// <summary>Into the nearest water and treads it until his temperature is down to `target`, or for 90 seconds at most (water cools by a fixed amount, so at the hottest part of the day it may not get there).</summary>
-    public async Task<(bool, string)> CoolOffAsync(Func<double?> temperature, double target, CancellationToken ct)
+    // ---------------------------------------------------------------- where it is hot and where it is not (his own readings)
+
+    private const int HeatCell = 3;     // cells of 8 by 8 blocks
+    private readonly Dictionary<(int X, int Z), (double Degrees, DateTime At)> _heat = [];
+
+    /// <summary>
+    /// Writes down what his temperature is where he stands. On mc.spawndev.com it goes with the place, not the hour or the water: 46.6 for a whole minute in the water beside the island, 25 in the open sea 40 blocks west (2026-11-03),
+    /// so where to cool off is something he has to find out and remember.
+    /// </summary>
+    public void NoteHeat(double degrees)
     {
-        if (NearestWater(48) is not { } water) return (false, "There is no water near to cool off in.");
-        for (var hop = 0; hop < 20 && client.World.GetBlock(client.FeetBlock.X, client.FeetBlock.Y, client.FeetBlock.Z)?.Name != "minecraft:water" && !client.BodySnapshot().InWater; hop++)
-        {
-            ct.ThrowIfCancellationRequested();
-            using var step = CancellationTokenSource.CreateLinkedTokenSource(ct);
-            step.CancelAfter(TimeSpan.FromSeconds(3));
-            try { await client.GoToAsync(Goal.XZ(water.X, water.Z), new PathOptions { MaxNodes = 8_000, Sprint = true }, step.Token); }
-            catch (OperationCanceledException) when (!ct.IsCancellationRequested) { }
-        }
-        var seconds = 0;
+        var (x, _, z) = client.FeetBlock;
+        lock (_heat) _heat[(x >> HeatCell, z >> HeatCell)] = (degrees, DateTime.UtcNow);
+    }
+
+    /// <summary>The middle of the nearest place he has found no hotter than `degrees` in the last half hour, or null.</summary>
+    public (int X, int Z)? NearestCool(double degrees)
+    {
+        var (x, _, z) = client.FeetBlock;
+        var cutoff = DateTime.UtcNow.AddMinutes(-30);
+        lock (_heat)
+            return _heat.Where(c => c.Value.Degrees <= degrees && c.Value.At >= cutoff)
+                .Select(c => ((c.Key.X << HeatCell) + 4, (c.Key.Z << HeatCell) + 4))
+                .OrderBy(c => (c.Item1 - x) * (c.Item1 - x) + (c.Item2 - z) * (c.Item2 - z)).Cast<(int X, int Z)?>().FirstOrDefault();
+    }
+
+    /// <summary>Somewhere he has no reading for: the nearest loaded ground or water out along the compass, to go and find out.</summary>
+    private (int X, int Z)? NearestUnknownHeat()
+    {
+        var (x, _, z) = client.FeetBlock;
+        var cutoff = DateTime.UtcNow.AddMinutes(-30);
+        for (var d = 16; d <= 96; d += 8)
+            foreach (var (dx, dz) in new[] { (-1, 0), (1, 0), (0, -1), (0, 1), (-1, -1), (1, 1), (-1, 1), (1, -1) })
+            {
+                int nx = x + dx * d, nz = z + dz * d;
+                if (!client.World.IsLoaded(nx, nz)) continue;
+                lock (_heat) if (_heat.TryGetValue((nx >> HeatCell, nz >> HeatCell), out var known) && known.At >= cutoff) continue;
+                return (nx, nz);
+            }
+        return null;
+    }
+
+    /// <summary>
+    /// Goes where it is cool and stays until he has cooled and healed, then the job he was on carries on. Goes to the nearest place he knows of; knowing none, he goes and finds out, a place at a time, staying a few seconds at each
+    /// to read it. Water alone is no answer (he burned down to nothing treading the warm water beside the island). At most three minutes.
+    /// </summary>
+    public async Task<(bool, string)> CoolOffAsync(Func<double?> temperature, double coolEnough, float healTo, CancellationToken ct)
+    {
+        var started = DateTime.UtcNow;
+        var cooled = DateTime.MinValue;
         try
         {
-            while (seconds < 90 && temperature() is double t && t > target)
+            while (DateTime.UtcNow - started < TimeSpan.FromMinutes(3))
             {
                 ct.ThrowIfCancellationRequested();
-                client.Controls.Jump = true;      // head above the water
-                await client.WaitTicksAsync(20, ct);
-                seconds++;
+                var now = temperature();
+                if (now is double t && t <= coolEnough)
+                {
+                    if (cooled == DateTime.MinValue) cooled = DateTime.UtcNow;
+                    // Cool: wait here for his health. Natural healing needs a nearly full food bar, so without one a short rest is all there is to wait for.
+                    var healed = client.Health >= healTo || (client.Food < 18 && DateTime.UtcNow - cooled > TimeSpan.FromSeconds(15));
+                    if (healed && client.Food < 18 && HasFood) { await EatAsync(ct); continue; }      // food first: with it he heals on
+                    if (healed) return (true, $"I cooled off ({t:0.#} degrees) and I'm at {client.Health / 2:0.#} hearts.");
+                    client.Controls.Jump = client.BodySnapshot().InWater;      // head above the water while he waits
+                    await client.WaitTicksAsync(20, ct);
+                    continue;
+                }
+                cooled = DateTime.MinValue;
+                var goal = NearestCool(coolEnough) ?? NearestUnknownHeat();
+                if (goal is not { } g) return (false, "I don't know anywhere cooler, and there is nowhere left to look.");
+                Trace?.Invoke($"too hot ({now:0.#} degrees): heading for {g.X} {g.Z}");
+                using var step = CancellationTokenSource.CreateLinkedTokenSource(ct);
+                step.CancelAfter(TimeSpan.FromSeconds(6));
+                try { await client.GoToAsync(Goal.XZ(g.X, g.Z), new PathOptions { MaxNodes = 12_000, Sprint = true }, step.Token); }
+                catch (OperationCanceledException) when (!ct.IsCancellationRequested) { }
+                // Stay long enough to read the place: the number follows him within a few seconds.
+                client.Controls.Jump = client.BodySnapshot().InWater;
+                await client.WaitTicksAsync(50, ct);
             }
         }
         finally { client.Controls.Clear(); }
-        var now = temperature();
-        return (now is not double done || done <= target, $"I cooled off in the water for {seconds} seconds ({now:0.#} degrees).");
+        return (false, $"I couldn't get cool in three minutes ({temperature():0.#} degrees).");
     }
 
     /// <summary>

@@ -32,8 +32,12 @@ public sealed class Reflexes : IDisposable
     public Func<double?>? Temperature { get; set; }
     /// <summary>The temperature from which he goes to cool off: starts at the plugin's first ill effect on its product page (no healing at +50), and the brain lowers it when heat is seen to hurt below that.</summary>
     public double HotAt { get; set; } = 50;
-    /// <summary>How far below <see cref="HotAt"/> he cools before going back to work.</summary>
+    /// <summary>How far below <see cref="HotAt"/> counts as cool.</summary>
     public const double CoolBy = 6;
+    /// <summary>In the heat, the health (half hearts) at which he stops working and goes to cool off.</summary>
+    public const float RetreatAtHealth = 10;
+    /// <summary>The health (half hearts) he heals to before going back.</summary>
+    public const float HealTo = 18;
 
     private long _nextFireTick, _lastFireOutTick = long.MinValue / 2;
     private int _fireReturns;
@@ -86,21 +90,20 @@ public sealed class Reflexes : IDisposable
         var hurt = c.Health < _lastHealth - 0.01f;
         _lastHealth = c.Health;
 
-        // Too hot (a server's temperature plugin): into the water before it starts to hurt, and back to what he was doing once he has cooled. He gets about 40 seconds on land at midday on a hot island (2026-11-03), so this
-        // is the rhythm of a working day there, not an emergency.
-        if (!_cooling && _tick >= _nextCoolTick && Temperature?.Invoke() is double hot && hot >= HotAt && !HandlesMonsters(_tasks.Current) && _skills.NearestWater(48) != null)
+        // Too hot (a server's temperature plugin): the heat takes a heart every 6 seconds or so and he has work to do in it, as a player does: he stays at it while his health holds, then goes where it is cool, heals, and comes back
+        // to what he was doing. Going at the first high reading he would never reach a tree on a hot island; staying in the water beside it he burned down to nothing (2026-11-03).
+        if (!_cooling && _tick >= _nextCoolTick && Temperature?.Invoke() is double hot && hot >= HotAt && c.Health <= RetreatAtHealth && !HandlesMonsters(_tasks.Current))
         {
             _cooling = true;
             var target = HotAt - CoolBy;
-            Decided?.Invoke($"too hot ({hot:0.#} degrees, I cool off from {HotAt:0.#}): into the water until {target:0.#}");
-            _tasks.Interrupt("cooling off in the water", async ct =>
+            Decided?.Invoke($"too hot ({hot:0.#} degrees) and down to {c.Health / 2:0.#} hearts: going where it is under {target:0.#} to heal");
+            _tasks.Interrupt("cooling off", async ct =>
             {
-                try { return await _skills.CoolOffAsync(() => Temperature?.Invoke(), target, ct); }
+                try { return await _skills.CoolOffAsync(() => Temperature?.Invoke(), target, HealTo, ct); }
                 finally { _cooling = false; _nextCoolTick = _tick + 100; }
             }, quiet: true);
             return;
         }
-        if (_cooling) return;
 
         // On fire: into the water, whatever he was doing (he goes back to it after).
         // Unless water does not help: a server plugin can set him alight from his temperature, over and over (RealisticSeasons at +65 C). Live 2026-11-03 this reflex then restarted his job every few seconds, so he

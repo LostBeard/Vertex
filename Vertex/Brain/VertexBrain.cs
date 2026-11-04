@@ -625,7 +625,8 @@ public sealed class VertexBrain : IBody
             if (TemperatureIn(m.Content) is double degrees)
             {
                 Temperature = degrees;
-                if (_temperatureLogged is not double last || Math.Abs(last - degrees) >= 5) { _temperatureLogged = degrees; Log?.Invoke($"temperature: {m.Content.Trim()}"); }
+                Skills.NoteHeat(degrees);
+                if (_temperatureLogged is not double last || Math.Abs(last - degrees) >= 5) { _temperatureLogged = degrees; var (hx, _, hz) = Client.FeetBlock; Log?.Invoke($"temperature: {m.Content.Trim()} at {hx} {hz}"); }
             }
             else if (DateTime.UtcNow - _actionBarLogged > TimeSpan.FromSeconds(30))
             {

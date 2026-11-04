@@ -196,22 +196,19 @@ public class LiveDangerChoiceTests
     }
 
     [Test]
-    public async Task TooHot_HeCoolsOffInTheWater_ThenGoesBackToHisJob()
+    public async Task InTheHeat_HeWorksWhileHisHealthHolds_ThenFindsWhereItIsCool_HealsAndGoesBack()
     {
-        var (client, skills, tasks, ax, az) = await JoinAsync("HotHead", (x, z) => $"fill {x + 5} 197 {z - 2} {x + 8} 199 {z + 2} minecraft:water");
+        var (client, skills, tasks, ax, az) = await JoinAsync("HotHead");
         await using var _ = client;
-        // What the plugin does, for real on the wire: the line on the action bar, hot on land and cooling in the water.
+        // What the plugin does on mc.spawndev.com, for real on the wire: the line on the action bar goes with the place. Only the far side of this floor is cool, and nothing marks it: he has to find it.
         double? shown = null;
-        client.ChatReceived += m => { if (m.Kind == ChatKind.ActionBar && VertexBrain.TemperatureIn(m.Content) is double d) shown = d; };
+        client.ChatReceived += m => { if (m.Kind == ChatKind.ActionBar && VertexBrain.TemperatureIn(m.Content) is double d) { shown = d; skills.NoteHeat(d); } };
         using var stop = new CancellationTokenSource();
-        var degrees = 60.0;
         var plugin = Task.Run(async () =>
         {
             while (!stop.IsCancellationRequested)
             {
-                var (x, y, z) = client.FeetBlock;
-                var wet = client.World.GetBlock(x, y, z)?.Name == "minecraft:water" || client.World.GetBlock(x, y - 1, z)?.Name == "minecraft:water";
-                if (wet) degrees = Math.Max(30, degrees - 3);
+                var degrees = client.FeetBlock.X <= ax - 12 ? 25.0 : 56.6;
                 await _server.CommandAsync($"title HotHead actionbar {{\"text\":\"Temperature: {degrees:0.0} C\"}}");
                 await Task.Delay(500);
             }
@@ -221,10 +218,19 @@ public class LiveDangerChoiceTests
             var started = 0;
             tasks.Start("a long job", async ct => { Interlocked.Increment(ref started); await Task.Delay(-1, ct); return (true, "done"); });
             using var reflexes = new Reflexes(client, skills, tasks, () => Character.BuiltIn[0].Style) { Temperature = () => shown };
-            await Wait.UntilAsync(() => tasks.Current == "cooling off in the water", Timeout, () => $"going to cool off (shown {shown}, doing {tasks.Current})");
-            await Wait.UntilAsync(() => client.FeetBlock.X >= ax + 5, Timeout, () => $"reaching the water, at {client.FeetBlock}");
-            await Wait.UntilAsync(() => tasks.Current == "a long job", TimeSpan.FromSeconds(60), () => $"back to the job (shown {shown}, doing {tasks.Current})");
-            Assert.That(degrees, Is.LessThanOrEqualTo(reflexes.HotAt - Reflexes.CoolBy + 3), "he stayed until he had cooled");
+            await Wait.UntilAsync(() => shown >= 50, Timeout, () => "the heat to show");
+            await client.WaitTicksAsync(60);
+            Assert.That(tasks.Current, Is.EqualTo("a long job"), "at full health he keeps working in it");
+
+            await _server.CommandAsync("damage HotHead 12 minecraft:generic");
+            await Wait.UntilAsync(() => tasks.Current == "cooling off", Timeout, () => $"going to cool off (health {client.Health}, doing {tasks.Current})");
+            await Wait.UntilAsync(() => client.FeetBlock.X <= ax - 12, TimeSpan.FromSeconds(90), () => $"finding the cool side, at {client.FeetBlock}, shown {shown}");
+            TestContext.Out.WriteLine($"found it at {client.FeetBlock}");
+            await Wait.UntilAsync(() => skills.NearestCool(44) != null, Timeout, () => "the place on his map, at the next reading");
+            await Wait.UntilAsync(() => tasks.Current == "a long job", TimeSpan.FromSeconds(120), () => $"healing and back to the job (health {client.Health}, doing {tasks.Current})");
+            // Natural healing stops under 18 food, and he has nothing to eat here: then a short rest is all there is to wait for.
+            Assert.That(client.Health >= Reflexes.HealTo || client.Food < 18, Is.True, $"he stayed until he had healed, or could heal no more (health {client.Health}, food {client.Food})");
+            Assert.That(client.Health, Is.GreaterThan(8f), "the 12 points of damage left him 8: he healed some");
             Assert.That(Volatile.Read(ref started), Is.GreaterThanOrEqualTo(2), "the job restarted, from where things stand");
             tasks.Stop();
         }
