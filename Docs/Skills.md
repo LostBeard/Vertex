@@ -112,6 +112,8 @@ Built in, without being asked:
 - **Reflexes** run without waiting for the language model: eating when hungry and idle, getting away from a lit creeper, coming up for air under
   water (straight up if the water is open; under a roof, to the nearest air he can swim to, and with none in reach, up through the roof), wearing better armor
   as soon as it has it, and fight-or-flight when a mob hurts it (a small trained policy, with a hand-written rule behind it).
+- **A bow and arrows** are on his list after stone tools (string from spiders, arrows made from flint, a stick and a feather). With them, shooting is one of the things he chooses between in danger (from 6 blocks and with 3 hearts or more), and he finds out
+  what it is worth the same way as the others: from what comes of it.
 - **After a death with tools on him** he goes back for his things first, within the 4.5 minutes they are sure to last, digging down to them if he must.
 - **Heat** (a server temperature plugin shown in the action bar): a high number alone means nothing to him. He believes heat is dangerous from the first time it hurts him, and stops after 20 seconds of high readings with no hurt. While he believes it,
   he learns what each biome reads by being in it (the middle of its last 40 readings), his paths go round biomes he knows to be too hot, at up to five times the distance, and cross when there is no way round; burning, he heads for the nearest place

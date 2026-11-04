@@ -370,6 +370,8 @@ public sealed class Reflexes : IDisposable
         if (foe.Name != "minecraft:creeper" && c.Health >= 6 && foeClass != "creeper") legal.Add(DangerAction.Fight);
         if (_skills.DigInProblem() == null) legal.Add(DangerAction.DigIn);
         if (_skills.FindOpenWater() != null) legal.Add(DangerAction.SwimOut);
+        // With something to shoot with and room to draw (under 5 blocks ShootAsync fights by hand instead, and at low health it stops at once).
+        if (_skills.CanShoot && foe.DistanceTo(x, y, z) >= 6 && c.Health >= 6) legal.Add(DangerAction.Shoot);
         legal.RemoveAll(a => _armBlockedUntil.GetValueOrDefault(a) > _tick);
         if (legal.Count == 0) legal.Add(DangerAction.Flee);
 
@@ -386,6 +388,7 @@ public sealed class Reflexes : IDisposable
             DangerAction.Fight => ($"fighting the {kind.Replace('_', ' ')}", (Func<CancellationToken, Task<(bool, string)>>)(ct => _skills.AttackAsync(kind, ct))),
             DangerAction.DigIn => ("taking cover underground", ct => _skills.TakeCoverAsync(ct)),
             DangerAction.SwimOut => ("swimming out to open water", ct => _skills.SwimOutAsync(ct)),
+            DangerAction.Shoot => ($"shooting the {kind.Replace('_', ' ')}", ct => _skills.ShootAsync(kind, ct)),
             _ => ("stepping away from monsters", ct => _skills.StepAwayFromMonstersAsync(AvoidWithin + 2, ct)),
         };
         Func<CancellationToken, Task<(bool, string)>> wrapped = async ct =>

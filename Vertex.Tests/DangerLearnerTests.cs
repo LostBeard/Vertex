@@ -459,6 +459,60 @@ public class LiveDangerChoiceTests
         tasks.Stop();
     }
 
+    [Test]
+    public async Task HeMakesABowAndArrows_FromWhatHeCarries_NotByHuntingSkeletons()
+    {
+        var (client, skills, _, _, _) = await JoinAsync("Fletcher");
+        await using var _ = client;
+        foreach (var (item, count) in new[] { ("oak_log", 4), ("string", 3), ("flint", 2), ("feather", 2) })
+            await _server.CommandAsync($"give Fletcher minecraft:{item} {count}");
+        await Wait.UntilAsync(() => client.Inventory.Count("feather") == 2, Timeout, () => skills.InventorySummary());
+        using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(90));
+        var (bow, saidBow) = await skills.ObtainAsync("minecraft:bow", 1, cts.Token);
+        var (arrows, saidArrows) = await skills.ObtainAsync("minecraft:arrow", 8, cts.Token);
+        TestContext.Out.WriteLine(saidBow + " / " + saidArrows);
+        Assert.That(bow, Is.True, saidBow);
+        Assert.That(arrows, Is.True, saidArrows);
+        Assert.That(skills.CanShoot, Is.True);
+        Assert.That(client.Inventory.Count("arrow"), Is.EqualTo(8));
+    }
+
+    [Test]
+    public async Task WithABow_ShootingIsOnOffer_AndWhatComesOfItIsWrittenDown()
+    {
+        var (client, skills, tasks, ax, az) = await JoinAsync("Archer");
+        await using var _ = client;
+        var file = Path.Combine(TestContext.CurrentContext.WorkDirectory, $"danger-{Guid.NewGuid():N}.jsonl");
+        try
+        {
+            await _server.CommandAsync("give Archer minecraft:bow");
+            await _server.CommandAsync("give Archer minecraft:arrow 32");
+            await Wait.UntilAsync(() => skills.CanShoot, Timeout, () => skills.InventorySummary());
+            // What he has found so far: shooting goes well, nothing else does. This test is about the choice reaching the body, not about what he should come to think.
+            var past = new List<string>();
+            foreach (var (action, reward) in new[] { ("Shoot", 1), ("Fight", 0), ("Flee", 0), ("DigIn", 0), ("SwimOut", 0) })
+                for (var i = 0; i < 30; i++)
+                    past.Add($$"""{"At":"2026-11-04T22:00:00Z","Foe":"melee","Kit":"bare","Health":"high","Action":"{{action}}","Reward":{{reward}},"Died":false,"HealthBefore":20,"HealthAfter":20,"Seconds":5}""");
+            File.WriteAllLines(file, past);
+            var learner = new DangerLearner(file, new Random(7));
+            using var reflexes = new Reflexes(client, skills, tasks, () => Character.BuiltIn[0].Style) { Learner = learner };
+            var decisions = new List<string>();
+            reflexes.Decided += m => { lock (decisions) decisions.Add(m); TestContext.Out.WriteLine(m); };
+            var before = learner.Outcomes;
+            // Close enough to worry about, far enough to draw.
+            await _server.CommandAsync($"summon minecraft:zombie {ax + 7} 200 {az}");
+            await Wait.UntilAsync(() => { lock (decisions) return decisions.Any(d => d.StartsWith("shooting")); }, TimeSpan.FromSeconds(30), () => "the choice to shoot");
+            await Wait.UntilAsync(() => client.Inventory.Count("arrow") < 32, TimeSpan.FromSeconds(30), () => $"an arrow gone (doing {tasks.Current})");
+            await Wait.UntilAsync(() => learner.Outcomes > before, TimeSpan.FromSeconds(150), () => $"its result written down (doing {tasks.Current})");
+            Assert.That(File.ReadAllLines(file).Last(), Does.Contain("\"Shoot\""));
+        }
+        finally
+        {
+            await _server.CommandAsync("kill @e[type=minecraft:zombie]");
+            File.Delete(file);
+        }
+    }
+
     /// <summary>Teaches him what a place reads: he stands there and it shows, as the plugin does, once a second.</summary>
     private async Task TeachHeatAsync(MinecraftClient client, Skills skills, string name, double x, double z, double degrees)
     {

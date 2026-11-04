@@ -1939,6 +1939,9 @@ public sealed partial class Skills(MinecraftClient client)
     /// Shoots mobs with a bow from a distance: draws for a full second (full power, 3 blocks a tick), points where the arrow will be at the target's height when it arrives (leading it if it
     /// walks), releases, and goes again until it is gone. Gets closer when it is too far for an arrow, and fights it by hand when it comes too close for a bow.
     /// </summary>
+    /// <summary>A bow and something to fire from it.</summary>
+    public bool CanShoot => Have(s => s.Name == "minecraft:bow") > 0 && Have(s => s.Name == "minecraft:arrow") > 0;
+
     public async Task<(bool, string)> ShootAsync(string what, CancellationToken ct)
     {
         if (Have(s => s.Name == "minecraft:bow") == 0) return (false, "I need a bow to shoot.");

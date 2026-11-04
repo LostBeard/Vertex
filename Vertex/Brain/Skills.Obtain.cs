@@ -26,7 +26,8 @@ public sealed partial class Skills
     private static readonly Dictionary<string, string[]> Dropped = new()
     {
         ["beef"] = ["cow"], ["leather"] = ["cow"], ["porkchop"] = ["pig"], ["mutton"] = ["sheep"], ["white_wool"] = ["sheep"], ["chicken"] = ["chicken"], ["feather"] = ["chicken"], ["rabbit"] = ["rabbit"],
-        ["string"] = ["spider"], ["bone"] = ["skeleton"], ["arrow"] = ["skeleton"], ["rotten_flesh"] = ["zombie"],
+        // (Not arrows: they are made, from flint, a stick and a feather, four at a time; a skeleton that leaves some leaves them on top of that. Hunting skeletons for them is the most dangerous way there is.)
+        ["string"] = ["spider"], ["bone"] = ["skeleton"], ["rotten_flesh"] = ["zombie"],
     };
 
     private const int MaxObtainDepth = 8;
@@ -296,6 +297,9 @@ public sealed partial class Skills
         yield return new("food", 3, "some food", () => EdibleStacks.Sum(s => s.Count) >= 3);
         yield return new("minecraft:stone_pickaxe", 1, "a stone pickaxe", () => HasPickaxe(2));
         yield return new("minecraft:stone_sword", 1, "a stone sword", () => HasAny("stone_sword", "iron_sword", "diamond_sword", "netherite_sword"));
+        // Most of what hits him comes from a distance (17 of 22 hits were arrows, in 17 minutes live, 2026-11-04). What it is worth, he finds out in DangerLearner.
+        yield return new("minecraft:bow", 1, "a bow", () => HasAny("bow"));
+        yield return new("minecraft:arrow", 8, "some arrows", () => HasAny("arrow"));
         yield return new("minecraft:iron_pickaxe", 1, "an iron pickaxe", () => HasPickaxe(3));
         yield return new("minecraft:iron_sword", 1, "an iron sword", () => HasAny("iron_sword", "diamond_sword", "netherite_sword"));
         yield return new("minecraft:iron_chestplate", 1, "an iron chestplate", () => HasAny("iron_chestplate", "diamond_chestplate", "netherite_chestplate") || WearingBetter("chestplate"));
