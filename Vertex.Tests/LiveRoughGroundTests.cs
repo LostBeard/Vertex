@@ -242,6 +242,44 @@ public class LiveRoughGroundTests
         await _server.CommandAsync("kill @e[tag=vkit]");
     }
 
+    /// <summary>TJ, 2026-11-03: "unexplained [deaths] may have been skeletons: they are very good at shooting you from a distance." A skeleton with a bow, 12 blocks off, in the open.</summary>
+    [TestCase(true)]
+    [TestCase(false)]
+    public async Task ShotAtByASkeleton_HeKillsItWithASword_OrHidesUndergroundWithout(bool withSword)
+    {
+        var name = withSword ? "VertexArchSword" : "VertexArchBare";
+        var (client, ax, az) = await JoinOnRoughGroundAsync(name);
+        await using var _ = client;
+        for (var z0 = az - 30; z0 <= az + 30; z0 += 8)
+            await _server.CommandAsync($"fill {ax - 30} 150 {z0} {ax + 30} 196 {Math.Min(z0 + 7, az + 30)} minecraft:stone");
+        var stand = 200 + StripeHeight(ax, ax);
+        if (withSword) await _server.CommandAsync($"give {name} minecraft:iron_sword 1");
+        await _server.CommandAsync($"summon minecraft:skeleton {ax + 0.5} {stand} {az + 12.5} {{Tags:[\"varcher\"],HandItems:[{{id:\"minecraft:bow\",count:1}},{{}}],active_effects:[{{id:\"minecraft:fire_resistance\",duration:1000000}}]}}");
+        await Wait.UntilAsync(() => client.Entities.Values.Any(e => e.Name == "minecraft:skeleton") && (!withSword || client.Inventory.Count("iron_sword") >= 1), Timeout, () => client.Inventory.ToString());
+        var skills = new Skills(client);
+        var tasks = new TaskRunner();
+        var jobs = new System.Collections.Concurrent.ConcurrentQueue<string>();
+        tasks.Starting += jobs.Enqueue;
+        using var reflexes = new Reflexes(client, skills, tasks, () => new PlayStyle { Bravery = 0.5 }) { Enabled = true };
+        try
+        {
+            if (withSword)
+            {
+                await Wait.UntilAsync(() => !client.Entities.Values.Any(e => e.Name == "minecraft:skeleton") || client.Health <= 0, TimeSpan.FromSeconds(60), () => $"health {client.Health}; jobs {string.Join(" | ", jobs)}");
+                Assert.That(client.Health, Is.GreaterThan(0), "he lived: " + string.Join(" | ", jobs));
+                Assert.That(jobs.Any(j => j.StartsWith("fighting the skeleton")), Is.True, string.Join(" | ", jobs));
+            }
+            else
+            {
+                await Wait.UntilAsync(() => client.Position.Y <= stand - 2 || client.Health <= 0, TimeSpan.FromSeconds(40), () => $"at {client.Position}, health {client.Health}; jobs {string.Join(" | ", jobs)}");
+                Assert.That(client.Health, Is.GreaterThan(0), "he lived: " + string.Join(" | ", jobs));
+                Assert.That(jobs.Any(j => j.StartsWith("taking cover")), Is.True, string.Join(" | ", jobs));
+            }
+            TestContext.Out.WriteLine($"health {client.Health} at {client.Position}; jobs {string.Join(" | ", jobs)}");
+        }
+        finally { reflexes.Enabled = false; tasks.Stop(); await _server.CommandAsync("kill @e[tag=varcher]"); }
+    }
+
     [Test]
     public async Task ABuild_OnGroundThatIsNowhereFlat_LevelsItAndBuilds_InsteadOfRefusing()
     {

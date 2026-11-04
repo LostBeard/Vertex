@@ -2234,6 +2234,18 @@ public sealed partial class Skills(MinecraftClient client)
         return null;
     }
 
+    /// <summary>Hostile mobs that shoot or throw from a distance (TJ, 2026-11-03: "skeletons are very good at shooting you from a distance"): stepping away in the open only gives them a clear shot.</summary>
+    public static readonly HashSet<string> Ranged = ["minecraft:skeleton", "minecraft:stray", "minecraft:bogged", "minecraft:pillager", "minecraft:witch", "minecraft:piglin"];
+
+    /// <summary>The nearest ranged hostile mob within `within` blocks that he can SEE (it can see him, and an arrow needs the line), if any.</summary>
+    public Entity? NearestRanged(double within)
+    {
+        var (x, y, z) = client.Position;
+        var eye = client.EyePosition;
+        return client.Entities.Values.Where(e => Ranged.Contains(e.Name) && Hostile.Contains(e.Name) && e.DistanceTo(x, y, z) < within && Sight.CanSeeBody(client.World, eye, e.X, e.Y, e.Z))
+            .OrderBy(e => e.DistanceTo(x, y, z)).FirstOrDefault();
+    }
+
     /// <summary>Does he carry a sword or an axe?</summary>
     public bool HasWeapon => client.Inventory.Find(s => s.Name.EndsWith("_sword") || s.Name.EndsWith("_axe")).Any();
 

@@ -23,7 +23,7 @@ public sealed class Reflexes : IDisposable
     private long _nextAvoidTick, _nextLeaveWaterTick, _nextLandTick, _nextPatchTick;
     private int _tinyPatchLooks, _patchFailures;
     private int _avoidRepeats;
-    private long _nextSwatTick, _nextCoverTick;
+    private long _nextSwatTick, _nextCoverTick, _nextRangedTick;
     private long _lastAvoidTick;
 
     /// <summary>How close a monster may be, idle, before he walks away from it (blocks).</summary>
@@ -92,6 +92,22 @@ public sealed class Reflexes : IDisposable
         {
             _nextCoverTick = _tick + 600;
             _tasks.Start("taking cover underground", ct => _skills.TakeCoverAsync(ct));
+            return;
+        }
+
+        // Shot at from a distance (skeletons: TJ, 2026-11-03): walking away in the open gives the archer a clear shot, so he either closes in and hits it (with a weapon and the health for it) or gets out of
+        // its sight underground. Checked every 5 seconds; not while a job runs.
+        if (!_tasks.IsBusy && _tick >= _nextRangedTick && c.GameMode == GameMode.Survival && _skills.NearestRanged(26) is { } shooter)
+        {
+            _nextRangedTick = _tick + 100;
+            var kind = shooter.Name.Bare();
+            if (_skills.HasWeapon && c.Health >= 10)
+                _tasks.Start($"fighting the {kind} that is shooting at me", ct => _skills.AttackAsync(kind, ct));
+            else if (_tick >= _nextCoverTick)
+            {
+                _nextCoverTick = _tick + 600;
+                _tasks.Start("taking cover from an archer", ct => _skills.TakeCoverAsync(ct));
+            }
             return;
         }
 
@@ -165,6 +181,7 @@ public sealed class Reflexes : IDisposable
         }
 
         // Hit by a mob: brave characters fight it, careful ones back away from it.
+        if (hurt && _tasks.Current is { } doing && doing.StartsWith("taking cover")) hurt = false;      // digging in is the answer to being hurt: a fight started now would cancel it half way down (the archer test)
         if (hurt)
         {
             var (x, y, z) = c.Position;
