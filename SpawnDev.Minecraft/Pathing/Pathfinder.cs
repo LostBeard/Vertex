@@ -218,6 +218,9 @@ public sealed class Pathfinder
 
     private readonly record struct Node(int X, int Y, int Z);
 
+    /// <summary>What it costs on top of the move to stand at a feet block, for ground to go round rather than over (never negative: the estimate to the goal stays a lower bound). Null: all ground is alike.</summary>
+    public Func<int, int, int, double>? ExtraCost { get; set; }
+
     /// <summary>Finds a path from the feet block to the goal (or toward it, when not reachable: partial).</summary>
     public (List<PathStep> Steps, bool Complete) FindPath((int X, int Y, int Z) start, Goal goal, PathOptions options)
     {
@@ -238,7 +241,7 @@ public sealed class Pathfinder
             var gn = g[n];
             foreach (var (next, cost, step) in Neighbours(n, options))
             {
-                var ng = gn + cost;
+                var ng = gn + cost + (ExtraCost?.Invoke(next.X, next.Y, next.Z) ?? 0);
                 if (g.TryGetValue(next, out var old) && old <= ng) continue;
                 g[next] = ng;
                 came[next] = (n, step);

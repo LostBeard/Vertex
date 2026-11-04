@@ -43,7 +43,11 @@ public class TrainingSetGeneration
         var system = brain.Companion.SystemPrompt();
         var limit = int.TryParse(Environment.GetEnvironmentVariable("VERTEX_SYNTH_LIMIT"), out var n) ? n : int.MaxValue;
         var random = new Random(20261104);
-        var requests = SyntheticToolRequests.All().OrderBy(_ => random.Next()).Take(limit).ToList();
+        // Only these tools, for looking at why they are dropped. Applied after the shuffle, so a request's order among the rest does not depend on it.
+        var only = Environment.GetEnvironmentVariable("VERTEX_SYNTH_TOOLS")?.Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries).ToHashSet();
+        var requests = SyntheticToolRequests.All().OrderBy(_ => random.Next()).Where(r => only == null || only.Contains(r.Tool ?? "(no tool)")).Take(limit).ToList();
+        // Every reply, kept or dropped: 26.6% of v1 was dropped with nothing to say why.
+        await using var replies = new StreamWriter(Path.Combine(Output, "synthetic-replies.jsonl"));
         ai.Chat.MaxToolRounds = 0;     // a call comes back unexecuted: this is about what he would call, and nothing here may touch a world
 
         // The teacher: the full tool list, as he plays.
@@ -69,6 +73,8 @@ public class TrainingSetGeneration
                 ? call == null && result.TextWithoutToolCalls.Count(char.IsLetter) >= 4
                 : call != null && call.Name == request.Tool && ArgsOk(request, call.ArgumentsJson);
             index++;
+            await replies.WriteLineAsync(JsonSerializer.Serialize(new { expected = request.Tool, says = request.Says, spoken, ok, got = call?.Name, args = call?.ArgumentsJson, text = result.TextWithoutToolCalls }));
+            await replies.FlushAsync();
             if (ok && pass != null) kept.Add(new Kept($"synthetic-{index}", random.Next(5) == 0 ? "dev" : "train", request, messages, pass.RawOutput, pass.GeneratedTokenIds, pass.EndOfTurnTokenIds));
             else dropped[key] = dropped.GetValueOrDefault(key) + 1;
             if (index % 50 == 0) TestContext.Out.WriteLine($"{index} of {requests.Count}, kept {kept.Count}");

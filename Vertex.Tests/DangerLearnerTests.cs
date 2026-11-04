@@ -1,5 +1,6 @@
 using SpawnDev.Minecraft;
 using SpawnDev.Minecraft.Auth;
+using SpawnDev.Minecraft.Pathing;
 using Vertex.Brain;
 using Vertex.Tests.Live;
 
@@ -259,15 +260,12 @@ public class LiveDangerChoiceTests
         using var stop = new CancellationTokenSource();
         var plugin = Task.Run(async () =>
         {
-            // The number follows him a few seconds late, as it does live: on arriving in the plains it still reads the desert's.
-            var cooledAt = DateTime.MaxValue;
+            // Once a second, for where he is (the plugin, read by Geordi 2026-11-04).
             while (!stop.IsCancellationRequested)
             {
-                if (skills.BiomeHere == "desert") cooledAt = DateTime.MaxValue;
-                else if (cooledAt == DateTime.MaxValue) cooledAt = DateTime.UtcNow.AddSeconds(6);
-                var degrees = DateTime.UtcNow < cooledAt ? 56.6 : 25.0;
+                var degrees = skills.BiomeHere == "desert" ? 56.6 : 25.0;
                 await _server.CommandAsync($"title Leaver actionbar {{\"text\":\"Temperature: {degrees:0.0} C\"}}");
-                await Task.Delay(500);
+                await Task.Delay(1000);
             }
         });
         try
@@ -458,6 +456,86 @@ public class LiveDangerChoiceTests
         await Wait.UntilAsync(() => Volatile.Read(ref started) >= 2, TimeSpan.FromSeconds(40), () => $"his breath back and the job again (air {client.Air}, at {client.FeetBlock}, doing {tasks.Current})");
         Assert.That(client.Air, Is.GreaterThan(250));
         lock (hurts) Assert.That(hurts, Does.Not.Contain("drown"), "he never got as far as drowning");
+        tasks.Stop();
+    }
+
+    /// <summary>Teaches him what a place reads: he stands there and it shows, as the plugin does, once a second.</summary>
+    private async Task TeachHeatAsync(MinecraftClient client, Skills skills, string name, double x, double z, double degrees)
+    {
+        await _server.CommandAsync($"tp {name} {x} 200 {z}");
+        await Wait.UntilAsync(() => Math.Abs(client.Position.X - x) < 1 && Math.Abs(client.Position.Z - z) < 1, Timeout, () => $"at {client.FeetBlock}");
+        for (var i = 0; i < 5; i++) { skills.NoteHeat(degrees); await Task.Delay(1000); }
+    }
+
+    [Test]
+    public async Task HisPaths_GoRoundLandHeKnowsBurns_AndStraightOverItWhenNothingDoes()
+    {
+        var (client, skills, _, ax, az) = await JoinAsync("Rounder",
+            (x, z) => $"fillbiome {x - 20} 196 {z - 20} {x + 20} 206 {z + 20} minecraft:plains",
+            (x, z) => $"fillbiome {x + 6} 196 {z - 20} {x + 10} 206 {z + 10} minecraft:desert");
+        await using var _ = client;
+        var start = (ax + 0, 200, az);
+        var goal = Goal.XZ(ax + 16, az);
+        bool OverIt(List<PathStep> path) => path.Any(s => s.X >= ax + 6 && s.X <= ax + 10 && s.Z <= az + 10);
+        var options = new PathOptions { MaxNodes = 20_000 };
+
+        var (straight, _) = client.Pathfinder.FindPath(start, goal, options);
+        Assert.That(OverIt(straight), Is.True, "with nothing learned it is the straight way");
+
+        skills.HotAt = () => 50;
+        await TeachHeatAsync(client, skills, "Rounder", ax + 8.5, az + 0.5, 56.6);
+        Assert.That(skills.KnownTooHot("desert", 50), Is.True);
+        await TeachHeatAsync(client, skills, "Rounder", ax + 0.5, az + 0.5, 25);
+        skills.NoteHeat(47);        // one at the uneven edge of a biome says nothing about it
+        Assert.That(skills.KnownTooHot("plains", 40), Is.False, "the middle reading, not the highest");
+
+        var (round, complete) = client.Pathfinder.FindPath(start, goal, options);
+        Assert.That(complete, Is.True);
+        Assert.That(OverIt(round), Is.False, "the way round: " + string.Join(" ", round.Select(s => $"{s.X - ax},{s.Z - az}")));
+        skills.HotAt = null;
+    }
+
+    [Test]
+    public async Task TooHot_HeLeavesTheBiome_RatherThanStoppingInTheNearestWater()
+    {
+        var (client, skills, _, ax, az) = await JoinAsync("Leaves",
+            (x, z) => $"fillbiome {x - 20} 196 {z - 20} {x + 20} 206 {z + 20} minecraft:desert",
+            (x, z) => $"fillbiome {x + 18} 196 {z - 20} {x + 20} 206 {z + 20} minecraft:plains",
+            (x, z) => $"fill {x + 49} 197 {z - 20} {x + 21} 199 {z + 20} minecraft:stone",
+            (x, z) => $"fill {x + 49} 200 {z - 20} {x + 21} 203 {z + 20} minecraft:air",
+            (x, z) => $"fillbiome {x + 21} 196 {z - 20} {x + 49} 206 {z + 20} minecraft:plains",
+            (x, z) => $"fill {x + 4} 197 {z - 2} {x + 8} 199 {z + 2} minecraft:water");
+        await using var _ = client;
+        skills.Trace += m => TestContext.Out.WriteLine(m);
+        skills.HotAt = () => 50;
+        await TeachHeatAsync(client, skills, "Leaves", ax + 38.5, az + 0.5, 25);
+        await TeachHeatAsync(client, skills, "Leaves", ax + 0.5, az + 0.5, 56.6);
+        // Hot wherever the biome is, water or no water, as the plugin does.
+        using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(60));
+        var (ok, said) = await skills.CoolOffAsync(() => skills.BiomeHere == "desert" ? 56.6 : 25.0, 37.6, 18, cts.Token);
+        TestContext.Out.WriteLine(said);
+        Assert.That(ok, Is.True, said);
+        Assert.That(skills.BiomeHere, Is.EqualTo("plains"));
+        Assert.That(client.FeetBlock.X, Is.GreaterThanOrEqualTo(ax + 16), "past the pool, out in the plains (biomes come in cells of 4: the plains begin at +16)");
+        skills.HotAt = null;
+    }
+
+    [Test]
+    public async Task LitByTheHeat_HeDoesNotRunToTheWater()
+    {
+        // The same pool as OnFire_HeRunsIntoTheWater: reading too hot, the water is no use.
+        var (client, skills, tasks, ax, az) = await JoinAsync("HotFire", (x, z) => $"fill {x + 5} 197 {z - 2} {x + 8} 199 {z + 2} minecraft:water");
+        await using var _ = client;
+        using var reflexes = new Reflexes(client, skills, tasks, () => Character.BuiltIn[0].Style) { Enabled = true, Temperature = () => 56.6 };
+        var went = false;
+        using var stop = new CancellationTokenSource();
+        var watch = Task.Run(async () => { while (!stop.IsCancellationRequested) { if (tasks.Current == "putting out the fire") went = true; await Task.Delay(20); } });
+        await _server.CommandAsync($"setblock {ax} 200 {az} minecraft:fire");
+        await Wait.UntilAsync(() => client.OnFire, Timeout, () => "the fire to catch");
+        await Task.Delay(3000);
+        stop.Cancel();
+        await watch;
+        Assert.That(went, Is.False, "the water does nothing about the heat that lit him");
         tasks.Stop();
     }
 

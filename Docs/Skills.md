@@ -113,6 +113,10 @@ Built in, without being asked:
   water (straight up if the water is open; under a roof, to the nearest air he can swim to, and with none in reach, up through the roof), wearing better armor
   as soon as it has it, and fight-or-flight when a mob hurts it (a small trained policy, with a hand-written rule behind it).
 - **After a death with tools on him** he goes back for his things first, within the 4.5 minutes they are sure to last, digging down to them if he must.
+- **Heat** (a server temperature plugin shown in the action bar): a high number alone means nothing to him. He believes heat is dangerous from the first time it hurts him, and stops after 20 seconds of high readings with no hurt. While he believes it,
+  he learns what each biome reads by being in it (the middle of its last 40 readings), his paths go round biomes he knows to be too hot, at up to five times the distance, and cross when there is no way round; burning, he heads for the nearest place
+  well inside a cool biome, sooner the further that is, and does not run to water for the fire. On AubsCraft (RealisticSeasons 1.0.18): temperature = season + biome + time + altitude + shelter, still shown; TJ turned heat damage off on 2026-11-04
+  (`extremeHeatThreshold` 40 to 100), so none of this comes into play there unless that changes.
 - **Idle safety** (added 2026-11-01 after he stood in a river among four creepers): with no job running, a hostile mob within 8 blocks makes him
   walk away from it (always away: a brave character fights one that hurt it, it does not pick fights with whatever wanders by; he heads for ground
   at least 10 blocks from the middle of all the monsters near him), and standing in water for about 2.5 seconds makes him walk to the nearest dry

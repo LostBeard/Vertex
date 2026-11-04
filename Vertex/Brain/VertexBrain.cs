@@ -173,8 +173,9 @@ public sealed class VertexBrain : IBody
         Skills.LessonLearned += RecordLesson;
         Skills.Trace += m => Log?.Invoke("  (" + m + ")");
         Skills.PriorLessons = LessonsFor;
-        Reflexes.Temperature = () => Temperature;
-        Skills.HotAt = () => Temperature == null ? null : Reflexes.HotAt;
+        // Everything he does about heat goes through what his body has found, not the number on the screen.
+        Reflexes.Temperature = () => Heat.Hurts ? Temperature : null;
+        Skills.HotAt = () => Temperature == null || !Heat.Hurts ? null : Reflexes.HotAt;
         companion.Attach(this);
         companion.AddChannel(Channel);
     }
@@ -535,6 +536,8 @@ public sealed class VertexBrain : IBody
         var type = damage?.Type ?? "no damage event";
         var source = SourceOf(damage);
         _experience.NotePain(new Pain(now, before - after, type, source));
+        // Plain damage with no cause, at a reading that high: the heat, as far as he can tell. Being on fire alone says nothing (a fire does that anywhere).
+        if (type == "generic" && source == null && Temperature is double burnt && burnt >= 43 && Heat.NoteBurn(now)) Log?.Invoke($"learned: heat hurts: {burnt:0.#} degrees and I lost health with nothing near");
         // How hot is too hot, from what it did to him: heat damage at a temperature moves the line below it. Only what the plugin does (no one's weapon, no block of fire under him).
         // Not below 40: the reading starts again from 25 at a respawn while the damage runs on, and a reading of 35 at such a moment pushed the line down until only 26 counted as cool (2026-11-04).
         if (type is "generic" or "on_fire" && source == null && Temperature is double hot && hot >= 43 && hot - 3 < Reflexes.HotAt)
@@ -650,6 +653,8 @@ public sealed class VertexBrain : IBody
 
     /// <summary>His temperature as the server last showed it, or null when it shows none.</summary>
     public double? Temperature { get; private set; }
+    /// <summary>Whether that number means anything to his body, as far as he has found.</summary>
+    public HeatBelief Heat { get; } = new();
     /// <summary>The last action-bar line, as it came.</summary>
     public string? LastActionBar { get; private set; }
     private double? _temperatureLogged;
@@ -664,6 +669,7 @@ public sealed class VertexBrain : IBody
             {
                 Temperature = degrees;
                 Skills.NoteHeat(degrees);
+                if (Heat.NoteReading(degrees, Reflexes.HotAt, DateTime.UtcNow)) Log?.Invoke($"learned: {degrees:0.#} degrees and nothing has hurt me for {HeatBelief.Unharmed.TotalSeconds:0} seconds: heat is not hurting me now");
                 if (_temperatureLogged is not double last || Math.Abs(last - degrees) >= 5) { _temperatureLogged = degrees; var (hx, _, hz) = Client.FeetBlock; Log?.Invoke($"temperature: {m.Content.Trim()} at {hx} {hz}"); }
             }
             else if (DateTime.UtcNow - _actionBarLogged > TimeSpan.FromSeconds(30))
@@ -895,7 +901,7 @@ public sealed class VertexBrain : IBody
                 }
                 // Before anything else, somewhere he can live: nothing gets built on land that burns him down in a minute. He has this from his own readings (the biome he stands in has read too hot, or he reads too hot now), so it is
                 // true on any server with heat of this kind and never comes up on one without. A failed search waits five minutes while he does what he can where he is.
-                var tooHot = Temperature is double degreesNow && (degreesNow >= Reflexes.HotAt || Skills.KnownTooHot(Skills.BiomeHere, Reflexes.HotAt));
+                var tooHot = Heat.Hurts && Temperature is double degreesNow && (degreesNow >= Reflexes.HotAt || Skills.KnownTooHot(Skills.BiomeHere, Reflexes.HotAt));
                 if (SelfDirectedPlay && goal == null && !Staying && Client.IsSpawned && !_projectQueued && Client.GameMode == GameMode.Survival && now >= _nextLivableTry && (tooHot || Skills.AtSea))
                 {
                     _nextLivableTry = now + TimeSpan.FromSeconds(10);
@@ -903,7 +909,7 @@ public sealed class VertexBrain : IBody
                     Log?.Invoke($"{(tooHot ? $"too hot to live here ({Temperature:0.#} degrees in the {Skills.BiomeHere?.Replace('_', ' ')})" : $"out at sea, in the {Skills.BiomeHere?.Replace('_', ' ')}")}: looking for somewhere I can live. What I know: {string.Join(", ", Skills.BiomeHeat().Select(b => $"{b.Biome.Replace('_', ' ')} {b.Degrees:0}"))}");
                     Tasks.StartReflex("looking for somewhere I can live", async ct =>
                     {
-                        var result = await Skills.FindLivableLandAsync(() => Temperature, Reflexes.HotAt, ct);
+                        var result = await Skills.FindLivableLandAsync(() => Temperature, Heat.Hurts ? Reflexes.HotAt : double.MaxValue, ct);
                         Log?.Invoke((result.Item1 ? "found: " : "not found: ") + result.Item2);
                         // Only a search that looked and failed waits. Dying on the way is no answer about the place: he reached land reading 25, died, and spent the next 5 minutes back on the island (2026-11-04).
                         if (!result.Item1) _nextLivableTry = Now() + TimeSpan.FromMinutes(5);

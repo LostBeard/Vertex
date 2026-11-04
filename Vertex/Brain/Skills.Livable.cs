@@ -5,20 +5,58 @@ using SpawnDev.Minecraft.Pathing;
 namespace Vertex.Brain;
 
 /// <summary>
-/// Deciding that a place cannot be lived in, and leaving. On mc.spawndev.com he respawns on an island where the server's temperature plugin reads 56.6 by day and takes a heart every 6 seconds, and nothing he does there lasts a minute
-/// (14 deaths in 15 minutes, 2026-11-04). A player would not keep trying: he would notice it is the place, and go. Nobody tells him the plugin's rules. What he has is his own readings, and the biome of every chunk he can see: he learns how
-/// hot each biome's land is by standing on it, and picks where to go from what he has learned.
+/// Deciding that a place cannot be lived in, and leaving. On mc.spawndev.com he respawns beside land where the server's temperature plugin reads 56.6 by day and takes a heart every 6 seconds, and nothing he does there lasts a minute
+/// (14 deaths in 15 minutes, 2026-11-04). A player would not keep trying: he would notice it is the place, and go. His code is not told the plugin's rules. What he has is his own readings, and the biome of every chunk he can see: he learns how
+/// hot each biome is by being in it, and picks where to go, and which way round, from what he has learned.
+/// <para>
+/// That this is the right model was checked against the plugin itself (RealisticSeasons 1.0.18 on AubsCraft, read by Geordi 2026-11-04): temperature is season + biome + time + altitude + shelter, read at his block once a second. Water, sprinting and being
+/// on fire do not enter into it; from 40 it hurts and lights him every 3 s, in water too; a hot biome stays hot by night and in shade. So only leaving the biome helps. The biome's edge is uneven by the block, so a reading or two right at it says nothing.
+/// </para>
 /// </summary>
 public sealed partial class Skills
 {
-    /// <summary>The temperature from which land counts as too hot (the brain: what he has learned so far), or null on a server that shows none.</summary>
-    public Func<double?>? HotAt { get; set; }
+    private Func<double?>? _hotAt;
+
+    /// <summary>The temperature from which a place counts as too hot (the brain: what he has learned so far), or null on a server that shows none. Set, his paths go round what he knows to be too hot.</summary>
+    public Func<double?>? HotAt
+    {
+        get => _hotAt;
+        set { _hotAt = value; client.Pathfinder.ExtraCost = value == null ? null : HeatCost; }
+    }
+
+    /// <summary>
+    /// A step on ground known to be too hot counts as this many on top of its own. Crossing it costs about a sixth of a health point a block (a third of a heart a second when lit, at the 3.9 blocks a second Slowness II leaves of a sprint), so he
+    /// walks up to five times as far to stay out of it. He still crosses when there is no way round.
+    /// </summary>
+    private const double HotStepCost = 4;
+
+    private readonly Dictionary<int, string?> _biomeNames = [];
+
+    private double HeatCost(int x, int y, int z)
+    {
+        if (_hotAt?.Invoke() is not double hotAt) return 0;
+        var id = client.World.GetBiome(x, y, z);
+        if (id < 0) return 0;
+        string? name;
+        lock (_biomeNames)
+            if (!_biomeNames.TryGetValue(id, out name)) _biomeNames[id] = name = client.Registries.Get("minecraft:worldgen/biome", id)?.Key.Bare();
+        return KnownTooHot(name, hotAt) ? HotStepCost : 0;
+    }
 
     /// <summary>Where he has done well: his bed, or where he last reached a step, on land not known to be too hot. Where he goes back to. Kept by the brain across restarts.</summary>
     public (int X, int Z)? Home { get; set; }
 
-    private readonly Dictionary<string, (double Degrees, DateTime At)> _landHeat = [];
+    /// <summary>The last readings in each biome. The middle one is what the biome reads: one at its uneven edge does not count, and old ones go by themselves as the hours and seasons change it.</summary>
+    private readonly Dictionary<string, List<double>> _landHeat = [];
+    private readonly Dictionary<string, double> _landMiddle = [];      // (the path finder asks this for every step it tries)
+    private const int BiomeReadingsKept = 40;
     private (int X, int Z)? _heading;
+
+    private static double Middle(List<double> readings)
+    {
+        var sorted = readings.OrderBy(d => d).ToList();
+        return sorted[sorted.Count / 2];
+    }
 
     /// <summary>The biome at a position, without its namespace ("desert"), or null where nothing is loaded.</summary>
     public string? BiomeAt(int x, int y, int z)
@@ -33,25 +71,33 @@ public sealed partial class Skills
     /// <summary>What he has found out about each biome's land, hottest first: for /state, and for saying so.</summary>
     public IReadOnlyList<(string Biome, double Degrees)> BiomeHeat()
     {
-        lock (_landHeat) return _landHeat.OrderByDescending(b => b.Value.Degrees).Select(b => (b.Key, b.Value.Degrees)).ToList();
+        lock (_landHeat) return _landMiddle.OrderByDescending(b => b.Value).Select(b => (b.Key, b.Value)).ToList();
     }
 
-    /// <summary>
-    /// Takes one reading for the biome he is standing in. On land only: water reads about ten lower. The hottest reading of the last ten minutes stands, because the number climbs for a while after he arrives (it starts from 25 at a respawn), and
-    /// the hours change it: an old one gives way.
-    /// </summary>
+    /// <summary>What this biome reads, as far as he has found, or null if he has not been in it.</summary>
+    public double? BiomeReads(string? biome)
+    {
+        if (biome == null) return null;
+        lock (_landHeat) return _landMiddle.TryGetValue(biome, out var reads) ? reads : null;
+    }
+
+    /// <summary>Takes one reading for the biome he is in, on land or in water: the number goes with the biome, not with the water.</summary>
     private void NoteBiomeHeat(double degrees)
     {
         var biome = BiomeHere;
         if (biome != _biomeNow) { _biomeNow = biome; _biomeSince = DateTime.UtcNow; }
-        if (biome == null || !client.OnGround || InWaterNow()) return;
-        // Only once he has been here a while: the number takes some seconds to follow him, so a reading on arrival belongs to where he came from. Walking from the savanna into the plains wrote 47 against land that reads 25, and he
+        if (biome == null) return;
+        // Only once he has been here a moment: the reading is at most a second old, so one on arrival may belong to where he came from. Walking from the savanna into the plains wrote 47 against land that reads 25, and he
         // then avoided the one place he could live (2026-11-04).
         if (DateTime.UtcNow - _biomeSince < BiomeSettles) return;
         lock (_landHeat)
-            if (!_landHeat.TryGetValue(biome, out var known) || degrees >= known.Degrees || DateTime.UtcNow - known.At > TimeSpan.FromMinutes(10))
-                _landHeat[biome] = (degrees, DateTime.UtcNow);
-        if (HotAt?.Invoke() is double hotAt && degrees < hotAt)
+        {
+            if (!_landHeat.TryGetValue(biome, out var readings)) _landHeat[biome] = readings = [];
+            readings.Add(degrees);
+            if (readings.Count > BiomeReadingsKept) readings.RemoveAt(0);
+            _landMiddle[biome] = Middle(readings);
+        }
+        if (client.OnGround && !InWaterNow() && HotAt?.Invoke() is double hotAt && degrees < hotAt)
         {
             var (x, _, z) = client.FeetBlock;
             lock (_coolLand) _coolLand[(x >> 4, z >> 4)] = DateTime.UtcNow;
@@ -59,7 +105,36 @@ public sealed partial class Skills
     }
 
     /// <summary>How long he must have been in a biome before a reading counts for it.</summary>
-    public static TimeSpan BiomeSettles { get; set; } = TimeSpan.FromSeconds(15);
+    public static TimeSpan BiomeSettles { get; set; } = TimeSpan.FromSeconds(3);
+
+    /// <summary>The nearest place he can see well inside a biome he has found to read no more than this, in the water or on land, or null. Well inside: at the edge the reading still flips. What he looks for when it burns, since only leaving the biome helps.</summary>
+    public (int X, int Z)? NearestCoolBiome(double coolEnough)
+    {
+        var (bx, by, bz) = client.FeetBlock;
+        bool Cool(int x, int z) => client.World.IsLoaded(x, z) && BiomeReads(BiomeAt(x, by, z)) is double d && d <= coolEnough;
+        (int X, int Z)? best = null;
+        var bestD = double.MaxValue;
+        const int reach = 160;
+        for (var dx = -reach; dx <= reach; dx += 8)
+        for (var dz = -reach; dz <= reach; dz += 8)
+        {
+            var d = Math.Sqrt(dx * dx + dz * dz);
+            int x = bx + dx, z = bz + dz;
+            if (d >= bestD || !Cool(x, z) || !Cool(x + 8, z) || !Cool(x - 8, z) || !Cool(x, z + 8) || !Cool(x, z - 8)) continue;
+            best = (x, z);
+            bestD = d;
+        }
+        return best;
+    }
+
+    /// <summary>The health at which it is time to leave the heat for good, from how far the way out is: burning at a third of a heart a second, a long way out needs more in hand than a short one. Ten at the least, and never more than he heals to.</summary>
+    public float LeaveHeatAtHealth(double coolEnough)
+    {
+        if (NearestCoolBiome(coolEnough) is not { } cool) return Reflexes.RetreatAtHealth;
+        var (x, _, z) = client.FeetBlock;
+        var distance = Math.Sqrt((cool.X - x) * (cool.X - x) + (cool.Z - z) * (cool.Z - z));
+        return Math.Clamp(6 + (float)(distance * 0.17), Reflexes.RetreatAtHealth, Reflexes.HealTo);
+    }
 
     private string? _biomeNow;
     private DateTime _biomeSince = DateTime.MinValue;
@@ -77,7 +152,7 @@ public sealed partial class Skills
     public bool KnownTooHot(string? biome, double hotAt)
     {
         if (biome == null) return false;
-        lock (_landHeat) return _landHeat.TryGetValue(biome, out var known) && known.Degrees >= hotAt;
+        return BiomeReads(biome) is double reads && reads >= hotAt;
     }
 
     /// <summary>
@@ -218,6 +293,7 @@ public sealed partial class Skills
         var started = DateTime.UtcNow;
         var given = new HashSet<(int, int)>();
         var settledSince = DateTime.MinValue;
+        var homeMisses = 0;
         try
         {
             while (DateTime.UtcNow - started < TimeSpan.FromMinutes(10))
@@ -262,13 +338,14 @@ public sealed partial class Skills
                 var (ax, _, az) = client.Position;
                 if (Math.Sqrt((ax - fx) * (ax - fx) + (az - fz) * (az - fz)) < 2)
                 {
-                    // Getting nowhere that way: not that land, or not that direction. A home he cannot get back to is no home. And a breath before the next try, whatever happens: a goal he is already standing on takes no time at
-                    // all, and without this he asked again six times a second for 15 minutes.
-                    if (Home != null) Home = null;
+                    // Getting nowhere that way: not that land, or not that direction. A home he cannot get back to is no home, but one bad hop does not say so. And a breath before the next try, whatever happens: a goal he is already standing
+                    // on takes no time at all, and without this he asked again six times a second for 15 minutes.
+                    if (Home != null) { if (++homeMisses >= 3) { Trace?.Invoke($"I can't get back to {Home}: giving up on it as home"); Home = null; } }
                     else if (land != null) given.Add((goal.X >> 4, goal.Z >> 4));
                     else if (_heading is { } heading) _heading = (-heading.Z, heading.X);
                     await client.WaitTicksAsync(20, ct);
                 }
+                else homeMisses = 0;
             }
         }
         finally { client.Controls.Clear(); }

@@ -2447,16 +2447,18 @@ public sealed partial class Skills(MinecraftClient client)
                     continue;
                 }
                 cooled = DateTime.MinValue;
-                var goal = NearestCool(coolEnough) ?? NearestUnknownHeat();
+                // Out of the biome first: that is what cools him. Live he bobbed in the water 30 blocks from where he respawned until the heat finished him, going from one patch that had read cool to the next and waiting at each (2026-11-04).
+                var goal = NearestCoolBiome(coolEnough) ?? NearestCool(coolEnough) ?? NearestUnknownHeat();
                 if (goal is not { } g) return (false, "I don't know anywhere cooler, and there is nowhere left to look.");
                 Trace?.Invoke($"too hot ({now:0.#} degrees): heading for {g.X} {g.Z}");
                 using var step = CancellationTokenSource.CreateLinkedTokenSource(ct);
                 step.CancelAfter(TimeSpan.FromSeconds(6));
-                try { await client.GoToAsync(Goal.XZ(g.X, g.Z), new PathOptions { MaxNodes = 12_000, Sprint = true }, step.Token); }
+                var there = false;
+                try { there = await client.GoToAsync(Goal.XZ(g.X, g.Z), new PathOptions { MaxNodes = 12_000, Sprint = true }, step.Token); }
                 catch (OperationCanceledException) when (!ct.IsCancellationRequested) { }
-                // Stay long enough to read the place: the number follows him within a few seconds.
-                client.Controls.Jump = client.BodySnapshot().InWater;
-                await client.WaitTicksAsync(50, ct);
+                // Arrived and it still burns: this is no place to stop and bob. The number comes once a second.
+                if (there && temperature() is double still && still > coolEnough) lock (_heat) _heat[(g.X >> HeatCell, g.Z >> HeatCell)] = (still, DateTime.UtcNow);
+                await client.WaitTicksAsync(20, ct);
             }
         }
         finally { client.Controls.Clear(); }

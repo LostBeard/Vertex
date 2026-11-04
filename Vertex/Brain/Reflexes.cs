@@ -133,7 +133,7 @@ public sealed class Reflexes : IDisposable
         // to what he was doing. Going at the first high reading he would never reach a tree on a hot island; staying in the water beside it he burned down to nothing (2026-11-03).
         // Whether or not he can heal once there: not being burned is worth it by itself, and with food under 18 the next step chosen is food. A milestone job is not resumed afterwards (it is what walked him here, and the next choice may be better:
         // at 2 hearts it is food); a job someone asked for is.
-        if (!_cooling && _tick >= _nextCoolTick && Temperature?.Invoke() is double hot && hot >= HotAt && c.Health <= RetreatAtHealth && !HandlesMonsters(_tasks.Current)
+        if (!_cooling && _tick >= _nextCoolTick && Temperature?.Invoke() is double hot && hot >= HotAt && c.Health <= _skills.LeaveHeatAtHealth(HotAt - CoolBy) && !HandlesMonsters(_tasks.Current)
             && _tasks.Current?.Contains("somewhere I can live") != true)      // already leaving for good
         {
             _cooling = true;
@@ -151,8 +151,9 @@ public sealed class Reflexes : IDisposable
 
         // On fire: into the water, whatever he was doing (he goes back to it after).
         // Unless water does not help: a server plugin can set him alight from his temperature, over and over (RealisticSeasons at +65 C). Live 2026-11-03 this reflex then restarted his job every few seconds, so he
-        // never reached a tree. Alight again within 20 seconds of the water, twice: he stops running to it for a minute and gets on with things.
-        if (c.OnFire && !_puttingOut && _tick >= _nextFireTick && _skills.NearestWater(24) != null)
+        // never reached a tree. Alight again within 20 seconds of the water, twice: he stops running to it for a minute and gets on with things. And not at all while he reads too hot: that is what is lighting him, again every 3 seconds, and water
+        // does nothing about it, so the time goes on getting out (read in the plugin by Geordi, 2026-11-04).
+        if (c.OnFire && !_puttingOut && _tick >= _nextFireTick && !(Temperature?.Invoke() is double burning && burning >= HotAt) && _skills.NearestWater(24) != null)
         {
             _fireReturns = _tick - _lastFireOutTick < 400 ? _fireReturns + 1 : 0;
             if (_fireReturns >= 2)
