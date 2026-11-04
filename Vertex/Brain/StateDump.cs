@@ -17,7 +17,7 @@ public static class StateDump
         return new
         {
             at = new { x = Math.Round(x, 1), y = Math.Round(y, 1), z = Math.Round(z, 1), dimension = c.World.Dimension },
-            health = c.Health, food = c.Food, onFire = c.OnFire, onGround = c.OnGround, gameMode = c.GameMode.ToString(), spawned = c.IsSpawned,
+            health = c.Health, food = c.Food, onFire = c.OnFire, temperature = brain.Temperature, actionBar = brain.LastActionBar, next = brain.Skills.WorkingToward()?.Label, dangerOutcomes = brain.Reflexes.Learner?.Outcomes, onGround = c.OnGround, gameMode = c.GameMode.ToString(), spawned = c.IsSpawned,
             dayTime = c.World.DayTime % 24000, weather = c.Weather,
             task = brain.Tasks.Current, staying = brain.Staying, godMode = brain.GodMode,
             deathsThisRun = brain.DeathsThisRun,

@@ -167,6 +167,35 @@ public class LiveDangerChoiceTests
     }
 
     [Test]
+    public async Task WhenTheFireKeepsComingBack_HeStopsRunningToTheWater_AndGetsOnWithIt()
+    {
+        var (client, skills, tasks, ax, az) = await JoinAsync("FireAgain", (x, z) => $"fill {x + 5} 197 {z - 2} {x + 8} 199 {z + 2} minecraft:water");
+        await using var _ = client;
+        using var reflexes = new Reflexes(client, skills, tasks, () => Character.BuiltIn[0].Style);
+        var said = new List<string>();
+        reflexes.Decided += m => { lock (said) said.Add(m); };
+        // Set alight again and again wherever he stands, as the plugin does.
+        using var stop = new CancellationTokenSource(TimeSpan.FromSeconds(60));
+        var lighter = Task.Run(async () =>
+        {
+            while (!stop.IsCancellationRequested)
+            {
+                var (x, y, z) = client.FeetBlock;
+                if (!client.OnFire && client.World.GetBlock(x, y, z)?.Name != "minecraft:water")
+                {
+                    await _server.CommandAsync($"setblock {x} {y} {z} minecraft:fire");
+                    await Task.Delay(300);
+                    await _server.CommandAsync($"setblock {x} {y} {z} minecraft:air");
+                }
+                await Task.Delay(1000);
+            }
+        });
+        await Wait.UntilAsync(() => { lock (said) return said.Any(s => s.Contains("keeps coming back")); }, TimeSpan.FromSeconds(50), () => $"giving up on the water (at {client.FeetBlock}, on fire {client.OnFire}, doing {tasks.Current})");
+        await stop.CancelAsync();
+        try { await lighter; } catch (OperationCanceledException) { }
+    }
+
+    [Test]
     public async Task HeSwimsOutToOpenWater_AndTreadsWater_WithoutDrowning()
     {
         var (client, skills, tasks, ax, az) = await JoinAsync("SwimOut",

@@ -25,7 +25,8 @@ public sealed class Reflexes : IDisposable
     private int _avoidRepeats;
     private long _nextSwatTick, _nextCoverTick, _nextRangedTick;
     private long _lastAvoidTick;
-    private long _nextFireTick;
+    private long _nextFireTick, _lastFireOutTick = long.MinValue / 2;
+    private int _fireReturns;
     private bool _puttingOut;
 
     /// <summary>How close a monster may be, idle, before he walks away from it (blocks).</summary>
@@ -76,16 +77,28 @@ public sealed class Reflexes : IDisposable
         _lastHealth = c.Health;
 
         // On fire: into the water, whatever he was doing (he goes back to it after).
+        // Unless water does not help: a server plugin can set him alight from his temperature, over and over (RealisticSeasons at +65 C). Live 2026-11-03 this reflex then restarted his job every few seconds, so he
+        // never reached a tree. Alight again within 20 seconds of the water, twice: he stops running to it for a minute and gets on with things.
         if (c.OnFire && !_puttingOut && _tick >= _nextFireTick && _skills.NearestWater(24) != null)
         {
-            _nextFireTick = _tick + 40;
-            _puttingOut = true;
-            _tasks.Interrupt("putting out the fire", async ct =>
+            _fireReturns = _tick - _lastFireOutTick < 400 ? _fireReturns + 1 : 0;
+            if (_fireReturns >= 2)
             {
-                try { return await _skills.PutOutFireAsync(ct); }
-                finally { _puttingOut = false; }
-            }, quiet: true);
-            return;
+                _fireReturns = 0;
+                _nextFireTick = _tick + 1200;
+                Decided?.Invoke("the fire keeps coming back after the water: leaving it for a minute");
+            }
+            else
+            {
+                _nextFireTick = _tick + 40;
+                _puttingOut = true;
+                _tasks.Interrupt("putting out the fire", async ct =>
+                {
+                    try { return await _skills.PutOutFireAsync(ct); }
+                    finally { _puttingOut = false; _lastFireOutTick = _tick; }
+                }, quiet: true);
+                return;
+            }
         }
 
         // Come up for air: under water and not on a job that is steering.

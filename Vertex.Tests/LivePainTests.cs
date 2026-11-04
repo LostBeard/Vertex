@@ -126,6 +126,30 @@ public class LivePainTests
         Assert.That(log.RecentPains, Is.Empty, "each life starts its own record");
     }
 
+    [TestCase("23°C", 23)]
+    [TestCase("Temperature: -4.5 °C", -4.5)]
+    [TestCase("🌡 66° C", 66)]
+    [TestCase("12,5°C", 12.5)]
+    public void HeReadsHisTemperature_FromTheActionBar(string line, double degrees) => Assert.That(VertexBrain.TemperatureIn(line), Is.EqualTo(degrees).Within(1e-9));
+
+    [TestCase("Sleeping through this night")]
+    [TestCase("23 C")]
+    public void OtherActionBarLines_AreNotATemperature(string line) => Assert.That(VertexBrain.TemperatureIn(line), Is.Null);
+
+    [Test]
+    public void ADeath_WithAnEmptyMessage_BlamesNoMonsterThatHappenedToBeNear()
+    {
+        var t0 = new DateTime(2026, 11, 3, 23, 11, 0, DateTimeKind.Utc);
+        var log = new ExperienceLog();
+        var near = new List<(string, double)> { ("minecraft:drowned", 3.0) };
+        for (var s = 0; s < 5; s++) log.Observe(new Moment(t0.AddSeconds(s), 20, 20, null, 6000, "clear", "234 63 -280", near, false, false));
+        log.NotePain(new Pain(t0.AddSeconds(5), 2, "generic", null));
+        var death = log.Died(new Moment(t0.AddSeconds(6), 1, 20, null, 6000, "clear", "234 63 -280", near, false, false), "");
+        TestContext.Out.WriteLine(death.Text);
+        Assert.That(death.Text, Does.StartWith("I died: the server gave no reason."));
+        Assert.That(death.Text, Does.Contain("generic 1 hearts"));
+    }
+
     [Test]
     public void ADeath_WithNoDamageEvent_SaysSo()
     {

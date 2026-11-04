@@ -501,7 +501,7 @@ public sealed class VertexBrain : IBody
         var source = SourceOf(damage);
         _experience.NotePain(new Pain(now, before - after, type, source));
         var (x, y, z) = Client.Position;
-        Log?.Invoke($"hurt: -{(before - after) / 2:0.#} hearts by {type.Replace('_', ' ')}{(source != null ? $" from {source}" : "")}, {after / 2:0.#} left, at {x:0} {y:0} {z:0}{(Client.OnFire ? ", on fire" : "")}; doing: {Tasks.Current ?? "nothing"}");
+        Log?.Invoke($"hurt: -{(before - after) / 2:0.#} hearts by {type.Replace('_', ' ')}{(source != null ? $" from {source}" : "")}, {after / 2:0.#} left, at {x:0} {y:0} {z:0}{(Client.OnFire ? ", on fire" : "")}{(Temperature is double t ? $", {t:0.#} degrees" : "")}; doing: {Tasks.Current ?? "nothing"}");
         _lastDamage = null;
     }
 
@@ -597,8 +597,36 @@ public sealed class VertexBrain : IBody
     public bool TurnOffGodMode { get; set; }
     private bool _godOffSent;
 
+    private static readonly System.Text.RegularExpressions.Regex TemperatureText = new(@"(?<v>-?\d+(?:[.,]\d+)?)\s*°\s*[CF]?", System.Text.RegularExpressions.RegexOptions.Compiled);
+
+    /// <summary>The temperature in an action-bar line ("23°C", "Temperature: -4.5 °C"), or null. RealisticSeasons shows each player theirs there, in a format the server sets.</summary>
+    internal static double? TemperatureIn(string text) =>
+        TemperatureText.Match(text) is { Success: true } t && double.TryParse(t.Groups["v"].Value.Replace(',', '.'), System.Globalization.NumberStyles.Float, System.Globalization.CultureInfo.InvariantCulture, out var v) ? v : null;
+
+    /// <summary>His temperature as the server last showed it, or null when it shows none.</summary>
+    public double? Temperature { get; private set; }
+    /// <summary>The last action-bar line, as it came.</summary>
+    public string? LastActionBar { get; private set; }
+    private double? _temperatureLogged;
+    private DateTime _actionBarLogged = DateTime.MinValue;
+
     private void OnServerText(ChatMessage m)
     {
+        if (m.Kind == ChatKind.ActionBar)
+        {
+            LastActionBar = m.Content;
+            if (TemperatureIn(m.Content) is double degrees)
+            {
+                Temperature = degrees;
+                if (_temperatureLogged is not double last || Math.Abs(last - degrees) >= 5) { _temperatureLogged = degrees; Log?.Invoke($"temperature: {m.Content.Trim()}"); }
+            }
+            else if (DateTime.UtcNow - _actionBarLogged > TimeSpan.FromSeconds(30))
+            {
+                _actionBarLogged = DateTime.UtcNow;
+                Log?.Invoke($"action bar: {m.Content.Trim()}");
+            }
+            return;
+        }
         // How he died, as the server says it ("HereticSpawn was slain by Phantom"): kept for the experience log.
         if (m.Kind != ChatKind.Player && m.Content.StartsWith(Client.Profile.Name + " ", StringComparison.Ordinal) && DeathWords.IsMatch(m.Content))
         {

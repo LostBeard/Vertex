@@ -58,7 +58,8 @@ public sealed class ExperienceLog
     {
         _ring.Add(now with { Health = 0 });
         while (_ring.Count > Window) _ring.RemoveAt(0);
-        var lesson = Death(now with { Health = 0 }, deathMessage);
+        // An empty death message (a plugin's kill has none): say so. Falling back on "what was next to me" blamed a drowned for a death by something else (2026-11-03).
+        var lesson = Death(now with { Health = 0 }, string.IsNullOrWhiteSpace(deathMessage) ? "the server gave no reason" : deathMessage);
         _ring.Clear();
         lock (_pains) _pains.Clear();
         _pendingPeak = null;
