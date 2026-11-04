@@ -472,7 +472,10 @@ public class LiveDangerChoiceTests
             (x, z) => $"fill {x + 13} 200 {z - 20} {x + 60} 203 {z + 20} minecraft:air",
             (x, z) => $"fillbiome {x + 13} 196 {z - 20} {x + 60} 206 {z + 20} minecraft:plains",
             (x, z) => $"fill {x - 8} 200 {z} {x - 8} 203 {z} minecraft:oak_log",
-            (x, z) => $"fill {x + 50} 200 {z + 2} {x + 50} 203 {z + 2} minecraft:oak_log");
+            (x, z) => $"fill {x + 50} 200 {z + 2} {x + 50} 203 {z + 2} minecraft:oak_log",
+            // A wreck on the way: a log on the bottom of a pool, nearer than the real tree, in the cool. Live he sat over one for 15 minutes.
+            (x, z) => $"fill {x + 18} 196 {z - 4} {x + 24} 199 {z + 4} minecraft:water",
+            (x, z) => $"setblock {x + 21} 196 {z} minecraft:oak_log");
         await using var _ = client;
         skills.Trace += m => TestContext.Out.WriteLine(m);
         double? shown = null;
@@ -489,7 +492,7 @@ public class LiveDangerChoiceTests
         try
         {
             await Wait.UntilAsync(() => skills.KnownTooHot("desert", 50), TimeSpan.FromSeconds(40), () => "the desert's reading on his map");
-            Assert.That(skills.NearestCoolWood(50)?.X, Is.EqualTo(ax + 50), "the tree in the desert is nearer, and it does not count");
+            Assert.That(skills.NearestCoolWood(50)?.X, Is.EqualTo(ax + 50), "the tree in the desert is nearer and does not count, nor does the log under water");
             using var cts = new CancellationTokenSource(TimeSpan.FromMinutes(3));
             var (ok, text) = await skills.FindLivableLandAsync(() => shown, 50, cts.Token);
             TestContext.Out.WriteLine(text);

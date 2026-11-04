@@ -194,12 +194,18 @@ public sealed partial class Skills
     }
 
     /// <summary>The nearest log he can see that stands in a biome not known to be too hot, or null. What he needs before anything else is wood, and a bare strip of cool ground beside a burning forest does not give him any: he "settled" on one again and again, and walked into the fire for wood (2026-11-04).</summary>
-    public (int X, int Y, int Z)? NearestCoolWood(double hotAt)
+    /// <param name="given">Chunks (x and z over 16) he has already gone to for wood and got nothing: not there again.</param>
+    public (int X, int Y, int Z)? NearestCoolWood(double hotAt, ISet<(int, int)>? given = null)
     {
         var logs = D.BlockTag("minecraft:logs").Select(n => D.Block(n)).Where(b => b != null).Select(b => b!.Id).ToHashSet();
         var feet = client.FeetBlock;
         foreach (var (x, y, z) in client.World.FindBlocksTall(s => s > 0 && logs.Contains(D.StateBlock[s]), client.Position, 160, 512))
-            if (Math.Abs(y - feet.Y) <= 24 && !KnownTooHot(BiomeAt(x, y, z), hotAt)) return (x, y, z);
+        {
+            if (Math.Abs(y - feet.Y) > 24 || KnownTooHot(BiomeAt(x, y, z), hotAt) || given?.Contains((x >> 4, z >> 4)) == true) continue;
+            // On land: he spent 15 minutes on the surface of the sea over a log on the bottom (a wreck), going nowhere (2026-11-04).
+            if (LandAt(x, z, feet.Y) == null) continue;
+            return (x, y, z);
+        }
         return null;
     }
 
@@ -224,7 +230,7 @@ public sealed partial class Skills
                 var homeDistance = Home is { } h ? Math.Sqrt((h.X - client.FeetBlock.X) * (h.X - client.FeetBlock.X) + (h.Z - client.FeetBlock.Z) * (h.Z - client.FeetBlock.Z)) : 0;
                 // With no tools yet he needs wood: somewhere to live has trees that do not burn him. A home he has already proved does not have to.
                 var needsWood = !HasPickaxe(1) && Home == null;
-                var coolWood = needsWood ? NearestCoolWood(hotAt) : null;
+                var coolWood = needsWood ? NearestCoolWood(hotAt, given) : null;
                 var woodClose = coolWood is { } w && Math.Sqrt((w.X - client.FeetBlock.X) * (w.X - client.FeetBlock.X) + (w.Z - client.FeetBlock.Z) * (w.Z - client.FeetBlock.Z)) <= 16;
                 if (client.OnGround && !InWaterNow() && (t is not double now || now < hotAt) && !KnownTooHot(here, hotAt) && homeDistance <= 32 && (!needsWood || woodClose))
                 {
@@ -236,7 +242,7 @@ public sealed partial class Skills
                 settledSince = DateTime.MinValue;
                 var (fx, _, fz) = client.Position;
                 // Land to try: trees that will not burn him, when he needs them; failing those, land he has not been over, not known to be too hot. (Cool land he has stood on and found bare is marked as he leaves it.)
-                if (needsWood) { var (cx, _, cz) = client.FeetBlock; given.Add((cx >> 4, cz >> 4)); }
+                if (needsWood && coolWood == null) { var (cx, _, cz) = client.FeetBlock; given.Add((cx >> 4, cz >> 4)); }
                 var land = Home == null ? (coolWood is { } cw ? (cw.X, cw.Z) : NextLivableLand(hotAt, given)) : null;
                 (int X, int Z) goal;
                 if (Home is { } homeSpot) goal = homeSpot;
@@ -256,10 +262,12 @@ public sealed partial class Skills
                 var (ax, _, az) = client.Position;
                 if (Math.Sqrt((ax - fx) * (ax - fx) + (az - fz) * (az - fz)) < 2)
                 {
-                    // Getting nowhere that way: not that land, or not that direction. A home he cannot get back to is no home.
+                    // Getting nowhere that way: not that land, or not that direction. A home he cannot get back to is no home. And a breath before the next try, whatever happens: a goal he is already standing on takes no time at
+                    // all, and without this he asked again six times a second for 15 minutes.
                     if (Home != null) Home = null;
                     else if (land != null) given.Add((goal.X >> 4, goal.Z >> 4));
                     else if (_heading is { } heading) _heading = (-heading.Z, heading.X);
+                    await client.WaitTicksAsync(20, ct);
                 }
             }
         }
