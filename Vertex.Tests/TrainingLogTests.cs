@@ -51,10 +51,11 @@ public class TrainingLogTests
         var folder = NewFolder();
         try
         {
-            new TrainingLog(folder, "session-c").Record(GameTurn(), null, "ok then", "x", false, [7, 8, 9]);
+            new TrainingLog(folder, "session-c").Record(GameTurn(), null, "ok then", "x", false, [7, 8, 9], [10, 11], [99]);
             using var doc = JsonDocument.Parse(File.ReadAllLines(Directory.GetFiles(folder).Single()).Single());
             Assert.That(doc.RootElement.GetProperty("prompt_ids").GetArrayLength(), Is.EqualTo(3));
-            Assert.That(doc.RootElement.GetProperty("target_ids").ValueKind, Is.EqualTo(JsonValueKind.Null), "until the engine reports them");
+            Assert.That(doc.RootElement.GetProperty("target_ids").GetArrayLength(), Is.EqualTo(2));
+            Assert.That(doc.RootElement.GetProperty("end_of_turn_ids")[0].GetInt32(), Is.EqualTo(99));
         }
         finally { if (Directory.Exists(folder)) Directory.Delete(folder, true); }
     }

@@ -26,7 +26,7 @@ public class TrainingSetGeneration
     private static string Output => Environment.GetEnvironmentVariable("VERTEX_TRAINING_OUT") ?? throw new InvalidOperationException("set VERTEX_TRAINING_OUT");
     private static readonly AiGenerationOptions Production = new() { MaxOutputTokens = 220, Strategy = "top_p", Temperature = 0.7f, TopP = 0.9f, RepetitionPenalty = 1.1f };
 
-    private sealed record Kept(string Id, string Split, ToolRequest Request, List<AiChatMessage> Messages, string Target);
+    private sealed record Kept(string Id, string Split, ToolRequest Request, List<AiChatMessage> Messages, string Target, IReadOnlyList<int> TargetIds, IReadOnlyList<int> EndOfTurnIds);
 
     [Test]
     public async Task Synthetic()
@@ -69,7 +69,7 @@ public class TrainingSetGeneration
                 ? call == null && result.TextWithoutToolCalls.Count(char.IsLetter) >= 4
                 : call != null && call.Name == request.Tool && ArgsOk(request, call.ArgumentsJson);
             index++;
-            if (ok && pass != null) kept.Add(new Kept($"synthetic-{index}", random.Next(5) == 0 ? "dev" : "train", request, messages, pass.RawOutput));
+            if (ok && pass != null) kept.Add(new Kept($"synthetic-{index}", random.Next(5) == 0 ? "dev" : "train", request, messages, pass.RawOutput, pass.GeneratedTokenIds, pass.EndOfTurnTokenIds));
             else dropped[key] = dropped.GetValueOrDefault(key) + 1;
             if (index % 50 == 0) TestContext.Out.WriteLine($"{index} of {requests.Count}, kept {kept.Count}");
         }
@@ -88,7 +88,7 @@ public class TrainingSetGeneration
                     format = TrainingLog.FormatVersion, id = k.Id, split = k.Split,
                     messages = k.Messages.Select(m => new { role = m.Role, content = m.Content }).Append(new { role = "assistant", content = k.Target }).ToList(),
                     tools = pass.ToolsJson ?? [], target_turn = k.Messages.Count, truth = (string?)null, source = "synthetic-v1",
-                    rendered_prompt = pass.RenderedPrompt, rendered_target = k.Target, prompt_ids = TrainingLog.KeptIds(pass.PromptTokenIds, pass.PromptTokens), target_ids = (int[]?)null,
+                    rendered_prompt = pass.RenderedPrompt, rendered_target = k.Target, prompt_ids = TrainingLog.KeptIds(pass.PromptTokenIds, pass.PromptTokens), target_ids = k.TargetIds, end_of_turn_ids = k.EndOfTurnIds,
                     prompt_cut = pass.PromptTokens < pass.PromptTokenIds.Length, expected_tool = k.Request.Tool, says = k.Request.Says,
                 }));
             }
@@ -117,11 +117,15 @@ public class TrainingSetGeneration
         catch (JsonException) { return false; }
     }
 
-    /// <summary>The honesty set: the real turns in his log with an event it knows, target corrected. No GPU, and Vertex may be running.</summary>
+    /// <summary>The honesty set: the real turns in his log with an event it knows, target corrected and tokenized by the engine's own tokenizer. Loads the model: run with Vertex stopped.</summary>
     [Test]
     public async Task Honesty()
     {
         Directory.CreateDirectory(Output);
+        var ai = TestAi.Create();
+        await using var _ai = ai;
+        var model = TestModel.Pick(await ai.ModelNamesAsync());
+        await ai.EnsureChatReadyAsync(model);
         var from = Environment.GetEnvironmentVariable("VERTEX_TRAINING_IN") ?? Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData), "Vertex", "training");
         int read = 0, unknown = 0, honest = 0, written = 0;
         await using var writer = new StreamWriter(Path.Combine(Output, "honesty.jsonl"));
@@ -141,6 +145,8 @@ public class TrainingSetGeneration
                     format = r.GetProperty("format").GetInt32(), id = r.GetProperty("id").GetString(), split = r.GetProperty("split").GetString(), truth, source = r.GetProperty("source").GetString(),
                     rendered_prompt = r.GetProperty("rendered_prompt").GetString(), rendered_target = corrected, said_live = said, said_live_honest = wasHonest, prompt_cut = r.GetProperty("prompt_cut").GetBoolean(),
                     prompt_ids = r.TryGetProperty("prompt_ids", out var ids) && ids.ValueKind == JsonValueKind.Array ? ids.EnumerateArray().Select(i => i.GetInt32()).ToArray() : null,
+                    target_ids = await ai.Chat.TokenizeAsync(model, corrected),
+                    end_of_turn_ids = r.TryGetProperty("end_of_turn_ids", out var ends) && ends.ValueKind == JsonValueKind.Array ? ends.EnumerateArray().Select(i => i.GetInt32()).ToArray() : null,
                 }));
                 written++;
             }

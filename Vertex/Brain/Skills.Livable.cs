@@ -14,6 +14,9 @@ public sealed partial class Skills
     /// <summary>The temperature from which land counts as too hot (the brain: what he has learned so far), or null on a server that shows none.</summary>
     public Func<double?>? HotAt { get; set; }
 
+    /// <summary>Where he has done well: his bed, or where he last reached a step, on land not known to be too hot. Where he goes back to. Kept by the brain across restarts.</summary>
+    public (int X, int Z)? Home { get; set; }
+
     private readonly Dictionary<string, (double Degrees, DateTime At)> _landHeat = [];
     private (int X, int Z)? _heading;
 
@@ -207,7 +210,9 @@ public sealed partial class Skills
                 var here = BiomeHere;
                 var t = temperature();
                 // (On a server that shows no temperature there is no heat to wait for: any land will do, and this search is just getting ashore.)
-                if (client.OnGround && !InWaterNow() && (t is not double now || now < hotAt) && !KnownTooHot(here, hotAt))
+                // Near home, when he has one: any cool ground on the way is not the point. He kept stopping at the nearest cool strip, cut bare, with the forest he had made an iron pickaxe in 270 blocks further on (2026-11-04).
+                var homeDistance = Home is { } h ? Math.Sqrt((h.X - client.FeetBlock.X) * (h.X - client.FeetBlock.X) + (h.Z - client.FeetBlock.Z) * (h.Z - client.FeetBlock.Z)) : 0;
+                if (client.OnGround && !InWaterNow() && (t is not double now || now < hotAt) && !KnownTooHot(here, hotAt) && homeDistance <= 32)
                 {
                     if (settledSince == DateTime.MinValue) settledSince = DateTime.UtcNow;
                     if (t == null || DateTime.UtcNow - settledSince >= TimeSpan.FromSeconds(30)) { _heading = null; return (true, t is double read ? $"I can live here: {read:0.#} degrees in the {here?.Replace('_', ' ')}." : $"I'm ashore, in the {here?.Replace('_', ' ')}."); }
@@ -216,9 +221,10 @@ public sealed partial class Skills
                 }
                 settledSince = DateTime.MinValue;
                 var (fx, _, fz) = client.Position;
-                var land = NextLivableLand(hotAt, given);
+                var land = Home == null ? NextLivableLand(hotAt, given) : null;
                 (int X, int Z) goal;
-                if (land is { } l) goal = l;
+                if (Home is { } homeSpot) goal = homeSpot;
+                else if (land is { } l) goal = l;
                 else if (NearestCoolLandKnown() is { } home) goal = home;
                 else
                 {
@@ -234,9 +240,10 @@ public sealed partial class Skills
                 var (ax, _, az) = client.Position;
                 if (Math.Sqrt((ax - fx) * (ax - fx) + (az - fz) * (az - fz)) < 2)
                 {
-                    // Getting nowhere that way: not that land, or not that direction.
-                    if (land != null) given.Add((goal.X >> 4, goal.Z >> 4));
-                    else _heading = (-_heading!.Value.Z, _heading.Value.X);
+                    // Getting nowhere that way: not that land, or not that direction. A home he cannot get back to is no home.
+                    if (Home != null) Home = null;
+                    else if (land != null) given.Add((goal.X >> 4, goal.Z >> 4));
+                    else if (_heading is { } heading) _heading = (-heading.Z, heading.X);
                 }
             }
         }

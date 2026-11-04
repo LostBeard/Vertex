@@ -163,7 +163,13 @@ public sealed class VertexBrain : IBody
         Client.HealthChanged += OnHealthChanged;
         Client.Died += OnDied;
         Tasks.Crashed += (job, e) => Log?.Invoke($"job crashed ({job}): {e}");
-        Skills.MilestoneReached += m => { Log?.Invoke("reached: " + m.Label); Companion.Post(new MilestoneEvent(m.Label)); };
+        Skills.MilestoneReached += m =>
+        {
+            Log?.Invoke("reached: " + m.Label);
+            SaveHome();
+            Companion.Post(new MilestoneEvent(m.Label));
+        };
+        Client.Spawned += OnSpawnedAfterDeath;
         Skills.LessonLearned += RecordLesson;
         Skills.Trace += m => Log?.Invoke("  (" + m + ")");
         Skills.PriorLessons = LessonsFor;
@@ -177,6 +183,7 @@ public sealed class VertexBrain : IBody
     {
         _startedAt = Now();
         _started = true;
+        LoadHome();
         foreach (var p in Client.Players.Values.Where(p => p.Id != Client.Profile.Id)) Memory.Meet(p.Id, p.Name, _startedAt);
         if (_ownsCompanion) Companion.Start();
         _idleLoop = Task.Run(() => IdleLoopAsync(_cts.Token));
@@ -446,6 +453,32 @@ public sealed class VertexBrain : IBody
         @"\b(was slain|was shot|was killed|was blown up|was pricked|was fireballed|was squashed|was impaled|was struck|was pummeled|was stung|was burned|was doomed|died|drowned|burned to death|starved|suffocated|fell|hit the ground|tried to swim|went up in flames|withered|blew up|walked into|froze)\b",
         System.Text.RegularExpressions.RegexOptions.IgnoreCase | System.Text.RegularExpressions.RegexOptions.Compiled);
 
+    private const string HomePlace = "my base", BedPlace = "my bed";
+    private bool _diedAndNotBack;
+
+    private void OnSpawnedAfterDeath()
+    {
+        if (!_diedAndNotBack) return;
+        _diedAndNotBack = false;
+        Skills.NoteRespawned();
+        SaveHome();
+    }
+
+    /// <summary>Where he has done well, in his memory of this world, so a restart does not send him back to a beach: a place like any other, so he also knows it when asked.</summary>
+    private void SaveHome()
+    {
+        var y = Client.FeetBlock.Y;
+        if (Skills.Home is { } home) Memory.SetPlace(HomePlace, Client.World.Dimension, home.X, y, home.Z, null);
+        if (Skills.HomeBed is { } bed) Memory.SetPlace(BedPlace, Client.World.Dimension, bed.X, bed.Y, bed.Z, null);
+        else Memory.ForgetPlace(BedPlace);
+    }
+
+    private void LoadHome()
+    {
+        if (Memory.FindPlace(HomePlace) is { } home && home.Dimension == Client.World.Dimension) Skills.Home = (home.X, home.Z);
+        if (Memory.FindPlace(BedPlace) is { } bed && bed.Dimension == Client.World.Dimension) Skills.HomeBed = (bed.X, bed.Y, bed.Z);
+    }
+
     private DamageInfo? _lastDamage;
     private DateTime _lastDamageAt = DateTime.MinValue;
     private DateTime _lastDeathTold = DateTime.MinValue;
@@ -522,6 +555,7 @@ public sealed class VertexBrain : IBody
             DeathsThisRun++;
             Reflexes.NoteDeath();
             _nextLivableTry = DateTime.MinValue;      // dying says nothing about whether he can find somewhere: from where he comes back, he looks again at once
+            _diedAndNotBack = true;
             var (x, y, z) = Client.Position;
             LastDeath = (x, y, z, DateTime.UtcNow, message);
             var pains = _experience.PainSummary();
@@ -1029,6 +1063,7 @@ public sealed class VertexBrain : IBody
     {
         Client.PlayerAdded -= OnPlayerAdded;
         Client.ChatReceived -= OnServerText;
+        Client.Spawned -= OnSpawnedAfterDeath;
         Client.Damaged -= OnDamaged;
         Client.HealthChanged -= OnHealthChanged;
         Client.Died -= OnDied;

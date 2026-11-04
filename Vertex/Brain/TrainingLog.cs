@@ -14,9 +14,10 @@ public sealed class TrainingLog(string folder, string? source = null)
 {
     /// <summary>
     /// On every line, so the trainer can tell old lines from new. 2: rendered_prompt and rendered_target from the engine; a tool call is in rendered_target as the model wrote it; the target does not include the end-of-turn token, the formatter adds it.
-    /// 3: also prompt_ids, the token ids the model was given (the end that was kept, when prompt_cut), so training does not have to tokenize the text again and differ from inference. target_ids is null until the engine reports them.
+    /// 3: also prompt_ids, the token ids the model was given (the end that was kept, when prompt_cut), so training does not have to tokenize the text again and differ from inference. target_ids is null.
+    /// 4: target_ids, what the model generated, with the ending stop token excluded, and end_of_turn_ids, the template's stop ids. Training input = prompt_ids + target_ids + one of end_of_turn_ids.
     /// </summary>
-    public const int FormatVersion = 3;
+    public const int FormatVersion = 4;
 
     /// <summary>The ids the model really saw: the decoder keeps the newest tokens when the prompt does not fit its context.</summary>
     public static int[] KeptIds(int[] ids, int promptTokens) => promptTokens > 0 && promptTokens < ids.Length ? ids[^promptTokens..] : ids;
@@ -53,7 +54,9 @@ public sealed class TrainingLog(string folder, string? source = null)
     /// <summary>Writes one pass, if it may be written. A disk that cannot take it costs the line, never the game.</summary>
     /// <param name="promptCut">The decoder dropped the oldest tokens to fit its context, so the rendered prompt is longer than what the model saw.</param>
     /// <param name="promptIds">The token ids the model was given.</param>
-    public bool Record(IReadOnlyList<AiChatMessage> messages, IReadOnlyList<string>? toolsJson, string rawOutput, string renderedPrompt, bool promptCut = false, int[]? promptIds = null)
+    /// <param name="targetIds">The token ids the model generated.</param>
+    /// <param name="endOfTurnIds">The ids that end a turn.</param>
+    public bool Record(IReadOnlyList<AiChatMessage> messages, IReadOnlyList<string>? toolsJson, string rawOutput, string renderedPrompt, bool promptCut = false, int[]? promptIds = null, IReadOnlyList<int>? targetIds = null, IReadOnlyList<int>? endOfTurnIds = null)
     {
         if (!Allowed(messages)) return false;
         var sent = messages.Select(m => new { role = m.Role, content = m.Content }).ToList();
@@ -70,7 +73,8 @@ public sealed class TrainingLog(string folder, string? source = null)
             rendered_prompt = renderedPrompt,
             rendered_target = rawOutput,
             prompt_ids = promptIds,
-            target_ids = (int[]?)null,
+            target_ids = targetIds,
+            end_of_turn_ids = endOfTurnIds,
             prompt_cut = promptCut,
         });
         try

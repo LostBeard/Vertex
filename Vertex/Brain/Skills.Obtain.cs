@@ -290,7 +290,8 @@ public sealed partial class Skills
         yield return new("minecraft:wooden_pickaxe", 1, "a wooden pickaxe", () => HasPickaxe(1));
         yield return new("minecraft:wooden_sword", 1, "a wooden sword", () => BestWeaponName != null);
         // Before anything else that a death would cost him: a bed is the one thing that stays, and without one every death puts him back where he started, however far that is.
-        yield return new("bed", 1, "a bed of my own", () => HomeBed != null || client.FindBeds(96, 1).Count > 0);
+        // His own, set as where he comes back to: a bed standing within 96 blocks counted as done, and at 11:47 on 2026-11-04 he went on to iron with his respawn still on the burning island, and lost it all at nightfall.
+        yield return new("bed", 1, "a bed of my own", () => HomeBed != null);
         yield return new("food", 3, "some food", () => EdibleStacks.Sum(s => s.Count) >= 3);
         yield return new("minecraft:stone_pickaxe", 1, "a stone pickaxe", () => HasPickaxe(2));
         yield return new("minecraft:stone_sword", 1, "a stone sword", () => HasAny("stone_sword", "iron_sword", "diamond_sword", "netherite_sword"));
@@ -328,14 +329,18 @@ public sealed partial class Skills
         var started = DateTime.UtcNow;
         (bool Ok, string Text) result;
         if (step.Item == "food") result = await GetEnoughFoodAsync(step.Count, ct);
+        // A bed close by will do as well as one he makes: lying down in it is what makes it where he comes back to.
+        else if (step.Item == "bed" && client.FindBeds(32, 1) is { Count: > 0 } beds) result = await UseBedAsync(beds[0], ct);
         else result = await ObtainAsync(step.Item, step.Count, ct);
-        if (result.Ok && step.Item == "bed")
+        if (result.Ok && step.Item == "bed" && HomeBed == null)
         {
             var (placed, text) = await SetUpBedAsync(ct);
             result = (placed, result.Text + " " + text);
         }
         if (step.Done() || result.Ok)
         {
+            // Where things went right is worth coming back to (his bed, once he has one, stays the first choice).
+            if (HomeBed == null && (HotAt?.Invoke() is not double hotAt || !KnownTooHot(BiomeHere, hotAt))) { var (hx, _, hz) = client.FeetBlock; Home = (hx, hz); }
             _milestoneBackoff.Remove(step.Item);
             MilestoneReached?.Invoke(step);
             return result;
@@ -385,21 +390,43 @@ public sealed partial class Skills
             if (await client.PlaceBlockAsync(x + dx, y, z + dz, ct) && client.FindBeds(6, 1).Count > 0) { placed = true; break; }
         }
         if (!placed) return (false, "I couldn't find a spot for the bed here.");
-        var (bx, by, bz) = client.FindBeds(6, 1)[0];
+        return await UseBedAsync(client.FindBeds(6, 1)[0], ct);
+    }
+
+    /// <summary>Lies down in a bed, which is what makes it where he comes back to (by day the game says he cannot sleep, and still sets it), and remembers it.</summary>
+    private async Task<(bool, string)> UseBedAsync((int X, int Y, int Z) bed, CancellationToken ct)
+    {
+        var (bx, by, bz) = bed;
         var set = false;
         void OnChat(ChatMessage m) { if (m.Text.Contains("Respawn point set", StringComparison.OrdinalIgnoreCase)) set = true; }
         client.ChatReceived += OnChat;
+        string? refusal;
         try
         {
-            await client.LieDownAsync(bx, by, bz, ct);
+            refusal = await client.LieDownAsync(bx, by, bz, ct);
             await client.WaitTicksAsync(10, ct);
-            if (client.Sleeping) await client.LeaveBedAsync(ct);
+            if (client.Sleeping) { set = true; await client.LeaveBedAsync(ct); }
         }
         finally { client.ChatReceived -= OnChat; }
+        // Only if the game took it: someone's bed, or one he could not reach, is not his home.
+        if (!set && refusal != null && (refusal.Contains("could not get", StringComparison.OrdinalIgnoreCase) || refusal.Contains("occupied", StringComparison.OrdinalIgnoreCase))) return (false, $"I couldn't use the bed at {bx} {by} {bz}: {refusal}.");
         HomeBed = (bx, by, bz);
-        return (true, set ? $"I set up my bed at {bx} {by} {bz}: this is where I come back to now." : $"I put my bed down at {bx} {by} {bz}.");
+        Home = (bx, bz);
+        return (true, set ? $"I set up my bed at {bx} {by} {bz}: this is where I come back to now." : $"I lay down in the bed at {bx} {by} {bz}.");
     }
 
-    /// <summary>Where he last put his own bed down, or null.</summary>
-    public (int X, int Y, int Z)? HomeBed { get; private set; }
+    /// <summary>Where he last made his bed the place he comes back to, or null. Kept by the brain across restarts.</summary>
+    public (int X, int Y, int Z)? HomeBed { get; set; }
+
+    /// <summary>He came back after a death: if not at his bed, the bed is gone or blocked (the game says so by putting him elsewhere), and getting one is on the list again.</summary>
+    public void NoteRespawned()
+    {
+        if (HomeBed is not { } bed) return;
+        var (x, _, z) = client.FeetBlock;
+        if (Math.Abs(x - bed.X) > 16 || Math.Abs(z - bed.Z) > 16)
+        {
+            Trace?.Invoke($"I came back at {x} {z}, not at my bed at {bed.X} {bed.Z}: it must be gone");
+            HomeBed = null;
+        }
+    }
 }

@@ -55,6 +55,23 @@ public class LiveObtainTests
     }
 
     [Test]
+    public async Task ABedStandingNearby_OnlyCountsOnceItIsHis()
+    {
+        var (client, skills, ax, az) = await StageAsync("ObtainNear", (x, z) => $"setblock {x + 3} 200 {z} minecraft:red_bed[facing=east,part=foot]", (x, z) => $"setblock {x + 4} 200 {z} minecraft:red_bed[facing=east,part=head]");
+        await using var _c = client;
+        var bedStep = skills.Milestones().First(m => m.Item == "bed");
+        Assert.That(bedStep.Done(), Is.False, "someone's bed standing near him does not move where he comes back to");
+        using var cts = new CancellationTokenSource(TimeSpan.FromMinutes(2));
+        var (ok, text) = await skills.AdvanceAsync(bedStep, cts.Token);
+        TestContext.Out.WriteLine(text);
+        Assert.That(ok, Is.True, text);
+        Assert.That(bedStep.Done(), Is.True);
+        await _server.CommandAsync("effect clear ObtainNear");
+        await _server.CommandAsync("damage ObtainNear 100 minecraft:generic");
+        await Wait.UntilAsync(() => client.Health >= 20f && client.IsSpawned && Math.Abs(client.FeetBlock.X - ax - 3) <= 6 && Math.Abs(client.FeetBlock.Z - az) <= 6, TimeSpan.FromSeconds(30), () => $"coming back at the bed; he is at {client.FeetBlock}");
+    }
+
+    [Test]
     public async Task HungryAtSea_FishAreFood()
     {
         var (client, skills, ax, az) = await StageAsync("ObtainFish",
@@ -118,6 +135,7 @@ public class LiveObtainTests
         Assert.That(client.FindBeds(8, 1), Is.Not.Empty, "it stands beside him");
         Assert.That(skills.HomeBed, Is.Not.Null);
         Assert.That(bedStep.Done(), Is.True);
+        Assert.That(skills.Home, Is.EqualTo((skills.HomeBed!.Value.X, skills.HomeBed.Value.Z)), "his bed is where he goes back to");
         // The proof that matters: he comes back beside it, not at the world's spawn.
         var (bx, by, bz) = skills.HomeBed!.Value;
         await _server.CommandAsync("effect clear ObtainBed");
