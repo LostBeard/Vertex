@@ -72,7 +72,8 @@ public sealed class Reflexes : IDisposable
 
     private DateTime _lastMonsterHit = DateTime.MinValue;
     private DateTime _buriedAt = DateTime.MinValue;
-    private bool _diggingOut;
+    private bool _diggingOut, _eating;
+    private long _nextEatTick;
 
     private void OnDamaged(DamageInfo damage)
     {
@@ -166,6 +167,20 @@ public sealed class Reflexes : IDisposable
         {
             _nextLandTick = _tick + 100;
             _tasks.StartReflex("landing", ct => _skills.LandAsync(ct));
+            return;
+        }
+
+        // Food in his pockets while he works: eating only when idle meant never, now that he always has something on. Natural healing stops under 18 food, so hurt he eats sooner. Not while a monster has just hit him. He goes back to the job.
+        if (_tick >= _nextEatTick && _skills.HasFood && !_eating && (c.Food <= 14 || (c.Food < 18 && c.Health < 16)) && !HandlesMonsters(_tasks.Current) && DateTime.UtcNow - _lastMonsterHit > TimeSpan.FromSeconds(3)
+            && (_tasks.Current?.StartsWith("working toward") == true || _tasks.Current?.Contains("somewhere I can live") == true || _tasks.Current == "cooling off"))
+        {
+            _nextEatTick = _tick + 100;
+            _eating = true;
+            _tasks.Interrupt("eating", async ct =>
+            {
+                try { return await _skills.EatAsync(ct); }
+                finally { _eating = false; }
+            }, quiet: true);
             return;
         }
 

@@ -268,7 +268,10 @@ public sealed partial class Skills
     public Milestone? NextMilestone()
     {
         var now = DateTime.UtcNow;
-        return Milestones().FirstOrDefault(m => !m.Done() && (!_milestoneBackoff.TryGetValue(m.Item, out var b) || b.Until <= now));
+        bool Open(Milestone m) => !m.Done() && (!_milestoneBackoff.TryGetValue(m.Item, out var b) || b.Until <= now);
+        // Hurt and unable to heal (natural healing stops under 18 food) with nothing to eat: food before tools. He lost one stone pickaxe after another at 2 hearts and 16 food (2026-11-04): tools do not stay with someone who cannot heal.
+        if (client.Health < 14 && client.Food < 18 && !HasFood && Milestones().FirstOrDefault(m => m.Item == "food") is { } food && Open(food)) return food;
+        return Milestones().FirstOrDefault(Open);
     }
 
     /// <summary>The next step not yet reached, whether or not he is trying it just now: what he would say he is working toward.</summary>

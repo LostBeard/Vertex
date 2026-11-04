@@ -282,6 +282,30 @@ public class LiveDangerChoiceTests
     }
 
     [Test]
+    public async Task HurtAndHungry_HeEatsWhileWorking_AndWithNothingToEatFoodComesBeforeTools()
+    {
+        var (client, skills, tasks, ax, az) = await JoinAsync("Hungry");
+        await using var _ = client;
+        // Real hunger: the effect burns the bar down until natural healing has stopped.
+        await _server.CommandAsync("effect give Hungry minecraft:hunger 60 200 true");
+        await Wait.UntilAsync(() => client.Food < 17, TimeSpan.FromSeconds(40), () => $"the food bar to fall (food {client.Food})");
+        await _server.CommandAsync("effect clear Hungry");
+        await _server.CommandAsync("damage Hungry 10 minecraft:generic");
+        await Wait.UntilAsync(() => client.Health < 14, Timeout, () => $"the hurt (health {client.Health})");
+        Assert.That(skills.NextMilestone()?.Item, Is.EqualTo("food"), "he cannot heal and has nothing to eat: tools can wait");
+
+        await _server.CommandAsync("give Hungry minecraft:bread 8");
+        await Wait.UntilAsync(() => skills.HasFood, Timeout, () => "the bread");
+        var foodBefore = client.Food;
+        var started = 0;
+        tasks.StartReflex("working toward a stone pickaxe", async ct => { Interlocked.Increment(ref started); await Task.Delay(-1, ct); return (true, "done"); });
+        using var reflexes = new Reflexes(client, skills, tasks, () => Character.BuiltIn[0].Style);
+        await Wait.UntilAsync(() => client.Food > foodBefore, TimeSpan.FromSeconds(30), () => $"eating (food {client.Food}, doing {tasks.Current})");
+        await Wait.UntilAsync(() => tasks.Current == "working toward a stone pickaxe" && Volatile.Read(ref started) >= 2, TimeSpan.FromSeconds(30), () => $"back to the job (doing {tasks.Current})");
+        tasks.Stop();
+    }
+
+    [Test]
     public async Task Buried_HeDigsHimselfOut_AndGoesBackToHisJob()
     {
         var (client, skills, tasks, ax, az) = await JoinAsync("Buried");
