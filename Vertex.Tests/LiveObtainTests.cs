@@ -55,6 +55,26 @@ public class LiveObtainTests
     }
 
     [Test]
+    public async Task WoodOnlyInCrownsOverHisHead_HeStacksBlocksAndClimbsToIt()
+    {
+        // What stands round his respawn spot on mc.spawndev.com: the low trunks gone, the rest six blocks up, and sand underfoot. Stage 0's two trees are removed so these are all there is.
+        var (client, skills, ax, az) = await StageAsync("ObtainHigh",
+            (x, z) => $"fill {x + 12} 200 {z - 2} {x + 16} 206 {z + 2} minecraft:air",
+            (x, z) => $"fill {x - 14} 200 {z + 3} {x - 14} 205 {z + 3} minecraft:air",
+            (x, z) => $"fill {x + 2} 200 {z + 4} {x + 6} 200 {z + 8} minecraft:sand",
+            (x, z) => $"fill {x + 8} 206 {z} {x + 8} 212 {z} minecraft:oak_log");
+        await using var _c = client;
+        skills.Trace += m => TestContext.Out.WriteLine(m);
+        using var cts = new CancellationTokenSource(TimeSpan.FromMinutes(4));
+        var (ok, text) = await skills.ObtainAsync("wooden_pickaxe", 1, cts.Token);
+        TestContext.Out.WriteLine(text);
+        Assert.That(ok, Is.True, text);
+        Assert.That(client.Inventory.Count("wooden_pickaxe"), Is.EqualTo(1));
+        // The only wood there was is in that column: what he has came from up there.
+        Assert.That(Enumerable.Range(206, 7).Count(y => client.World.GetBlock(ax + 8, y, az)?.Name == "minecraft:oak_log"), Is.LessThan(7), "he cut logs from the crown");
+    }
+
+    [Test]
     public async Task OutOfAPitHeDugHimself_ByDiggingAStair()
     {
         var (client, skills, ax, az) = await StageAsync("ObtainPit");

@@ -216,6 +216,8 @@ public sealed partial class Skills(MinecraftClient client)
         var broken = 0;
         var failures = 0;
         var digFailures = 0;
+        var fetchedScaffold = false;
+        (int X, int Y, int Z)? ground = null;
         var tried = new HashSet<(int, int, int)>();
         var nextToLava = 0;
         var legs = 0;
@@ -257,8 +259,24 @@ public sealed partial class Skills(MinecraftClient client)
             var (bx, by, bz) = targets[0];
             tried.Add((bx, by, bz));
             Trace?.Invoke($"collecting {what}: going for the one at {bx} {by} {bz} ({broken} of {count} so far)");
-            if (!await client.GoToAsync(new GoalReachBlock(bx, by, bz, 4.0), new PathOptions { CanDig = true, MaxNodes = 30_000 }, ct))
+            // With blocks to stand on he can build his way up to what is out of reach.
+            var scaffold = Have(s => client.ThrowawayBlocks.Contains(s.Name));
+            if (!await client.GoToAsync(new GoalReachBlock(bx, by, bz, 4.0), new PathOptions { CanDig = true, CanPlace = scaffold > 0, MaxNodes = 30_000 }, ct))
             {
+                // Too high: go and get something to stand on and try again. Live 2026-11-04 the trees round his respawn spot had no trunk left below y 70, only crowns six blocks over his head: "I could see wood but I couldn't
+                // get to any of it", for days. A player stacks a few blocks.
+                if (by - client.FeetBlock.Y >= 4 && scaffold < 6 && !fetchedScaffold)
+                {
+                    fetchedScaffold = true;
+                    ground = client.FeetBlock;
+                    Trace?.Invoke($"collecting {what}: the one at {bx} {by} {bz} is too high, getting blocks to climb on");
+                    foreach (var block in new[] { "sand", "dirt", "stone" })
+                    {
+                        if (block == what || Have(s => client.ThrowawayBlocks.Contains(s.Name)) >= 8) break;
+                        await CollectAsync(block, 8, ct);
+                    }
+                    if (Have(s => client.ThrowawayBlocks.Contains(s.Name)) > scaffold) { tried.Remove((bx, by, bz)); continue; }
+                }
                 failures++;
                 var (fx, fy, fz) = client.Position;
                 Trace?.Invoke($"collecting {what}: no way to the one at {bx} {by} {bz}, I got to {fx:0} {fy:0} {fz:0} (try {failures})");
@@ -291,6 +309,9 @@ public sealed partial class Skills(MinecraftClient client)
                 Trace?.Invoke($"collecting {what}: at the one at {bx} {by} {bz} the dig did not work (distance {client.DistanceToBlock(bx, by, bz):0.#}, now {client.World.GetBlock(bx, by, bz)?.Name ?? "unknown"}; try {failures})");
             }
         }
+        // Back down from whatever he built to reach it: on top of a pillar there is nothing beside him to put a crafting table against, and nothing he does next starts up there.
+        if (ground is { } back && client.FeetBlock.Y > back.Y + 1 && !ct.IsCancellationRequested)
+            await client.GoToAsync(Goal.Near(back.X + 0.5, back.Y, back.Z + 0.5, 2), new PathOptions { CanDig = true, MaxDrop = 3, MaxNodes = 8_000 }, ct);
         var have = InventorySummary();
         var lavaNote = nextToLava > 0 ? $" {nextToLava} {(nextToLava == 1 ? "was" : "were")} next to lava, so I left {(nextToLava == 1 ? "it" : "them")} alone." : "";
         return broken > 0
