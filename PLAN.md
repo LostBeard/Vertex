@@ -13,7 +13,9 @@ Every milestone is tested against REAL servers started locally (Paper 1.21.5 bui
 
 **Measured:** deaths 9 in 5 minutes (18d5a2c), 2 in 8 minutes (b8f13a1), but on b8f13a1 most of that was sitting cool in the sea and he had no log after 8 minutes: survival up, play not yet. Iron pickaxe from empty pockets 1 m 52 s on a test stage (never yet live).
 
-**Next:** (1) read the live `collecting` traces: does he get wood now that heat ticks no longer restart his job; (2) food when health is stuck under 18 food (natural healing stops there); (3) from the research: a case bank that keeps failures, lessons with helpful/harmful counters, the language model as a prior for the choice, not the picker; (4) `DeathsWithoutCoverToday` counts every real death now, so `CoverBelow` sits at its top: it only matters with the learner off; (5) move `SpawnDev.Reachy` to `[0.1.0-preview.5]` (Data, on nuget.org) when the robot can be tested.
+**Why he never had wood there (found 2026-11-04):** the nearest log at his respawn spot is at y 70 and he stands at y 64: the trees there have no low trunk left, only crowns. He now stacks sand or dirt and climbs (test: wood only in a crown; 2410a3c live: he gathered 12 sand there, then was interrupted or died before climbing). Who cut them is not known. The temperature is not fully explained either: 6 HP went in 20 s at a reading of 25 once, so `generic` is not proven to be heat.
+
+**Next:** (1) read the live `collecting` traces: does he finish a climb and get a log; (2) food when health is stuck under 18 food (natural healing stops there); (3) from the research: a case bank that keeps failures, lessons with helpful/harmful counters, the language model as a prior for the choice, not the picker; (4) `DeathsWithoutCoverToday` counts every real death now, so `CoverBelow` sits at its top: it only matters with the learner off; (5) move `SpawnDev.Reachy` to `[0.1.0-preview.5]` (Data, on nuget.org) when the robot can be tested.
 
 ## Where it stood: handoff, end of the 2026-11-02/03 session
 
