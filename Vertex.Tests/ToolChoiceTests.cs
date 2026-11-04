@@ -107,6 +107,7 @@ public class ToolChoiceTests
         await vertex.WaitTicksAsync(20);
 
         var results = new List<(string Says, string Wanted, string Got, bool Ok)>();
+        var strictRight = 0;
         // VERTEX_TEST_CASES=n runs only the first n requests (a quick look at one thing, not the measure).
         var limit = int.TryParse(Environment.GetEnvironmentVariable("VERTEX_TEST_CASES"), out var only) ? only : Cases.Length;
         foreach (var (says, wanted, argsContain) in Cases.Take(limit))
@@ -128,13 +129,17 @@ public class ToolChoiceTests
             }
             var seconds = (DateTime.UtcNow - started).TotalSeconds;
             var ok = chosen == wanted && argsContain.All(w => args.Contains(w, StringComparison.OrdinalIgnoreCase));
+            var strict = ToolChoiceScoring.Strict(says, wanted, chosen, args);
+            if (strict) strictRight++;
             results.Add((says, wanted + (argsContain.Length > 0 ? " " + string.Join(",", argsContain) : ""), chosen == null ? "(no tool)" : chosen + " " + args, ok));
-            TestContext.Out.WriteLine($"=> \"{says}\": wanted {wanted} {string.Join(",", argsContain)}, got {chosen ?? "(no tool)"} {args} [{seconds:0} s] {(ok ? "ok" : "WRONG")}");
+            TestContext.Out.WriteLine($"=> \"{says}\": wanted {wanted} {string.Join(",", argsContain)}, got {chosen ?? "(no tool)"} {args} [{seconds:0} s] {(ok ? "ok" : "WRONG")} strict {(strict ? "ok" : "WRONG")}");
         }
         brain.Tasks.Stop();
 
         var summary = string.Join("\n", results.Select(r => $"  {(r.Ok ? "ok   " : "WRONG")} \"{r.Says}\": wanted {r.Wanted}, got {r.Got}"));
         TestContext.Out.WriteLine("\n" + summary);
-        Assert.That(results.Count(r => r.Ok), Is.GreaterThanOrEqualTo(results.Count - 2), "at most two wrong choices of " + results.Count + ":\n" + summary);
+        TestContext.Out.WriteLine($"SCORE loose {results.Count(r => r.Ok)} of {results.Count}, strict {strictRight} of {results.Count}{(GameTool.NamesOnly ? " (tool names only in the prompt)" : "")}");
+        // Tool names only is a measurement of how little the model knows without the definitions (the floor for the adapter work): nothing to hold it to.
+        if (!GameTool.NamesOnly) Assert.That(results.Count(r => r.Ok), Is.GreaterThanOrEqualTo(results.Count - 2), "at most two wrong choices of " + results.Count + ":\n" + summary);
     }
 }

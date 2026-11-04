@@ -39,10 +39,35 @@ public sealed partial class Skills
     /// </summary>
     private void NoteBiomeHeat(double degrees)
     {
-        if (BiomeHere is not { } biome || !client.OnGround || InWaterNow()) return;
+        var biome = BiomeHere;
+        if (biome != _biomeNow) { _biomeNow = biome; _biomeSince = DateTime.UtcNow; }
+        if (biome == null || !client.OnGround || InWaterNow()) return;
+        // Only once he has been here a while: the number takes some seconds to follow him, so a reading on arrival belongs to where he came from. Walking from the savanna into the plains wrote 47 against land that reads 25, and he
+        // then avoided the one place he could live (2026-11-04).
+        if (DateTime.UtcNow - _biomeSince < BiomeSettles) return;
         lock (_landHeat)
             if (!_landHeat.TryGetValue(biome, out var known) || degrees >= known.Degrees || DateTime.UtcNow - known.At > TimeSpan.FromMinutes(10))
                 _landHeat[biome] = (degrees, DateTime.UtcNow);
+        if (HotAt?.Invoke() is double hotAt && degrees < hotAt)
+        {
+            var (x, _, z) = client.FeetBlock;
+            lock (_coolLand) _coolLand[(x >> 4, z >> 4)] = DateTime.UtcNow;
+        }
+    }
+
+    /// <summary>How long he must have been in a biome before a reading counts for it.</summary>
+    public static TimeSpan BiomeSettles { get; set; } = TimeSpan.FromSeconds(15);
+
+    private string? _biomeNow;
+    private DateTime _biomeSince = DateTime.MinValue;
+    private readonly Dictionary<(int X, int Z), DateTime> _coolLand = [];
+
+    /// <summary>The nearest land he has stood on and found cool, however far (he has gone 300 blocks from the island and found it): where he comes back to, not a random direction over the sea. Null when he knows none.</summary>
+    public (int X, int Z)? NearestCoolLandKnown()
+    {
+        var (x, _, z) = client.FeetBlock;
+        lock (_coolLand)
+            return _coolLand.Keys.Select(c => (X: (c.X << 4) + 8, Z: (c.Z << 4) + 8)).OrderBy(c => (c.X - x) * (c.X - x) + (c.Z - z) * (c.Z - z)).Cast<(int X, int Z)?>().FirstOrDefault();
     }
 
     /// <summary>Has he found this biome's land too hot to live on?</summary>
@@ -194,6 +219,7 @@ public sealed partial class Skills
                 var land = NextLivableLand(hotAt, given);
                 (int X, int Z) goal;
                 if (land is { } l) goal = l;
+                else if (NearestCoolLandKnown() is { } home) goal = home;
                 else
                 {
                     // Nothing in sight: one way, and stay on it, or he goes in circles round the island. Off the map of what he has loaded is fine: the path goes as far as it knows.

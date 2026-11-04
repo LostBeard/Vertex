@@ -257,22 +257,30 @@ public class LiveDangerChoiceTests
         using var stop = new CancellationTokenSource();
         var plugin = Task.Run(async () =>
         {
+            // The number follows him a few seconds late, as it does live: on arriving in the plains it still reads the desert's.
+            var cooledAt = DateTime.MaxValue;
             while (!stop.IsCancellationRequested)
             {
-                var degrees = skills.BiomeHere == "desert" ? 56.6 : 25.0;
+                if (skills.BiomeHere == "desert") cooledAt = DateTime.MaxValue;
+                else if (cooledAt == DateTime.MaxValue) cooledAt = DateTime.UtcNow.AddSeconds(6);
+                var degrees = DateTime.UtcNow < cooledAt ? 56.6 : 25.0;
                 await _server.CommandAsync($"title Leaver actionbar {{\"text\":\"Temperature: {degrees:0.0} C\"}}");
                 await Task.Delay(500);
             }
         });
         try
         {
-            await Wait.UntilAsync(() => skills.KnownTooHot("desert", 50), Timeout, () => "the reading on his map");
+            skills.HotAt = () => 50;
+            await Wait.UntilAsync(() => skills.KnownTooHot("desert", 50), TimeSpan.FromSeconds(40), () => "the reading on his map, after he has been in the biome a while");
             using var cts = new CancellationTokenSource(TimeSpan.FromMinutes(3));
             var (ok, text) = await skills.FindLivableLandAsync(() => shown, 50, cts.Token);
             TestContext.Out.WriteLine(text);
             Assert.That(ok, Is.True, text);
             Assert.That(skills.BiomeHere, Is.EqualTo("plains"), $"at {client.FeetBlock}");
             Assert.That(skills.KnownTooHot("plains", 50), Is.False);
+            // The reading that followed him across (the number lags) did not get pinned on the plains. And he remembers where it was cool.
+            Assert.That(skills.BiomeHeat().Single(b => b.Biome == "plains").Degrees, Is.LessThan(50));
+            Assert.That(skills.NearestCoolLandKnown(), Is.Not.Null);
         }
         finally
         {
