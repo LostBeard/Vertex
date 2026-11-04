@@ -72,8 +72,11 @@ public sealed class Reflexes : IDisposable
 
     private DateTime _lastMonsterHit = DateTime.MinValue;
     private DateTime _buriedAt = DateTime.MinValue;
-    private bool _diggingOut, _eating;
-    private long _nextEatTick;
+    private bool _diggingOut, _eating, _surfacing;
+    private long _nextEatTick, _nextAirTick;
+
+    /// <summary>The breath (ticks, 300 full) at which he stops what he is doing and comes up.</summary>
+    public const int AirToSurfaceAt = 150;
 
     private void OnDamaged(DamageInfo damage)
     {
@@ -97,6 +100,18 @@ public sealed class Reflexes : IDisposable
                 try { return await _skills.EscapeCreeperAsync(id, ct); }
                 finally { _escaping = -1; }
             }, quiet: Learner != null);
+            return;
+        }
+        // Short of breath, whatever he is doing: up. The older rule further down only holds for an idle body, and he is never idle now: he drowned chasing fish, a job at a time (2026-11-04). Half a breath left is about what it
+        // takes to come up from ten blocks down.
+        if (!_surfacing && c.Air < AirToSurfaceAt && _tick >= _nextAirTick)
+        {
+            _surfacing = true;
+            _tasks.Interrupt("coming up for air", async ct =>
+            {
+                try { return await _skills.ComeUpForAirAsync(ct); }
+                finally { _surfacing = false; _nextAirTick = _tick + 40; }
+            }, quiet: true);
             return;
         }
         // Buried: it says so by hurting, a heart a second. Nothing else matters until he can breathe, and he goes back to what he was doing.
@@ -471,6 +486,7 @@ public sealed class Reflexes : IDisposable
     {
         _client.Tick -= OnTick;
         _client.Damaged -= OnDamaged;
+        _client.Controls.Clear();
         (Policy as IDisposable)?.Dispose();
     }
 }

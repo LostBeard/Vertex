@@ -2299,6 +2299,25 @@ public sealed partial class Skills(MinecraftClient client)
         return (!client.OnFire, client.OnFire ? "I'm still on fire." : "I put the fire out in the water.");
     }
 
+    /// <summary>Straight up until he has his breath back. Up to 25 seconds; a roof over the water he will not get through this way, and he says so.</summary>
+    public async Task<(bool, string)> ComeUpForAirAsync(CancellationToken ct)
+    {
+        try
+        {
+            for (var tick = 0; tick < 500 && client.Air < PlayerFullAir - 20; tick++)
+            {
+                ct.ThrowIfCancellationRequested();
+                client.Controls.Forward = false;
+                client.Controls.Jump = true;
+                await client.WaitTicksAsync(1, ct);
+            }
+        }
+        finally { client.Controls.Clear(); }
+        return client.Air >= PlayerFullAir - 20 ? (true, "I got my breath back.") : (false, "I couldn't get up to the air.");
+    }
+
+    private const int PlayerFullAir = 300;
+
     // ---------------------------------------------------------------- where it is hot and where it is not (his own readings)
 
     private const int HeatCell = 3;     // cells of 8 by 8 blocks

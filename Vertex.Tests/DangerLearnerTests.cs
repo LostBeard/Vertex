@@ -389,6 +389,28 @@ public class LiveDangerChoiceTests
     }
 
     [Test]
+    public async Task UnderWaterOnAJob_HeComesUpForAirBeforeHeDrowns_AndGoesBackToIt()
+    {
+        var (client, skills, tasks, ax, az) = await JoinAsync("Diver",
+            (x, z) => $"fill {x + 4} 186 {z - 4} {x + 12} 199 {z + 4} minecraft:water",
+            (x, z) => $"fill {x + 4} 185 {z - 4} {x + 12} 185 {z + 4} minecraft:stone");
+        await using var _ = client;
+        var hurts = new List<string>();
+        client.Damaged += d => { lock (hurts) hurts.Add(d.Type); };
+        var started = 0;
+        tasks.Start("a long job", async ct => { Interlocked.Increment(ref started); await Task.Delay(-1, ct); return (true, "done"); });
+        using var reflexes = new Reflexes(client, skills, tasks, () => Character.BuiltIn[0].Style);
+        await _server.CommandAsync($"tp Diver {ax + 8.5} 188 {az + 0.5}");
+        await Wait.UntilAsync(() => client.FeetBlock.Y < 195, Timeout, () => $"going under, at {client.FeetBlock}");
+        await Wait.UntilAsync(() => client.Air < 280, Timeout, () => $"the breath to fall ({client.Air})");
+        await Wait.UntilAsync(() => tasks.Current == "coming up for air", Timeout, () => $"coming up (air {client.Air}, doing {tasks.Current})");
+        await Wait.UntilAsync(() => Volatile.Read(ref started) >= 2, TimeSpan.FromSeconds(40), () => $"his breath back and the job again (air {client.Air}, at {client.FeetBlock}, doing {tasks.Current})");
+        Assert.That(client.Air, Is.GreaterThan(250));
+        lock (hurts) Assert.That(hurts, Does.Not.Contain("drown"), "he never got as far as drowning");
+        tasks.Stop();
+    }
+
+    [Test]
     public async Task Buried_HeDigsHimselfOut_AndGoesBackToHisJob()
     {
         var (client, skills, tasks, ax, az) = await JoinAsync("Buried");

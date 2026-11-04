@@ -161,6 +161,17 @@ public sealed class Companion : IAsyncDisposable
     /// <summary>A tool did something (counted to catch a reply that claims an action no tool took).</summary>
     public void NoteToolRun() => Interlocked.Increment(ref _toolRuns);
 
+    /// <summary>Where each generation pass with nobody's words in it is written, as training pairs, from the engine's own account of what the model saw and wrote. Null: not written.</summary>
+    public TrainingLog? Training
+    {
+        get;
+        set
+        {
+            field = value;
+            Ai.Chat.PassObserver = value == null ? null : pass => value.Record(pass.Messages, pass.ToolsJson, pass.RawOutput, pass.RenderedPrompt, pass.PromptTokens < pass.PromptTokenIds.Length);
+        }
+    }
+
     /// <summary>Lets bodies, the control panel and tests hand the companion something to consider.</summary>
     public void Post(BrainEvent e)
     {

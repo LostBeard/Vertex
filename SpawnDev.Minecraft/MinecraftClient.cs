@@ -162,6 +162,8 @@ public sealed partial class MinecraftClient : IAsyncDisposable
     public event Action<string>? Died;
     /// <summary>On fire, by the server's account (our own entity flags, bit 0x01).</summary>
     public bool OnFire { get; private set; }
+    /// <summary>The breath left, in ticks, by the server's account: 300 is full (15 seconds under water), and at 0 he starts to drown.</summary>
+    public int Air { get; private set; } = 300;
 
     /// <summary>Play packets that failed to decode and were skipped (zero on vanilla servers).</summary>
     public int PacketErrors { get; private set; }

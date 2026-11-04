@@ -49,6 +49,8 @@ public sealed class VertexSettings
     /// what he built last week. Off: nothing is written and nothing is looked up (what is already stored stays until deleted).
     /// </summary>
     public bool LongTermMemory { get; set; } = true;
+    /// <summary>Keep his turns that have nobody's words in them as training pairs, in the data folder (see Docs/Privacy-and-Safety.md).</summary>
+    public bool TrainingLog { get; set; } = true;
     /// <summary>Use the Reachy Mini as Vertex's body at home: its microphone, speaker and body language.</summary>
     public bool Reachy { get; set; } = true;
     /// <summary>The robot's address on the LAN.</summary>
@@ -741,6 +743,7 @@ public sealed class VertexHost : IAsyncDisposable
             };
             _brain.Log += AddLog;
             _brain.LearnFromDanger();
+            if (Settings.TrainingLog) _companion.Training ??= new Vertex.Brain.TrainingLog(Path.Combine(_companion.Characters.Folder, "..", "training"));
             await _client.ConnectAsync(Settings.Server, Settings.Port);
             _brain.Start();
             Add(LineKind.System, $"Playing as {_companion.Character.Name} ({profile.Name}) on {Settings.Server}");

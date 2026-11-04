@@ -463,6 +463,7 @@ public sealed partial class MinecraftClient
                         var key = Convert.ToInt32(m["key"]);
                         if (key == 6) Pose = (EntityPose)Convert.ToInt32(value);
                         else if (key == 0) OnFire = (Convert.ToInt32(value) & 0x01) != 0;
+                        else if (key == 1) Air = Convert.ToInt32(value);
                     }
                     return;
                 }
