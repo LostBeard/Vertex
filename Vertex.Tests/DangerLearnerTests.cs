@@ -196,6 +196,46 @@ public class LiveDangerChoiceTests
     }
 
     [Test]
+    public async Task TooHot_HeCoolsOffInTheWater_ThenGoesBackToHisJob()
+    {
+        var (client, skills, tasks, ax, az) = await JoinAsync("HotHead", (x, z) => $"fill {x + 5} 197 {z - 2} {x + 8} 199 {z + 2} minecraft:water");
+        await using var _ = client;
+        // What the plugin does, for real on the wire: the line on the action bar, hot on land and cooling in the water.
+        double? shown = null;
+        client.ChatReceived += m => { if (m.Kind == ChatKind.ActionBar && VertexBrain.TemperatureIn(m.Content) is double d) shown = d; };
+        using var stop = new CancellationTokenSource();
+        var degrees = 60.0;
+        var plugin = Task.Run(async () =>
+        {
+            while (!stop.IsCancellationRequested)
+            {
+                var (x, y, z) = client.FeetBlock;
+                var wet = client.World.GetBlock(x, y, z)?.Name == "minecraft:water" || client.World.GetBlock(x, y - 1, z)?.Name == "minecraft:water";
+                if (wet) degrees = Math.Max(30, degrees - 3);
+                await _server.CommandAsync($"title HotHead actionbar {{\"text\":\"Temperature: {degrees:0.0} C\"}}");
+                await Task.Delay(500);
+            }
+        });
+        try
+        {
+            var started = 0;
+            tasks.Start("a long job", async ct => { Interlocked.Increment(ref started); await Task.Delay(-1, ct); return (true, "done"); });
+            using var reflexes = new Reflexes(client, skills, tasks, () => Character.BuiltIn[0].Style) { Temperature = () => shown };
+            await Wait.UntilAsync(() => tasks.Current == "cooling off in the water", Timeout, () => $"going to cool off (shown {shown}, doing {tasks.Current})");
+            await Wait.UntilAsync(() => client.FeetBlock.X >= ax + 5, Timeout, () => $"reaching the water, at {client.FeetBlock}");
+            await Wait.UntilAsync(() => tasks.Current == "a long job", TimeSpan.FromSeconds(60), () => $"back to the job (shown {shown}, doing {tasks.Current})");
+            Assert.That(degrees, Is.LessThanOrEqualTo(reflexes.HotAt - Reflexes.CoolBy + 3), "he stayed until he had cooled");
+            Assert.That(Volatile.Read(ref started), Is.GreaterThanOrEqualTo(2), "the job restarted, from where things stand");
+            tasks.Stop();
+        }
+        finally
+        {
+            await stop.CancelAsync();
+            try { await plugin; } catch (OperationCanceledException) { }
+        }
+    }
+
+    [Test]
     public async Task HeSwimsOutToOpenWater_AndTreadsWater_WithoutDrowning()
     {
         var (client, skills, tasks, ax, az) = await JoinAsync("SwimOut",

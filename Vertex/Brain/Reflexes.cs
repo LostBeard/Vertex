@@ -25,6 +25,16 @@ public sealed class Reflexes : IDisposable
     private int _avoidRepeats;
     private long _nextSwatTick, _nextCoverTick, _nextRangedTick;
     private long _lastAvoidTick;
+    private bool _cooling;
+    private long _nextCoolTick;
+
+    /// <summary>His temperature as the server shows it, or null when it shows none (most servers).</summary>
+    public Func<double?>? Temperature { get; set; }
+    /// <summary>The temperature from which he goes to cool off: starts at the plugin's first ill effect on its product page (no healing at +50), and the brain lowers it when heat is seen to hurt below that.</summary>
+    public double HotAt { get; set; } = 50;
+    /// <summary>How far below <see cref="HotAt"/> he cools before going back to work.</summary>
+    public const double CoolBy = 6;
+
     private long _nextFireTick, _lastFireOutTick = long.MinValue / 2;
     private int _fireReturns;
     private bool _puttingOut;
@@ -75,6 +85,22 @@ public sealed class Reflexes : IDisposable
         if (_busy || _tick % 6 != 0) return;
         var hurt = c.Health < _lastHealth - 0.01f;
         _lastHealth = c.Health;
+
+        // Too hot (a server's temperature plugin): into the water before it starts to hurt, and back to what he was doing once he has cooled. He gets about 40 seconds on land at midday on a hot island (2026-11-03), so this
+        // is the rhythm of a working day there, not an emergency.
+        if (!_cooling && _tick >= _nextCoolTick && Temperature?.Invoke() is double hot && hot >= HotAt && !HandlesMonsters(_tasks.Current) && _skills.NearestWater(48) != null)
+        {
+            _cooling = true;
+            var target = HotAt - CoolBy;
+            Decided?.Invoke($"too hot ({hot:0.#} degrees, I cool off from {HotAt:0.#}): into the water until {target:0.#}");
+            _tasks.Interrupt("cooling off in the water", async ct =>
+            {
+                try { return await _skills.CoolOffAsync(() => Temperature?.Invoke(), target, ct); }
+                finally { _cooling = false; _nextCoolTick = _tick + 100; }
+            }, quiet: true);
+            return;
+        }
+        if (_cooling) return;
 
         // On fire: into the water, whatever he was doing (he goes back to it after).
         // Unless water does not help: a server plugin can set him alight from his temperature, over and over (RealisticSeasons at +65 C). Live 2026-11-03 this reflex then restarted his job every few seconds, so he

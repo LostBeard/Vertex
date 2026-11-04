@@ -167,6 +167,7 @@ public sealed class VertexBrain : IBody
         Skills.LessonLearned += RecordLesson;
         Skills.Trace += m => Log?.Invoke("  (" + m + ")");
         Skills.PriorLessons = LessonsFor;
+        Reflexes.Temperature = () => Temperature;
         companion.Attach(this);
         companion.AddChannel(Channel);
     }
@@ -500,6 +501,12 @@ public sealed class VertexBrain : IBody
         var type = damage?.Type ?? "no damage event";
         var source = SourceOf(damage);
         _experience.NotePain(new Pain(now, before - after, type, source));
+        // How hot is too hot, from what it did to him: heat damage at a temperature moves the line below it. Only what the plugin does (no one's weapon, no block of fire under him).
+        if (type is "generic" or "on_fire" && source == null && Temperature is double hot && hot >= 30 && hot - 3 < Reflexes.HotAt)
+        {
+            Reflexes.HotAt = hot - 3;
+            Log?.Invoke($"learned: heat hurts me at {hot:0.#} degrees, so I cool off from {Reflexes.HotAt:0.#}");
+        }
         var (x, y, z) = Client.Position;
         Log?.Invoke($"hurt: -{(before - after) / 2:0.#} hearts by {type.Replace('_', ' ')}{(source != null ? $" from {source}" : "")}, {after / 2:0.#} left, at {x:0} {y:0} {z:0}{(Client.OnFire ? ", on fire" : "")}{(Temperature is double t ? $", {t:0.#} degrees" : "")}; doing: {Tasks.Current ?? "nothing"}");
         _lastDamage = null;
@@ -597,9 +604,9 @@ public sealed class VertexBrain : IBody
     public bool TurnOffGodMode { get; set; }
     private bool _godOffSent;
 
-    private static readonly System.Text.RegularExpressions.Regex TemperatureText = new(@"(?<v>-?\d+(?:[.,]\d+)?)\s*°\s*[CF]?", System.Text.RegularExpressions.RegexOptions.Compiled);
+    private static readonly System.Text.RegularExpressions.Regex TemperatureText = new(@"(?<v>-?\d+(?:[.,]\d+)?)\s*(?:°\s*)?C\b", System.Text.RegularExpressions.RegexOptions.Compiled);
 
-    /// <summary>The temperature in an action-bar line ("23°C", "Temperature: -4.5 °C"), or null. RealisticSeasons shows each player theirs there, in a format the server sets.</summary>
+    /// <summary>The temperature in an action-bar line ("Temperature: 56.6 C" on mc.spawndev.com, "23°C"), or null. RealisticSeasons shows each player theirs there, in a format the server sets.</summary>
     internal static double? TemperatureIn(string text) =>
         TemperatureText.Match(text) is { Success: true } t && double.TryParse(t.Groups["v"].Value.Replace(',', '.'), System.Globalization.NumberStyles.Float, System.Globalization.CultureInfo.InvariantCulture, out var v) ? v : null;
 

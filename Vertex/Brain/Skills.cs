@@ -2241,6 +2241,34 @@ public sealed partial class Skills(MinecraftClient client)
         return (!client.OnFire, client.OnFire ? "I'm still on fire." : "I put the fire out in the water.");
     }
 
+    /// <summary>Into the nearest water and treads it until his temperature is down to `target`, or for 90 seconds at most (water cools by a fixed amount, so at the hottest part of the day it may not get there).</summary>
+    public async Task<(bool, string)> CoolOffAsync(Func<double?> temperature, double target, CancellationToken ct)
+    {
+        if (NearestWater(48) is not { } water) return (false, "There is no water near to cool off in.");
+        for (var hop = 0; hop < 20 && client.World.GetBlock(client.FeetBlock.X, client.FeetBlock.Y, client.FeetBlock.Z)?.Name != "minecraft:water" && !client.BodySnapshot().InWater; hop++)
+        {
+            ct.ThrowIfCancellationRequested();
+            using var step = CancellationTokenSource.CreateLinkedTokenSource(ct);
+            step.CancelAfter(TimeSpan.FromSeconds(3));
+            try { await client.GoToAsync(Goal.XZ(water.X, water.Z), new PathOptions { MaxNodes = 8_000, Sprint = true }, step.Token); }
+            catch (OperationCanceledException) when (!ct.IsCancellationRequested) { }
+        }
+        var seconds = 0;
+        try
+        {
+            while (seconds < 90 && temperature() is double t && t > target)
+            {
+                ct.ThrowIfCancellationRequested();
+                client.Controls.Jump = true;      // head above the water
+                await client.WaitTicksAsync(20, ct);
+                seconds++;
+            }
+        }
+        finally { client.Controls.Clear(); }
+        var now = temperature();
+        return (now is not double done || done <= target, $"I cooled off in the water for {seconds} seconds ({now:0.#} degrees).");
+    }
+
     /// <summary>
     /// Open water to wait in, or null: at least two deep, no land within 8 blocks of it, within `reach` of him, the farther from monsters the better. Walkers and archers do not follow out there (skeletons shoot about
     /// 16 blocks), which on a sand island with nothing to dig in is often the only safe place there is.

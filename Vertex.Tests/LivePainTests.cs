@@ -142,10 +142,11 @@ public class LivePainTests
     [TestCase("Temperature: -4.5 °C", -4.5)]
     [TestCase("🌡 66° C", 66)]
     [TestCase("12,5°C", 12.5)]
+    [TestCase("Temperature: 56.6 C", 56.6)]     // as mc.spawndev.com shows it, 2026-11-03
     public void HeReadsHisTemperature_FromTheActionBar(string line, double degrees) => Assert.That(VertexBrain.TemperatureIn(line), Is.EqualTo(degrees).Within(1e-9));
 
     [TestCase("Sleeping through this night")]
-    [TestCase("23 C")]
+    [TestCase("You may not rest now; there are monsters nearby")]
     public void OtherActionBarLines_AreNotATemperature(string line) => Assert.That(VertexBrain.TemperatureIn(line), Is.Null);
 
     [Test]
