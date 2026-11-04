@@ -2,7 +2,7 @@ namespace Vertex.Brain;
 
 /// <summary>One second of his life as the recorder sees it: health, what was near, what he was doing, when and where it was.</summary>
 /// <param name="Mobs">Hostile mobs within 24 blocks: what kind and how far (fliers included).</param>
-public sealed record Moment(DateTime At, float Health, int Food, string? Task, long DayTime, string Weather, string Where, IReadOnlyList<(string Kind, double Distance)> Mobs, bool HasWeapon, bool HasFood);
+public sealed record Moment(DateTime At, float Health, int Food, string? Task, long DayTime, string Weather, string Where, IReadOnlyList<(string Kind, double Distance)> Mobs, bool HasWeapon, bool HasFood, double Y = 0);
 
 /// <summary>
 /// The start of learning from the live game (TJ, 2026-11-03, after phantoms killed him 70 seconds after god mode went off: "help him learn to learn"). It watches a stream of <see cref="Moment"/>s and
@@ -118,7 +118,10 @@ public sealed class ExperienceLog
         // Kinds seen near him in the last 30 seconds, with the most at one time.
         var window = history.Where(m => (now.At - m.At).TotalSeconds <= 30).ToList();
         var most = window.SelectMany(m => m.Mobs.GroupBy(x => x.Kind).Select(g => (Kind: g.Key, Count: g.Count()))).GroupBy(x => x.Kind).Select(g => (Kind: g.Key, Max: g.Max(x => x.Count))).OrderByDescending(x => x.Max).ToList();
-        var around = most.Count == 0 ? " Nothing hostile was near that I saw." : " Near me: " + string.Join(", ", most.Select(x => x.Max > 1 ? $"{x.Max} {Plain(x.Kind)}s" : $"a {Plain(x.Kind)}")) + ".";
+        // A fall: he was much higher within the last 15 seconds (3 blocks are free; the rest cost half a heart a block).
+        var highest = history.Where(m => (now.At - m.At).TotalSeconds <= 15 && m.Y > 0).Select(m => m.Y).DefaultIfEmpty(now.Y).Max();
+        var fell = now.Y > 0 && highest - now.Y >= 5 ? (int)Math.Round(highest - now.Y) : 0;
+        var around = (fell > 0 ? $" I fell about {fell} blocks." : "") + (most.Count == 0 ? " Nothing hostile was near that I saw." : " Near me: " + string.Join(", ", most.Select(x => x.Max > 1 ? $"{x.Max} {Plain(x.Kind)}s" : $"a {Plain(x.Kind)}")) + ".");
         var tasks = history.Select(m => m.Task).Where(t => !string.IsNullOrEmpty(t)).Distinct().TakeLast(4).ToList();
         var doing = tasks.Count == 0 ? " I was not doing anything in particular." : " I was doing: " + string.Join("; ", tasks) + ".";
         var covered = tasks.Any(t => t!.StartsWith("taking cover")) || history.Any(m => m.Task?.StartsWith("taking cover") == true);

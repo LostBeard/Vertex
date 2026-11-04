@@ -438,7 +438,7 @@ public sealed class VertexBrain : IBody
                 var (x, y, z) = Client.Position;
                 var mobs = Client.Entities.Values.Where(e => Skills.Hostile.Contains(e.Name) && e.DistanceTo(x, y, z) < 24).Select(e => (e.Name, e.DistanceTo(x, y, z))).ToList();
                 var weapon = Client.Inventory.Find(s => s.Name.EndsWith("_sword") || s.Name.EndsWith("_axe")).Any();
-                var moment = new Moment(DateTime.UtcNow, Client.Health, Client.Food, Tasks.Current, Client.World.DayTime, Client.Weather, $"{x:0} {y:0} {z:0}", mobs, weapon, Skills.HasFood);
+                var moment = new Moment(DateTime.UtcNow, Client.Health, Client.Food, Tasks.Current, Client.World.DayTime, Client.Weather, $"{x:0} {y:0} {z:0}", mobs, weapon, Skills.HasFood, y);
                 var message = DateTime.UtcNow - _deathMessageAt < TimeSpan.FromSeconds(15) ? _deathMessage : null;
                 foreach (var lesson in _experience.Observe(moment, message))
                 {

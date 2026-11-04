@@ -90,7 +90,9 @@ public sealed partial class MinecraftClient
                     {
                         CanDig = current.CanDig || escalation >= 2,
                         CanPlace = current.CanPlace,
-                        MaxDrop = Math.Max(current.MaxDrop, 3 + Math.Max(0, (int)Health - 4)),
+                        // A drop he accepts when stuck costs hearts: 19 blocks cost 8 of them (live 2026-11-03: "I lost 9.5 hearts in a few seconds", nothing near, in daylight, again and again). 8 blocks is 2.5
+                        // hearts; further than that he digs round, builds a way down, or looks for another way.
+                        MaxDrop = Math.Max(current.MaxDrop, Math.Min(8, 3 + Math.Max(0, (int)Health - 4))),
                         MaxNodes = current.MaxNodes,
                         DigTicks = current.DigTicks,
                         Sprint = current.Sprint,

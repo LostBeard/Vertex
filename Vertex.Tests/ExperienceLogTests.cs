@@ -52,6 +52,20 @@ public class ExperienceLogTests
         Assert.That(loss.Tags, Does.Contain("big-loss").And.Contain("cover").And.Contain("big-loss:phantom"));
     }
 
+    /// <summary>Live 2026-11-03: "I lost 9.5 hearts in a few seconds ... Nothing hostile was near", in daylight, again and again: falls he accepted when a path failed. The lesson now says so.</summary>
+    [Test]
+    public void ABigLossWithNothingNear_AfterAFall_SaysHowFarHeFell()
+    {
+        var log = new ExperienceLog();
+        var lessons = new List<Skills.Lesson>();
+        for (var s = 0; s < 5; s++) lessons.AddRange(log.Observe(At(s, 20, "collecting wood", [], dayTime: 6000) with { Y = 70 }));
+        lessons.AddRange(log.Observe(At(5, 20, "collecting wood", [], dayTime: 6000) with { Y = 52 }));
+        foreach (var s in new[] { 6, 7, 8, 9, 10, 11, 12 }) lessons.AddRange(log.Observe(At(s, 2, "collecting wood", [], dayTime: 6000) with { Y = 52 }));
+        var loss = lessons.Single();
+        TestContext.Out.WriteLine(loss.Text);
+        Assert.That(loss.Text, Does.Contain("I fell about 18 blocks").And.Contain("Nothing hostile was near"));
+    }
+
     [Test]
     public void ADeathIsOneLesson_HoweverLongHeStaysDead_AndTheNextDeathAnother()
     {
