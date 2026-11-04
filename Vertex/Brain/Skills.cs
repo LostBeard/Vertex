@@ -2534,6 +2534,9 @@ public sealed partial class Skills(MinecraftClient client)
                 client.Controls.Jump = true;         // treading water: head above it
                 await client.WaitTicksAsync(20, ct);
                 seconds++;
+                // Out here is no shelter from what lives here. He trod water from a zombie while a drowned took his last 2.7 hearts, not moving, in 20 seconds (18:17, 2026-11-04): this ends, and he chooses again.
+                var (wx, wy, wz) = client.Position;
+                if (client.Entities.Values.Any(e => (e.Name == "minecraft:drowned" || e.Name.Contains("guardian")) && e.DistanceTo(wx, wy, wz) < 8)) return (false, "Something that lives in the water is after me out here.");
                 // Until nothing is after him, not until morning: three minutes treading water with no monster near is three minutes he is not getting anywhere.
                 if (seconds >= 5 && NearestHostile(20) == null && NearestFlier(16) == null) break;
             }

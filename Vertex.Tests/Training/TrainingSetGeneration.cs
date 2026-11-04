@@ -13,10 +13,14 @@ namespace Vertex.Tests.Training;
 /// <summary>
 /// Makes the training sets for the adapter work (Tuvok's spec, 2026-11-04), through the real prompt path. Run by hand with Vertex stopped: it needs the GPU. Output goes to VERTEX_TRAINING_OUT, not the repo (the lines are long).
 /// <para>
-/// Synthetic: DISTILLED. The base model with the full tool list is the teacher (93/100 on the strict score); each request's reply is kept only if it passes that request's own strict check, and failures are dropped and counted, never hand-fixed. Then
-/// the same messages are rendered with tool names only: that is what the adapter will see at inference, so that is the line's rendered_prompt, with the teacher's exact output as rendered_target.
+/// Synthetic: DISTILLED. The base model with the full tool list is the teacher (93/100 on the strict score); each request's reply is kept only if it passes that request's own strict check, and failures are never hand-fixed. Then the same messages are
+/// rendered with tool names only: that is what the adapter will see at inference, so that is the line's rendered_prompt, with the teacher's exact output as rendered_target.
 /// </para>
-/// <para>Honesty: real game-event turns from his own log, with the target replaced by the sentence true to the event (<see cref="HonestyScoring"/>), so the adapter does not learn his slips.</para>
+/// <para>
+/// v2: most of v1's drops were the model saying it in words and calling nothing, so the tools most in need of teaching had the fewest examples (remember none). A training line the teacher got wrong is asked again with the tool named; a reply that passes
+/// the same strict check is kept as source synthetic-v2-hinted, and its prompt has no such hint. A dev line is never hinted: failed, it stays for its expected_tool with target_usable false.
+/// </para>
+/// <para>Honesty: real game-event turns from his own log, rendered with tool names only as well, with the target replaced by the sentence true to the event (<see cref="HonestyScoring"/>), so the adapter does not learn his slips.</para>
 /// </summary>
 [Category("Training")]
 [Explicit("Makes the training sets: run by hand with Vertex stopped")]
@@ -26,7 +30,11 @@ public class TrainingSetGeneration
     private static string Output => Environment.GetEnvironmentVariable("VERTEX_TRAINING_OUT") ?? throw new InvalidOperationException("set VERTEX_TRAINING_OUT");
     private static readonly AiGenerationOptions Production = new() { MaxOutputTokens = 220, Strategy = "top_p", Temperature = 0.7f, TopP = 0.9f, RepetitionPenalty = 1.1f };
 
-    private sealed record Kept(string Id, string Split, ToolRequest Request, List<AiChatMessage> Messages, string Target, IReadOnlyList<int> TargetIds, IReadOnlyList<int> EndOfTurnIds);
+    /// <param name="Target">The teacher's exact output, or null on a dev line whose unhinted reply failed: it is kept for its expected tool, which is what dev scores (Tuvok's condition, so that remember and look_at are in the evaluation).</param>
+    private sealed record Kept(string Id, string Split, string Source, ToolRequest Request, List<AiChatMessage> Messages, string? Target, IReadOnlyList<int>? TargetIds, IReadOnlyList<int>? EndOfTurnIds, int? EndTokenId);
+
+    /// <summary>How many times the teacher is asked again, told which tool, when it did not use the right one by itself. In words, it never produced some tools at all: remember failed 30 of 30.</summary>
+    private const int HintedTries = 3;
 
     [Test]
     public async Task Synthetic()
@@ -54,6 +62,8 @@ public class TrainingSetGeneration
         GameTool.NamesOnly = false;
         var kept = new List<Kept>();
         var dropped = new Dictionary<string, int>();
+        var hinted = new Dictionary<string, int>();
+        var noTarget = new Dictionary<string, int>();
         var total = new Dictionary<string, int>();
         AiChatPass? pass = null;
         ai.Chat.PassObserver = p => pass = p;
@@ -64,18 +74,39 @@ public class TrainingSetGeneration
             total[key] = total.GetValueOrDefault(key) + 1;
             var spoken = SyntheticToolRequests.Spoken(request, random);
             var messages = new List<AiChatMessage> { new("system", system), new("system", SyntheticToolRequests.StateNote(random)) };
-            if (Companion.InstinctHint(spoken) is { } hint) messages.Add(new("system", hint));
+            if (Companion.InstinctHint(spoken) is { } instinct) messages.Add(new("system", instinct));
             messages.Add(new("user", spoken));
-            pass = null;
-            var result = await ai.ChatAsync(new AiChatRequest { Model = model, Messages = messages, Options = Production }, null, default);
-            var call = result.ToolCalls.FirstOrDefault();
-            var ok = request.Tool == null
-                ? call == null && result.TextWithoutToolCalls.Count(char.IsLetter) >= 4
-                : call != null && call.Name == request.Tool && ArgsOk(request, call.ArgumentsJson);
+            var split = random.Next(5) == 0 ? "dev" : "train";
             index++;
-            await replies.WriteLineAsync(JsonSerializer.Serialize(new { expected = request.Tool, says = request.Says, spoken, ok, got = call?.Name, args = call?.ArgumentsJson, text = result.TextWithoutToolCalls }));
-            await replies.FlushAsync();
-            if (ok && pass != null) kept.Add(new Kept($"synthetic-{index}", random.Next(5) == 0 ? "dev" : "train", request, messages, pass.RawOutput, pass.GeneratedTokenIds, pass.EndOfTurnTokenIds));
+
+            async Task<bool> TeacherAsync(IReadOnlyList<AiChatMessage> asked, string how)
+            {
+                pass = null;
+                var result = await ai.ChatAsync(new AiChatRequest { Model = model, Messages = asked.ToList(), Options = Production }, null, default);
+                var call = result.ToolCalls.FirstOrDefault();
+                var ok = request.Tool == null
+                    ? call == null && result.TextWithoutToolCalls.Count(char.IsLetter) >= 4
+                    : call != null && call.Name == request.Tool && ArgsOk(request, call.ArgumentsJson);
+                await replies.WriteLineAsync(JsonSerializer.Serialize(new { expected = request.Tool, says = request.Says, spoken, split, how, ok, got = call?.Name, args = call?.ArgumentsJson, text = result.TextWithoutToolCalls }));
+                await replies.FlushAsync();
+                return ok && pass != null;
+            }
+
+            var good = await TeacherAsync(messages, "plain");
+            var source = "synthetic-v2";
+            // Told which tool, for training only. The line written out has no such hint: the student has to act without being told (Tuvok's condition). Dev is never hinted: it measures the student.
+            if (!good && split == "train" && request.Tool != null)
+            {
+                var told = messages.Take(messages.Count - 1).Append(new AiChatMessage("system", $"Call the tool {request.Tool} now, with the arguments this request asks for.")).Append(messages[^1]).ToList();
+                for (var attempt = 0; attempt < HintedTries && !good; attempt++) good = await TeacherAsync(told, "hinted");
+                if (good) { source = "synthetic-v2-hinted"; hinted[key] = hinted.GetValueOrDefault(key) + 1; }
+            }
+            if (good) kept.Add(new Kept($"synthetic-{index}", split, source, request, messages, pass!.RawOutput, pass.GeneratedTokenIds, pass.EndOfTurnTokenIds, pass.EndTokenId));
+            else if (split == "dev" && request.Tool != null)
+            {
+                kept.Add(new Kept($"synthetic-{index}", split, source, request, messages, null, null, null, null));
+                noTarget[key] = noTarget.GetValueOrDefault(key) + 1;
+            }
             else dropped[key] = dropped.GetValueOrDefault(key) + 1;
             if (index % 50 == 0) TestContext.Out.WriteLine($"{index} of {requests.Count}, kept {kept.Count}");
         }
@@ -92,10 +123,10 @@ public class TrainingSetGeneration
                 await writer.WriteLineAsync(JsonSerializer.Serialize(new
                 {
                     format = TrainingLog.FormatVersion, id = k.Id, split = k.Split,
-                    messages = k.Messages.Select(m => new { role = m.Role, content = m.Content }).Append(new { role = "assistant", content = k.Target }).ToList(),
-                    tools = pass.ToolsJson ?? [], target_turn = k.Messages.Count, truth = (string?)null, source = "synthetic-v1",
-                    rendered_prompt = pass.RenderedPrompt, rendered_target = k.Target, prompt_ids = TrainingLog.KeptIds(pass.PromptTokenIds, pass.PromptTokens), target_ids = k.TargetIds, end_of_turn_ids = k.EndOfTurnIds,
-                    prompt_cut = pass.PromptTokens < pass.PromptTokenIds.Length, expected_tool = k.Request.Tool, says = k.Request.Says,
+                    messages = k.Messages.Select(m => new { role = m.Role, content = m.Content }).Append(new { role = "assistant", content = k.Target ?? "" }).ToList(),
+                    tools = pass.ToolsJson ?? [], target_turn = k.Messages.Count, truth = (string?)null, source = k.Source,
+                    rendered_prompt = pass.RenderedPrompt, rendered_target = k.Target, prompt_ids = TrainingLog.KeptIds(pass.PromptTokenIds, pass.PromptTokens), target_ids = k.TargetIds, end_of_turn_ids = k.EndOfTurnIds ?? pass.EndOfTurnTokenIds, end_token_id = k.EndTokenId,
+                    target_usable = k.Target != null, prompt_cut = pass.PromptTokens < pass.PromptTokenIds.Length, expected_tool = k.Request.Tool, says = k.Request.Says,
                 }));
             }
         GameTool.NamesOnly = false;
@@ -104,7 +135,8 @@ public class TrainingSetGeneration
         var report = new
         {
             model, requests = requests.Count, kept = kept.Count, dropped = requests.Count - kept.Count, drop_rate = Math.Round((requests.Count - kept.Count) / (double)requests.Count, 3),
-            per_tool = total.OrderBy(k => k.Key).Select(k => new { tool = k.Key, total = k.Value, dropped = dropped.GetValueOrDefault(k.Key) }),
+            usable_targets = kept.Count(k => k.Target != null), hinted = hinted.Values.Sum(), dev_without_target = noTarget.Values.Sum(),
+            per_tool = total.OrderBy(k => k.Key).Select(k => new { tool = k.Key, total = k.Value, dropped = dropped.GetValueOrDefault(k.Key), hinted = hinted.GetValueOrDefault(k.Key), dev_without_target = noTarget.GetValueOrDefault(k.Key) }),
         };
         var text = JsonSerializer.Serialize(report, new JsonSerializerOptions { WriteIndented = true });
         await File.WriteAllTextAsync(Path.Combine(Output, "synthetic-tool-choice.report.json"), text);
@@ -133,30 +165,57 @@ public class TrainingSetGeneration
         var model = TestModel.Pick(await ai.ModelNamesAsync());
         await ai.EnsureChatReadyAsync(model);
         var from = Environment.GetEnvironmentVariable("VERTEX_TRAINING_IN") ?? Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData), "Vertex", "training");
-        int read = 0, unknown = 0, honest = 0, written = 0;
-        await using var writer = new StreamWriter(Path.Combine(Output, "honesty.jsonl"));
-        foreach (var file in Directory.GetFiles(from, "turns-*.jsonl").OrderBy(f => f))
-            foreach (var line in File.ReadLines(file))
-            {
-                using var doc = JsonDocument.Parse(line);
-                var r = doc.RootElement;
-                read++;
-                var truth = r.GetProperty("truth").GetString();
-                var said = r.GetProperty("rendered_target").GetString();
-                if (HonestyScoring.Correct(truth) is not { } corrected) { unknown++; continue; }
-                var wasHonest = HonestyScoring.Honest(truth!, said);
-                if (wasHonest) honest++;
-                await writer.WriteLineAsync(JsonSerializer.Serialize(new
+        // The brain puts his tools in the prompt; the same names-only list as the synthetic lines (Tuvok: live prompts ran past his token cap, and this is the prompt the adapter will serve). The messages themselves are as they were live.
+        var folder = Path.Combine(Path.GetTempPath(), $"vertex-honesty-{Guid.NewGuid():N}");
+        var store = new CharacterStore(Path.Combine(folder, "characters"));
+        var client = new MinecraftClient(GameProfile.Offline("Vertex"));
+        await using var brain = new VertexBrain(client, null, ai, store, Character.BuiltIn[0], model);
+        ai.Chat.MaxToolRounds = 0;
+        AiChatPass? pass = null;
+        ai.Chat.PassObserver = p => pass = p;
+        GameTool.NamesOnly = true;
+        int read = 0, unknown = 0, refused = 0, honest = 0, written = 0;
+        try
+        {
+            await using var writer = new StreamWriter(Path.Combine(Output, "honesty.jsonl"));
+            foreach (var file in Directory.GetFiles(from, "turns-*.jsonl").OrderBy(f => f))
+                foreach (var line in File.ReadLines(file))
                 {
-                    format = r.GetProperty("format").GetInt32(), id = r.GetProperty("id").GetString(), split = r.GetProperty("split").GetString(), truth, source = r.GetProperty("source").GetString(),
-                    rendered_prompt = r.GetProperty("rendered_prompt").GetString(), rendered_target = corrected, said_live = said, said_live_honest = wasHonest, prompt_cut = r.GetProperty("prompt_cut").GetBoolean(),
-                    prompt_ids = r.TryGetProperty("prompt_ids", out var ids) && ids.ValueKind == JsonValueKind.Array ? ids.EnumerateArray().Select(i => i.GetInt32()).ToArray() : null,
-                    target_ids = await ai.Chat.TokenizeAsync(model, corrected),
-                    end_of_turn_ids = r.TryGetProperty("end_of_turn_ids", out var ends) && ends.ValueKind == JsonValueKind.Array ? ends.EnumerateArray().Select(i => i.GetInt32()).ToArray() : null,
-                }));
-                written++;
-            }
-        TestContext.Out.WriteLine($"read {read}, no known event {unknown}, written {written}; what he really said was honest {honest} of {written}");
+                    using var doc = JsonDocument.Parse(line);
+                    var r = doc.RootElement;
+                    read++;
+                    var truth = r.GetProperty("truth").GetString();
+                    var said = r.GetProperty("rendered_target").GetString();
+                    if (HonestyScoring.Correct(truth) is not { } corrected) { unknown++; continue; }
+                    // What was said up to the turn, without what he said to it.
+                    var sent = r.GetProperty("messages").EnumerateArray().Select(m => new AiChatMessage(m.GetProperty("role").GetString()!, m.GetProperty("content").GetString()!)).ToList();
+                    if (sent.Count > 0 && sent[^1].Role == "assistant") sent.RemoveAt(sent.Count - 1);
+                    // Older lines came before some of today's rules: the same check again, so that family chat cannot get in by this door.
+                    if (!TrainingLog.Allowed(sent)) { refused++; continue; }
+                    pass = null;
+                    await ai.ChatAsync(new AiChatRequest { Model = model, Messages = sent, Options = new AiGenerationOptions { MaxOutputTokens = 1, Strategy = "greedy" } }, null, default);
+                    if (pass == null) throw new InvalidOperationException("the engine reported no pass");
+                    var wasHonest = HonestyScoring.Honest(truth!, said);
+                    if (wasHonest) honest++;
+                    await writer.WriteLineAsync(JsonSerializer.Serialize(new
+                    {
+                        format = TrainingLog.FormatVersion, id = r.GetProperty("id").GetString(), split = r.GetProperty("split").GetString(), truth, source = r.GetProperty("source").GetString(),
+                        tools = pass.ToolsJson ?? [],
+                        rendered_prompt = pass.RenderedPrompt, rendered_target = corrected, said_live = said, said_live_honest = wasHonest, prompt_cut = pass.PromptTokens < pass.PromptTokenIds.Length,
+                        prompt_ids = TrainingLog.KeptIds(pass.PromptTokenIds, pass.PromptTokens),
+                        target_ids = await ai.Chat.TokenizeAsync(model, corrected),
+                        end_of_turn_ids = pass.EndOfTurnTokenIds,
+                    }));
+                    written++;
+                }
+        }
+        finally
+        {
+            GameTool.NamesOnly = false;
+            ai.Chat.PassObserver = null;
+            if (Directory.Exists(folder)) Directory.Delete(folder, true);
+        }
+        TestContext.Out.WriteLine($"read {read}, no known event {unknown}, refused {refused}, written {written}; what he really said was honest {honest} of {written}");
         Assert.That(read, Is.GreaterThan(0));
     }
 }

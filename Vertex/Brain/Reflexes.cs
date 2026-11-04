@@ -369,7 +369,8 @@ public sealed class Reflexes : IDisposable
         var legal = new List<DangerAction> { DangerAction.Flee };
         if (foe.Name != "minecraft:creeper" && c.Health >= 6 && foeClass != "creeper") legal.Add(DangerAction.Fight);
         if (_skills.DigInProblem() == null) legal.Add(DangerAction.DigIn);
-        if (_skills.FindOpenWater() != null) legal.Add(DangerAction.SwimOut);
+        // Not from what lives in the water: "walkers do not follow out there" is no answer to a drowned or a guardian.
+        if (!foe.Name.Contains("drowned") && !foe.Name.Contains("guardian") && _skills.FindOpenWater() != null) legal.Add(DangerAction.SwimOut);
         // With something to shoot with and room to draw (under 5 blocks ShootAsync fights by hand instead, and at low health it stops at once).
         if (_skills.CanShoot && foe.DistanceTo(x, y, z) >= 6 && c.Health >= 6) legal.Add(DangerAction.Shoot);
         legal.RemoveAll(a => _armBlockedUntil.GetValueOrDefault(a) > _tick);

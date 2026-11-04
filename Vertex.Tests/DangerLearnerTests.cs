@@ -737,6 +737,28 @@ public class LiveDangerChoiceTests
     }
 
     [Test]
+    public async Task TreadingWater_ADrownedBesideHim_EndsIt_SoHeCanChooseAgain()
+    {
+        var (client, skills, _, ax, az) = await JoinAsync("Trodden",
+            (x, z) => $"fill {x + 3} 196 {z - 20} {x + 32} 199 {z + 20} minecraft:water",
+            (x, z) => $"fill {x + 33} 196 {z - 20} {x + 47} 199 {z + 20} minecraft:water");
+        await using var _ = client;
+        using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(90));
+        var swim = skills.SwimOutAsync(cts.Token);
+        await Wait.UntilAsync(() => swim.IsCompleted || (client.Controls.Jump && !client.Controls.Forward && client.BodySnapshot().InWater), TimeSpan.FromSeconds(60), () => $"out in the water (at {client.FeetBlock})");
+        Assert.That(swim.IsCompleted, Is.False, "treading water");
+        try
+        {
+            await _server.CommandAsync("execute at Trodden run summon minecraft:drowned ~1 ~ ~");
+            var (ok, said) = await swim.WaitAsync(TimeSpan.FromSeconds(15));
+            TestContext.Out.WriteLine(said);
+            Assert.That(ok, Is.False, said);
+            Assert.That(said, Does.Contain("lives in the water"));
+        }
+        finally { await _server.CommandAsync("kill @e[type=minecraft:drowned]"); }
+    }
+
+    [Test]
     public async Task HeSwimsOutToOpenWater_AndTreadsWater_WithoutDrowning()
     {
         var (client, skills, tasks, ax, az) = await JoinAsync("SwimOut",

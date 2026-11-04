@@ -5,6 +5,16 @@ those servers through the ViaVersion plugins on the proxy; Vertex itself speaks 
 
 Every milestone is tested against REAL servers started locally (Paper 1.21.5 build 114, Velocity), never mocks.
 
+## START HERE: 2026-11-04 evening (newest; read first)
+
+**Running:** be0427c, in `mc.spawndev.com`. **Best run yet, measured live 17:47 to 18:18:** 2 deaths in about 31 minutes, iron helmet and leggings on, 8+ arrows made, and his things fetched back after a death (live 17:43 and 18:00). Earlier the same day, 33 in 30 minutes at the worst.
+
+**The rules of the heat are known now:** Geordi read RealisticSeasons 1.0.18 from the jar: temperature = season + biome + time + altitude + shelter; water, sprinting and fire play no part. **TJ then turned heat damage off** for everyone (`extremeHeatThreshold` 100, about 21:33 UTC) with the number still shown. 22 hits in 17 minutes in savanna at 46 to 56: none `generic`, none fire. All his heat behaviour goes through `HeatBelief`: a number alone means nothing, only being hurt does. Ask Geordi about odd game mechanics.
+
+**Added:** air under a roof (swim to it, or dig up), fetching his things after a death, bow and arrows on the list, shooting as a fifth DangerLearner choice (0 outcomes so far: no bow yet, he finds no string), `SyntheticToolRequests` scoring `material`.
+
+**Next:** (1) v2 training generation is written (hinted teacher, honesty names-only, `end_token_id`) and needs Vertex offline for about 75 minutes (an estimate), when TJ says or he is done watching: `VERTEX_TRAINING_OUT=X:\users\tj\Projects\_Training\vertex`, `[Explicit]` tests filtered alone, then tell Tuvok. SpawnDev.AI.Server is bumped to 1.4.1-local.3 in the working tree, not yet deployed. (2) Still not seen live: a bed (no sheep found in 3 legs), a bow, shooting, air under a roof. (3) Fixed in the working tree, not deployed or tested live: treading water from a zombie, a drowned killed him without his moving (18:18); he now stops and chooses again, and swimming out is not on offer against what lives in the water. (4) `AnIronPickaxe_FromEmptyPockets` is flaky: 1 failure in 3 on one build, a mined log not reaching his pockets.
+
 ## START HERE: 2026-11-04 update (read this before the older handoff below)
 
 **What really kills him on mc.spawndev.com is not monsters.** With real pain sense, 121 of 140 hurts in 5 minutes were `generic` or `on_fire`, 16 from monsters. The server runs RealisticSeasons; his temperature is on the action bar (`Temperature: 56.6 C`). `generic` (1 HP per 3 s) goes with high readings (46.6 and up) and none was seen in 80 s at 25. What moves the reading is NOT worked out: it ramps up from 25 after a respawn, read 46.6 in water by the island and 25 in open sea, and also 25 on land near trees with 46.6 a few blocks away. Its `temperature.yml` on the server would answer this; it has not been read. **TJ's open decision:** temperature on for him, or `/toggletemperature` (per player). No server setting was changed.
