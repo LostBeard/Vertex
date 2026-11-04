@@ -404,7 +404,7 @@ public sealed class VertexBrain : IBody
         return null;
     }
 
-    private DateTime _lastBlockerLog = DateTime.MinValue, _nextSleepTry = DateTime.MinValue;
+    private DateTime _lastBlockerLog = DateTime.MinValue, _nextSleepTry = DateTime.MinValue, _nextKitTry = DateTime.MinValue;
     private string _lastStatus = "";
     private bool _whoisAsked;
 
@@ -677,6 +677,16 @@ public sealed class VertexBrain : IBody
                     _lastActivity = now;
                     Log?.Invoke("night, nothing to do and a bed close by: going to sleep");
                     Tasks.Start("sleeping until morning", Skills.SleepAsync);
+                    continue;
+                }
+                // Empty pockets (after a death every item is gone): get a weapon, tools and food before anything else, as any player does. The two deaths at 18:38 and 18:39 on 2026-11-03 were barehanded.
+                if (SelfDirectedPlay && goal == null && !Staying && Client.IsSpawned && !_projectQueued && Client.GameMode == GameMode.Survival && !Skills.HasWeapon && now - _lastActivity >= TimeSpan.FromSeconds(15)
+                    && now >= _nextKitTry && Skills.NearestHostile(10) == null)
+                {
+                    _nextKitTry = now + TimeSpan.FromMinutes(4);
+                    _lastActivity = now;
+                    Log?.Invoke("no weapon: going to get a kit (wood, tools, food)");
+                    Tasks.Start("getting a weapon, tools and food", ct => Skills.GetKitAsync(ct));
                     continue;
                 }
                 var action = IdlePolicy.Decide(Staying, Tasks.IsBusy, _goalQueued || _projectQueued, Client.IsSpawned, now - _lastActivity, IdleBeforeGoals, goal != null, StudyWhenIdle, unstudied,

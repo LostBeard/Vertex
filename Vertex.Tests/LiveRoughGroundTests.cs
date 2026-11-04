@@ -202,6 +202,46 @@ public class LiveRoughGroundTests
         finally { reflexes.Enabled = false; tasks.Stop(); await _server.CommandAsync("kill @e[tag=vcover]"); }
     }
 
+    /// <summary>
+    /// Live 2026-11-03 18:38 and 18:39: killed twice in two minutes, both lessons saying "I had no weapon. I had no food." After a death nothing is left; he went out into the night with his hands. From
+    /// empty pockets on rough ground with three trees and a cow: he punches logs, makes a table, a sword, a pickaxe and an axe, and kills the cow for food.
+    /// </summary>
+    [Test]
+    public async Task WithEmptyPockets_HeMakesAWoodenKit()
+    {
+        const string name = "VertexKit";
+        var (client, ax, az) = await JoinOnRoughGroundAsync(name);
+        await using var _ = client;
+        var skills = new Skills(client);
+        Assert.That(skills.HasWeapon, Is.False, "the setup: nothing in his pockets");
+        (bool ok, string text) result;
+        var sw = System.Diagnostics.Stopwatch.StartNew();
+        using (var c = new CancellationTokenSource(TimeSpan.FromMinutes(4))) result = await skills.GetKitAsync(c.Token, hunt: false);
+        TestContext.Out.WriteLine($"{result.ok}: {result.text}  ({sw.Elapsed.TotalSeconds:0} s); inventory: {skills.InventorySummary()}");
+        Assert.That(client.Inventory.Find(s => s.Name == "minecraft:wooden_sword" || s.Name == "minecraft:stone_sword").Any(), Is.True, "a sword: " + result.text);
+        Assert.That(client.Inventory.Find(s => s.Name.EndsWith("_pickaxe")).Any(), Is.True, "a pickaxe: " + result.text);
+        Assert.That(client.Inventory.Find(s => s.Name.EndsWith("_axe")).Any(), Is.True, "an axe: " + result.text);
+    }
+
+    /// <summary>Hungry with a sword in his hand and a cow close by on the same ground: he kills it and picks up the meat.</summary>
+    [Test]
+    public async Task WithASword_AndACowClose_HeKillsItForFood()
+    {
+        const string name = "VertexHunter";
+        var (client, ax, az) = await JoinOnRoughGroundAsync(name);
+        await using var _ = client;
+        await _server.CommandAsync($"give {name} minecraft:iron_sword 1");
+        await _server.CommandAsync($"summon minecraft:cow {ax + 0.5} {200 + StripeHeight(ax, ax)} {az + 5.5} {{NoAI:1b,Tags:[\"vkit\"]}}");
+        await Wait.UntilAsync(() => client.Entities.Values.Any(e => e.Name == "minecraft:cow") && client.Inventory.Count("iron_sword") >= 1, Timeout, () => client.Inventory.ToString());
+        var skills = new Skills(client);
+        Assert.That(skills.HasFood, Is.False, "the setup: nothing to eat");
+        (bool ok, string text) result;
+        using (var c = new CancellationTokenSource(TimeSpan.FromMinutes(2))) result = await skills.GetFoodThenSummaryAsync([], hunt: true, c.Token);
+        TestContext.Out.WriteLine($"{result.ok}: {result.text}; inventory: {skills.InventorySummary()}");
+        Assert.That(skills.HasFood, Is.True, "meat from the cow: " + result.text);
+        await _server.CommandAsync("kill @e[tag=vkit]");
+    }
+
     [Test]
     public async Task ABuild_OnGroundThatIsNowhereFlat_LevelsItAndBuilds_InsteadOfRefusing()
     {

@@ -1,4 +1,4 @@
-﻿using SpawnDev.Minecraft;
+using SpawnDev.Minecraft;
 using SpawnDev.Minecraft.Data;
 using SpawnDev.Minecraft.Entities;
 using SpawnDev.Minecraft.Items;
@@ -402,6 +402,7 @@ public sealed partial class Skills(MinecraftClient client)
 
     private async Task<bool> FightLoopAsync(int id, Func<Entity, bool>? keepGoing, bool shield, Action<bool> setUp, Func<bool> isUp, CancellationToken ct)
     {
+        var stuck = 0;
         while (client.Entities.TryGetValue(id, out var t) && !ct.IsCancellationRequested)
         {
             if (client.Health < 6 || (keepGoing != null && !keepGoing(t))) return false;
@@ -429,8 +430,13 @@ public sealed partial class Skills(MinecraftClient client)
             {
                 using var hop = CancellationTokenSource.CreateLinkedTokenSource(ct);
                 hop.CancelAfter(TimeSpan.FromSeconds(1));
-                try { await client.GoToAsync(Goal.Near(t.X, t.Y, t.Z, 2.0), new PathOptions { MaxNodes = 8_000 }, hop.Token); }
+                try { await client.GoToAsync(Goal.Near(t.X, t.Y, t.Z, 2.0), new PathOptions { CanDig = true, MaxNodes = 8_000 }, hop.Token); }
                 catch (OperationCanceledException) when (!ct.IsCancellationRequested) { }
+                // No way to it, or no nearer: a pause, and after eight such tries in a row he gives up on this one. Without this a mob he could not reach (a cow across rough ground, a spider over water)
+                // made this loop spin about 20,000 times a second for five minutes (a test, 2026-11-03: a million log lines).
+                var after = client.Entities.TryGetValue(id, out var now) ? now.DistanceTo(client.Position.X, client.Position.Y, client.Position.Z) : 0;
+                if (after > d - 0.3) { if (++stuck >= 8) return false; await client.WaitTicksAsync(4, ct); }
+                else stuck = 0;
                 continue;
             }
             client.LookAt(t.X, t.Y + t.Type.Height * 0.5, t.Z);
@@ -2196,6 +2202,76 @@ public sealed partial class Skills(MinecraftClient client)
         await client.GoToAsync(Goal.Block(x, y0, z), new PathOptions { CanDig = true, CanPlace = true, MaxNodes = 6_000 }, ct);
         var out_ = client.FeetBlock.Y >= y0;
         return (out_, $"I dug in {(sealed_ ? "and sealed the hole" : "(I had nothing to seal it with)")}, waited {waited} seconds below, and {(out_ ? "came back up" : "am still down there")}.");
+    }
+
+    /// <summary>Does he carry a sword or an axe?</summary>
+    public bool HasWeapon => client.Inventory.Find(s => s.Name.EndsWith("_sword") || s.Name.EndsWith("_axe")).Any();
+
+    /// <summary>
+    /// What a player does with empty pockets (after a death, every item is gone: the lessons he wrote at 18:38 and 18:39 said "I had no weapon. I had no food." and he went back out barehanded to be
+    /// killed again): punch trees for logs, make a crafting table, a wooden sword, pickaxe and axe, and, when he can find stone, stone ones; then hunt one or two animals for food. Each step walks to
+    /// where the thing is (the search looks 64 blocks and walks further), and says what it got and what it could not.
+    /// </summary>
+    public async Task<(bool, string)> GetKitAsync(CancellationToken ct, bool hunt = true)
+    {
+        var got = new List<string>();
+        bool Has(string suffix) => client.Inventory.Find(s => s.Name.EndsWith(suffix)).Any();
+        if (!Has("_sword") || !Has("_pickaxe") || !Has("_axe"))
+        {
+            // Five logs make a table (4 planks) and the three wooden tools (2 + 3 + 3 planks and 7 sticks): a little over 4 logs; the crafting makes planks and sticks from logs by itself.
+            var wood = Have(s => s.Name.EndsWith("_log")) + Have(s => s.Name.EndsWith("_planks")) / 4;
+            if (wood < 5)
+            {
+                var (_, took) = await CollectAsync("wood", 5 - wood, ct);
+                got.Add(took);
+            }
+            foreach (var tool in new[] { "wooden_sword", "wooden_pickaxe", "wooden_axe" })
+            {
+                if (Has(tool[6..])) continue;        // "_sword", "_pickaxe", "_axe": with the underscore, because "pickaxe" also ends in "axe"
+                var (made, why) = await client.CraftItemAsync("minecraft:" + tool, 1, ct);
+                if (!made) { got.Add($"I couldn't make a {tool.Replace('_', ' ')}: {why}."); break; }
+            }
+        }
+        Trace?.Invoke("kit: wooden tools done: " + InventorySummary());
+        // Stone is better: with a pickaxe, cobblestone for a stone sword and pickaxe (it looks for stone as it looks for anything: far and wide).
+        if (Has("wooden_pickaxe") || Has("stone_pickaxe"))
+        {
+            if (!client.Inventory.Find(s => s.Name is "minecraft:stone_sword" or "minecraft:iron_sword" or "minecraft:diamond_sword").Any())
+            {
+                if (Have(s => s.Name == "minecraft:cobblestone") < 3) { var (_, took) = await CollectAsync("cobblestone", 4, ct); got.Add(took); }
+                foreach (var tool in new[] { "stone_sword", "stone_pickaxe" })
+                    if (Have(s => s.Name == "minecraft:cobblestone") >= 2 && !client.Inventory.Find(s => s.Name == "minecraft:" + tool).Any())
+                        await client.CraftItemAsync("minecraft:" + tool, 1, ct);
+            }
+        }
+        return await GetFoodThenSummaryAsync(got, hunt, ct);
+    }
+
+    /// <summary>The second half of the kit: food (unless <paramref name="hunt"/> is false), then what he ended up with.</summary>
+    public async Task<(bool, string)> GetFoodThenSummaryAsync(List<string> got, bool hunt, CancellationToken ct)
+    {
+        bool Has(string suffix) => client.Inventory.Find(s => s.Name.EndsWith(suffix)).Any();
+        // Food: one or two wild animals, hit with the best weapon he has, their drops picked up.
+        if (hunt && !HasFood && HasWeapon)
+        {
+            await EquipWeaponAsync(ct);
+            for (var animals = 0; animals < 2 && !HasFood; animals++)
+            {
+                Entity? Find() { var (x, y, z) = client.Position; return client.Entities.Values.Where(e => e.Name is "minecraft:cow" or "minecraft:pig" or "minecraft:chicken" or "minecraft:sheep" or "minecraft:rabbit" && !IsBaby(e)).OrderBy(e => e.DistanceTo(x, y, z)).FirstOrDefault(); }
+                var (found, legs, walked) = await LookFurtherAsync(() => Find() != null, 3, ct);
+                if (Find() is not { } animal) { got.Add("I looked for an animal to eat and found none" + Looked(legs, walked) + "."); break; }
+                var name = animal.Name.Bare().Replace('_', ' ');
+                var won = await FightAsync(animal.Id, null, ct);
+                var (hx, hy, hz) = client.Position;
+                Trace?.Invoke($"kit: fought the {name}: won {won}, health {client.Health}, at {hx:0} {hy:0} {hz:0}: " + InventorySummary());
+                if (won) { await PickUpNearbyAsync((int)Math.Floor(animal.X), (int)Math.Floor(animal.Y), (int)Math.Floor(animal.Z), ct); got.Add($"I killed a {name}."); }
+            }
+        }
+        Trace?.Invoke("kit: food step done: " + InventorySummary());
+        var kit = new[] { (Has("_sword"), "a sword"), (Has("_pickaxe"), "a pickaxe"), (Has("_axe"), "an axe"), (HasFood, "food") }.Where(k => k.Item1).Select(k => k.Item2).ToList();
+        var missing = new[] { (Has("_sword"), "a sword"), (Has("_pickaxe"), "a pickaxe"), (HasFood, "food") }.Where(k => !k.Item1).Select(k => k.Item2).ToList();
+        var summary = kit.Count == 0 ? "I still have nothing" : "I have " + string.Join(", ", kit);
+        return (missing.Count == 0, $"{summary}{(missing.Count > 0 ? $" but no {string.Join(" or ", missing)}" : "")}." + (got.Count > 0 ? " " + string.Join(" ", got.Where(g => g.Length > 0).Select(g => g.Length > 160 ? g[..160] + "..." : g)) : ""));
     }
 
     /// <summary>The nearest flying hostile mob (a phantom...) within `within` blocks, if any: not one to walk away from, one to hit when it comes down to him.</summary>
