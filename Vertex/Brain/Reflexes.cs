@@ -67,6 +67,15 @@ public sealed class Reflexes : IDisposable
         _tasks = tasks;
         _style = style;
         client.Tick += OnTick;
+        client.Damaged += OnDamaged;
+    }
+
+    private DateTime _lastMonsterHit = DateTime.MinValue;
+
+    private void OnDamaged(DamageInfo damage)
+    {
+        var id = damage.CauseEntityId >= 0 ? damage.CauseEntityId : damage.DirectEntityId;
+        if (id >= 0 && _client.Entities.TryGetValue(id, out var who) && Skills.Hostile.Contains(who.Name)) _lastMonsterHit = DateTime.UtcNow;
     }
 
     private void OnTick()
@@ -296,9 +305,11 @@ public sealed class Reflexes : IDisposable
         var melee = close.FirstOrDefault(e => e.DistanceTo(x, y, z) < AvoidWithin);
         if (archer == null && melee == null) return false;
 
-        // On another job: only being hurt by something close stops it (a monster over there is the job's own care). It goes back to the job afterwards.
+        // On another job: only being hurt BY a monster stops it (one over there is the job's own care). Any fall in health used to count, so in the heat every tick with a mob anywhere near restarted his job, and in 8 minutes he
+        // never finished chopping one tree (2026-11-04). It goes back to the job afterwards.
         var busy = _tasks.IsBusy;
-        if (busy && (HandlesMonsters(_tasks.Current) || !hurt)) return false;
+        var hitByMonster = DateTime.UtcNow - _lastMonsterHit < TimeSpan.FromSeconds(2);
+        if (busy && (HandlesMonsters(_tasks.Current) || !hitByMonster)) return false;
 
         var foe = melee != null && (archer == null || melee.DistanceTo(x, y, z) < 5) ? melee : archer!;
         var foeClass = close.Count(e => e.DistanceTo(x, y, z) < 10) >= 3 ? "swarm" : foe.Name == "minecraft:creeper" ? "creeper" : Skills.Ranged.Contains(foe.Name) ? "archer" : "melee";
@@ -428,6 +439,7 @@ public sealed class Reflexes : IDisposable
     public void Dispose()
     {
         _client.Tick -= OnTick;
+        _client.Damaged -= OnDamaged;
         (Policy as IDisposable)?.Dispose();
     }
 }

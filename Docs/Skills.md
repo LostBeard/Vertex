@@ -102,7 +102,7 @@ the cast if the bobber lands on land), waits up to about 90 seconds for the bite
 | "shoot that zombie" | `shoot` | Needs a bow and arrows. It draws, aims with the arrow's real flight and leads a moving target; closer than five blocks it uses melee. |
 | "put torches around", "it is too dark" | `light_up` | Torches on a grid. |
 | "eat something" | `eat` | Also automatic when hungry. |
-| "smelt the iron", "make a pickaxe" | `smelt`, `craft` | Real furnace and crafting-table clicks; missing parts are made first. |
+| "smelt the iron", "make a pickaxe" | `smelt`, `craft` | Real furnace and crafting-table clicks. `craft` gets anything from nothing (`ObtainAsync`): it reads the game's recipes and gathers, digs with the pickaxe it takes, hunts, smelts and makes the tools on the way, and says what stopped it. |
 | "go to bed" | `sleep` | Sleeps in the nearest bed. |
 
 Built in, without being asked:
@@ -123,6 +123,14 @@ Built in, without being asked:
   down at about 4 blocks a second (a flying player takes no fall damage in vanilla; the live case has not been seen, and the test server cannot be told he is flying, so a test shows only the descent and the end of the flight), and flight ends when his feet touch ground (in water he ends it himself). The come-up-for-air
   reflex does not hold "jump" while flying: in flight jump means up, and it had taken him from the water at spawn into the air. Not done: landing over
   lava. In creative and spectator he keeps flying.
+
+## What he feels and learns
+
+- **Pain.** The server's damage event and death packet say what hurt him and who did it; every hurt is a `hurt:` line in the log, and a death lesson lists them. `generic` damage with no source and a bare "died" are not vanilla: on a server with plugins, look there first.
+- **Monsters, by what has worked** (`DangerLearner`, on in the app, off in tests that want the fixed rules): he picks fight, run, dig in or swim out from a belief per situation (foe, weapon, health) that every outcome moves, and the outcomes are kept in `worlds/<world>.danger.jsonl`. Never hitting a creeper, and not offering what would fail at once, stay outside the learning.
+- **Getting on in the world** (`Milestones`): with nothing else to do he works up from what he has now: wooden tools, stone tools, food, a bed (it moves where he comes back to), iron tools and armor, shield, diamond pickaxe. A failed step waits while he goes on to the next.
+- **Heat** (a server with RealisticSeasons): he reads his temperature off the action bar and keeps a map of his readings. He keeps working while his health holds, retreats at 5 hearts to somewhere cool, heals, and goes back.
+- **Fire:** into the water, unless it keeps coming back within 20 seconds, when he leaves it for a minute.
 
 ## Looking around and trying things
 

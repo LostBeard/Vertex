@@ -717,7 +717,8 @@ public sealed class VertexHost : IAsyncDisposable
                 LearnedFingerprint = touched?.Fingerprint,
                 UseEmbeddedModdedBlocks = UseEmbeddedModdedBlocks,
             });
-            _client.ChatReceived += m => Add(LineKind.Chat, m.Text);
+            // Not the action bar: a plugin can rewrite it many times a second (RealisticSeasons' temperature), which pushed everything else out of the log in 20 seconds. The brain reads it and logs what matters.
+            _client.ChatReceived += m => { if (m.Kind != ChatKind.ActionBar) Add(LineKind.Chat, m.Text); };
             var client = _client;
             // Kicked or the server went away: leave the game, Vertex stays on.
             _client.Disconnected += r => { Add(LineKind.System, "disconnected: " + r); _ = Task.Run(() => LeftGameAsync(client, r)); };

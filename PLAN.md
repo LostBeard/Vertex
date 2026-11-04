@@ -5,7 +5,17 @@ those servers through the ViaVersion plugins on the proxy; Vertex itself speaks 
 
 Every milestone is tested against REAL servers started locally (Paper 1.21.5 build 114, Velocity), never mocks.
 
-## START HERE: where it stands (handoff, end of the 2026-11-02/03 session)
+## START HERE: 2026-11-04 update (read this before the older handoff below)
+
+**What really kills him on mc.spawndev.com is not monsters.** With real pain sense, 121 of 140 hurts in 5 minutes were `generic` or `on_fire`, 16 from monsters. The server runs RealisticSeasons; his temperature is on the action bar (`Temperature: 56.6 C`). `generic` (1 HP per 3 s) goes with high readings (46.6 and up) and none was seen in 80 s at 25. What moves the reading is NOT worked out: it ramps up from 25 after a respawn, read 46.6 in water by the island and 25 in open sea, and also 25 on land near trees with 46.6 a few blocks away. Its `temperature.yml` on the server would answer this; it has not been read. **TJ's open decision:** temperature on for him, or `/toggletemperature` (per player). No server setting was changed.
+
+**New this session:** client senses (`Damaged`, `HealthChanged`, `Died`, `OnFire`, action bar), `/state` and `/map` on the panel port (read these, not the Blazor page), `DangerLearner`, `ObtainAsync` + `Milestones` instead of the kit, dig-a-stair-up path move, heat map + `CoolOffAsync`, quiet reflex jobs, spoken milestones and deaths.
+
+**Measured:** deaths 9 in 5 minutes (18d5a2c), 2 in 8 minutes (b8f13a1), but on b8f13a1 most of that was sitting cool in the sea and he had no log after 8 minutes: survival up, play not yet. Iron pickaxe from empty pockets 1 m 52 s on a test stage (never yet live).
+
+**Next:** (1) read the live `collecting` traces: does he get wood now that heat ticks no longer restart his job; (2) food when health is stuck under 18 food (natural healing stops there); (3) from the research: a case bank that keeps failures, lessons with helpful/harmful counters, the language model as a prior for the choice, not the picker; (4) `DeathsWithoutCoverToday` counts every real death now, so `CoverBelow` sits at its top: it only matters with the learner off; (5) move `SpawnDev.Reachy` to `[0.1.0-preview.5]` (Data, on nuget.org) when the robot can be tested.
+
+## Where it stood: handoff, end of the 2026-11-02/03 session
 
 **Running now:** build `aab9ad7`, installed per user on Aubs' PC (GATEGAMER; `X:` there is TJ's `D:`), in `mc.spawndev.com` as HereticSpawn (TJ's account, survival), self-directed play ON, long-term
 memory ON, Reachy parked (`Reachy: false`; wake it on the panel's Robot tab). AI chain from nuget.org: SpawnDev.AI.Server 1.4.0, ML 5.8.1, ILGPU 5.4.15; `SpawnDev.Reachy` is pinned exactly to

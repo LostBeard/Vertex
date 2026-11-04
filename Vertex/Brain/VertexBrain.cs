@@ -502,7 +502,8 @@ public sealed class VertexBrain : IBody
         var source = SourceOf(damage);
         _experience.NotePain(new Pain(now, before - after, type, source));
         // How hot is too hot, from what it did to him: heat damage at a temperature moves the line below it. Only what the plugin does (no one's weapon, no block of fire under him).
-        if (type is "generic" or "on_fire" && source == null && Temperature is double hot && hot >= 30 && hot - 3 < Reflexes.HotAt)
+        // Not below 40: the reading starts again from 25 at a respawn while the damage runs on, and a reading of 35 at such a moment pushed the line down until only 26 counted as cool (2026-11-04).
+        if (type is "generic" or "on_fire" && source == null && Temperature is double hot && hot >= 43 && hot - 3 < Reflexes.HotAt)
         {
             Reflexes.HotAt = hot - 3;
             Log?.Invoke($"learned: heat hurts me at {hot:0.#} degrees, so I cool off from {Reflexes.HotAt:0.#}");

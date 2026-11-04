@@ -256,6 +256,7 @@ public sealed partial class Skills(MinecraftClient client)
             }
             var (bx, by, bz) = targets[0];
             tried.Add((bx, by, bz));
+            Trace?.Invoke($"collecting {what}: going for the one at {bx} {by} {bz} ({broken} of {count} so far)");
             if (!await client.GoToAsync(new GoalReachBlock(bx, by, bz, 4.0), new PathOptions { CanDig = true, MaxNodes = 30_000 }, ct))
             {
                 failures++;
