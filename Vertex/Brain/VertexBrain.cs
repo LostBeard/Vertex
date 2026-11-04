@@ -15,6 +15,10 @@ public sealed record JoinedEvent(PlayerMemory Player, DateTime? LastSeen) : Brai
 public sealed record GoalEvent(Objective Goal) : BrainEvent;
 /// <summary>Nobody has needed Vertex for a long while and it has no goal: it may choose a small project of its own (self-directed play).</summary>
 public sealed record OwnProjectEvent : BrainEvent;
+/// <summary>He got somewhere: a step in getting on in the world (a stone pickaxe, a bed).</summary>
+public sealed record MilestoneEvent(string Label) : BrainEvent;
+/// <summary>He died; the text says how, from the server's own account.</summary>
+public sealed record DeathEvent(string Text) : BrainEvent;
 
 /// <summary>
 /// Vertex in a Minecraft world: the body the <see cref="Companion"/> plays through there. Hears players' voice and
@@ -138,6 +142,7 @@ public sealed class VertexBrain : IBody
         Reflexes = new Reflexes(this) { Policy = (IReflexPolicy?)LearnedReflexPolicy.LoadShipped(companion.Ai.Accelerator, companion.Ai.Lane) ?? RuleReflexPolicy.Instance };
         Memory = WorldMemory.Load(Path.Combine(companion.Characters.Folder, "..", "worlds"), world);
         Name = $"Minecraft ({world})";
+        MemoryFileName = world;
 
         foreach (var tool in GameTools.Create(this))
         {
@@ -158,6 +163,7 @@ public sealed class VertexBrain : IBody
         Client.HealthChanged += OnHealthChanged;
         Client.Died += OnDied;
         Tasks.Crashed += (job, e) => Log?.Invoke($"job crashed ({job}): {e}");
+        Skills.MilestoneReached += m => { Log?.Invoke("reached: " + m.Label); Companion.Post(new MilestoneEvent(m.Label)); };
         Skills.LessonLearned += RecordLesson;
         Skills.Trace += m => Log?.Invoke("  (" + m + ")");
         Skills.PriorLessons = LessonsFor;
@@ -191,6 +197,7 @@ public sealed class VertexBrain : IBody
     // ---------------------------------------------------------------- the body
 
     public string Name { get; }
+    private string MemoryFileName { get; }
 
     public string Setting => "You are playing Minecraft Java Edition together with your friends, as a real player in the world. " +
                              "Your friends there talk to you out loud or in chat.";
@@ -375,6 +382,14 @@ public sealed class VertexBrain : IBody
                     await Companion.RespondAsync($"[Game update, not a friend talking: {j.Player.Name} just came to play. {Acquaintance(j.Player, j.LastSeen)}] "
                         + $"Say hello to {j.Player.Name}, using the name {j.Player.Name}, in one short, warm sentence (you may mention last time). Do not call tools.", ct, allowTools: false, clock);
                 return true;
+            case MilestoneEvent m:
+                if (Character.Style.Chattiness >= 0.2)
+                    await Companion.RespondAsync($"[Game update, not a friend talking: you just got {m.Label}. You have worked your way up from nothing.] Tell your friends in one short, pleased first-person sentence. Do not call tools.", ct, allowTools: false, clock);
+                return true;
+            case DeathEvent d:
+                if (Character.Style.Chattiness >= 0.2)
+                    await Companion.RespondAsync($"[Game update, not a friend talking: you just died. {d.Text} Say only what this says.] Tell your friends what happened in one short first-person sentence. Do not call tools.", ct, allowTools: false, clock);
+                return true;
             case GoalEvent g:
                 await PursueGoalAsync(g.Goal, ct);
                 return true;
@@ -431,6 +446,16 @@ public sealed class VertexBrain : IBody
 
     private DamageInfo? _lastDamage;
     private DateTime _lastDamageAt = DateTime.MinValue;
+    private DateTime _lastDeathTold = DateTime.MinValue;
+    private bool _healthKnown;
+
+    /// <summary>What he does about monsters is learned from now on, kept in this world's own file (the owner's Vertex; tests that want the fixed rules leave it off).</summary>
+    public void LearnFromDanger(string? file = null)
+    {
+        Reflexes.Learner = new DangerLearner(file ?? Path.Combine(Companion.Characters.Folder, "..", "worlds", MemoryFileName + ".danger.jsonl"));
+        Reflexes.Decided += m => Log?.Invoke("danger: " + m);
+        Log?.Invoke($"danger: learning on, {Reflexes.Learner.Outcomes} outcomes known. {Reflexes.Learner.Summary()}");
+    }
 
     /// <summary>The hurts felt in the last minute, oldest first.</summary>
     internal IReadOnlyList<Pain> RecentPains => _experience.RecentPains;
@@ -469,6 +494,8 @@ public sealed class VertexBrain : IBody
     {
         if (after >= before) return;
         var now = DateTime.UtcNow;
+        // The first health figure after joining is his saved health arriving, not a hurt (the client starts from a full 20).
+        if (!_healthKnown) { _healthKnown = true; return; }
         var damage = now - _lastDamageAt < TimeSpan.FromSeconds(1.5) ? _lastDamage : null;
         var type = damage?.Type ?? "no damage event";
         var source = SourceOf(damage);
@@ -484,10 +511,18 @@ public sealed class VertexBrain : IBody
         try
         {
             DeathsThisRun++;
+            Reflexes.NoteDeath();
             var (x, y, z) = Client.Position;
             LastDeath = (x, y, z, DateTime.UtcNow, message);
+            var pains = _experience.PainSummary();
             RecordLesson(_experience.Died(MomentNow(), message));
             RefreshCoverThreshold();
+            // Said aloud at most every three minutes: dying again the moment he is back is not news every time.
+            if (DateTime.UtcNow - _lastDeathTold > TimeSpan.FromMinutes(3))
+            {
+                _lastDeathTold = DateTime.UtcNow;
+                Companion.Post(new DeathEvent($"The server says: {message}." + (pains.Length > 0 ? $" What hurt you: {pains}." : "")));
+            }
         }
         catch (Exception e) { Log?.Invoke("could not record a death: " + e); }
         Tasks.Abort("I died: " + message);
@@ -660,6 +695,9 @@ public sealed class VertexBrain : IBody
         sb.AppendLine($"- It is {(time is >= 0 and < 12000 ? "daytime" : time < 13000 ? "sunset" : time < 23000 ? "night" : "sunrise")} in the game.");
         sb.AppendLine($"- You are carrying: {Skills.InventorySummary()}. Holding: {(Client.Inventory.MainHand.IsEmpty ? "nothing" : Client.Inventory.MainHand.ToString())}.");
         sb.AppendLine($"- You are {(Tasks.Current is string task ? task : "not doing anything special")}.");
+        if (Client.GameMode == GameMode.Survival && Skills.WorkingToward() is { } toward) sb.AppendLine($"- When nobody needs you, you are working your way up: next is {toward.Label}.");
+        if (DeathsThisRun > 0) sb.AppendLine($"- You have died {DeathsThisRun} time{(DeathsThisRun == 1 ? "" : "s")} since you started today" + (LastDeath is { } ld ? $", last {Ago(DateTime.UtcNow - ld.At)}: {ld.Message}." : "."));
+        if (Reflexes.Learner?.Summary() is { Length: > 0 } learned) sb.AppendLine("- What you have found out about monsters, from counting what happened: " + learned);
         var near = Client.Entities.Values.Where(e => e.DistanceTo(x, y, z) < 24 && e.Uuid != Client.Profile.Id).OrderBy(e => e.DistanceTo(x, y, z)).Take(12)
             .Select(e => e.IsPlayer ? $"{e.PlayerName} (player, {e.DistanceTo(x, y, z):0} blocks)" : $"{e.Name.Bare().Replace('_', ' ')} ({e.DistanceTo(x, y, z):0} blocks)").ToList();
         sb.AppendLine($"- Nearby: {(near.Count == 0 ? "nobody" : string.Join(", ", near))}.");
@@ -717,7 +755,19 @@ public sealed class VertexBrain : IBody
                 if (Client.IsSpawned && !_whoisAsked && now - _startedAt > TimeSpan.FromSeconds(20))
                 {
                     _whoisAsked = true;
-                    _ = Task.Run(async () => { try { await Client.SendChatAsync("/whois " + Client.Profile.Name); } catch (Exception e) { Log?.Invoke("could not ask the server about myself: " + e.Message); } });
+                    // And what the server is running: fixed commands again. A plugin is the only source of the "generic" damage that was killing him (the plain "died"), so which plugins there are belongs in the log.
+                    _ = Task.Run(async () =>
+                    {
+                        try
+                        {
+                            await Client.SendChatAsync("/whois " + Client.Profile.Name);
+                            await Task.Delay(2000);
+                            await Client.SendChatAsync("/plugins");
+                            await Task.Delay(2000);
+                            await Client.SendChatAsync("/tps");
+                        }
+                        catch (Exception e) { Log?.Invoke("could not ask the server about myself: " + e.Message); }
+                    });
                 }
                 if (Client.IsSpawned)
                 {
@@ -754,14 +804,15 @@ public sealed class VertexBrain : IBody
                     Tasks.Start("finding food", ct => Skills.GetFoodThenSummaryAsync([], hunt: true, ct));
                     continue;
                 }
-                // Empty pockets (after a death every item is gone): get a weapon, tools and food before anything else, as any player does. The two deaths at 18:38 and 18:39 on 2026-11-03 were barehanded.
-                if (SelfDirectedPlay && goal == null && !Staying && Client.IsSpawned && !_projectQueued && Client.GameMode == GameMode.Survival && !Skills.HasWeapon && now - _lastActivity >= TimeSpan.FromSeconds(15)
-                    && now >= _nextKitTry && Skills.NearestHostile(10) == null)
+                // Getting on in the world: tools, food, a bed, iron... whatever comes next from what he has right now. Never a fixed script: after a death he is back at the top, and nothing else needs to know.
+                // Quiet (the job's start and end are not news); reaching a step is, and is said once. A friend's request or a goal replaces it at once.
+                if (SelfDirectedPlay && goal == null && !Staying && Client.IsSpawned && !_projectQueued && Client.GameMode == GameMode.Survival && now - _lastActivity >= TimeSpan.FromSeconds(3)
+                    && now >= _nextKitTry && Skills.NearestHostile(10) == null && Skills.NextMilestone() is { } step)
                 {
-                    _nextKitTry = now + TimeSpan.FromSeconds(90);      // a failed try is tried again soon, not in four minutes (the first thing a kit needs is wood, and wood may be a walk away)
+                    _nextKitTry = now + TimeSpan.FromSeconds(5);
                     _lastActivity = now;
-                    Log?.Invoke("no weapon: going to get a kit (wood, tools, food)");
-                    Tasks.Start("getting a weapon, tools and food", ct => Skills.GetKitAsync(ct));
+                    Log?.Invoke($"working toward {step.Label}");
+                    Tasks.StartReflex($"working toward {step.Label}", ct => Skills.AdvanceAsync(step, ct));
                     continue;
                 }
                 var action = IdlePolicy.Decide(Staying, Tasks.IsBusy, _goalQueued || _projectQueued, Client.IsSpawned, now - _lastActivity, IdleBeforeGoals, goal != null, StudyWhenIdle, unstudied,

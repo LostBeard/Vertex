@@ -215,6 +215,7 @@ public sealed partial class Skills(MinecraftClient client)
         bool Wanted(int s) => s > 0 && (types.Contains(D.StateBlock[s]) || learned.Contains(s));
         var broken = 0;
         var failures = 0;
+        var digFailures = 0;
         var tried = new HashSet<(int, int, int)>();
         var nextToLava = 0;
         var legs = 0;
@@ -222,7 +223,10 @@ public sealed partial class Skills(MinecraftClient client)
         while (broken < count && failures < 6 && !ct.IsCancellationRequested)
         {
             // 64 blocks sideways at ANY depth (a sphere of 48 never reached the diamonds 70 blocks down: "I couldn't find any diamond ore", in two seconds, 2026-11-03).
-            var found = client.World.FindBlocksTall(Wanted, client.Position, 64, 32).Where(p => !tried.Contains(p)).ToList();
+            // Near his own level first: wood or stone under the ground is a long dig away, and a tree 30 blocks off is a short walk. (The nearest first otherwise: 3D distance puts a log in a cave under him ahead of a tree in plain sight.)
+            var feetY = client.Position.Y;
+            var found = client.World.FindBlocksTall(Wanted, client.Position, 64, 256).Where(p => !tried.Contains(p))
+                .OrderBy(p => Math.Abs(p.Y - feetY) > 8 ? 1 : 0).Take(64).ToList();
             // Opening a block with lava beside it (or lava above it, which falls in) lets the lava out onto whoever is digging: leave it (found 2026-10-15: a diamond ringed with lava took 11 of 20 health).
             var targets = found.Where(p => !LavaAround(p.Item1, p.Item2, p.Item3)).ToList();
             nextToLava += found.Count - targets.Count;
@@ -252,7 +256,15 @@ public sealed partial class Skills(MinecraftClient client)
             }
             var (bx, by, bz) = targets[0];
             tried.Add((bx, by, bz));
-            if (!await client.GoToAsync(new GoalReachBlock(bx, by, bz, 4.0), new PathOptions { CanDig = true, MaxNodes = 30_000 }, ct)) { failures++; continue; }
+            if (!await client.GoToAsync(new GoalReachBlock(bx, by, bz, 4.0), new PathOptions { CanDig = true, MaxNodes = 30_000 }, ct))
+            {
+                failures++;
+                var (fx, fy, fz) = client.Position;
+                Trace?.Invoke($"collecting {what}: no way to the one at {bx} {by} {bz}, I got to {fx:0} {fy:0} {fz:0} (try {failures})");
+                // The rest of that tree or vein is no easier: six tries on one tree that cannot be reached must not end the whole search.
+                foreach (var near in targets.Where(p => Math.Abs(p.Item1 - bx) <= 6 && Math.Abs(p.Item3 - bz) <= 6)) tried.Add(near);
+                continue;
+            }
             var state = client.World.GetState(bx, by, bz);
             if (!Wanted(state)) continue;
             bool ok;
@@ -271,13 +283,19 @@ public sealed partial class Skills(MinecraftClient client)
                 broken++;
                 await PickUpNearbyAsync(bx, by, bz, ct, mayDig: true);
             }
-            else failures++;
+            else
+            {
+                failures++;
+                digFailures++;
+                Trace?.Invoke($"collecting {what}: at the one at {bx} {by} {bz} the dig did not work (distance {client.DistanceToBlock(bx, by, bz):0.#}, now {client.World.GetBlock(bx, by, bz)?.Name ?? "unknown"}; try {failures})");
+            }
         }
         var have = InventorySummary();
         var lavaNote = nextToLava > 0 ? $" {nextToLava} {(nextToLava == 1 ? "was" : "were")} next to lava, so I left {(nextToLava == 1 ? "it" : "them")} alone." : "";
         return broken > 0
             ? (broken >= count, $"I mined {broken} {what}{(broken < count ? $" (wanted {count}, couldn't find more nearby)" : "")}. I have: {have}.{lavaNote}")
             : (false, nextToLava > 0 ? $"I won't mine that {what}: it is next to lava, which would pour out onto me."
+                : digFailures >= 3 ? $"I got to {what} but breaking it didn't work ({digFailures} of {failures} tries)."
                 : failures >= 6 ? $"I could see {what} but I couldn't get to any of it ({failures} tries: something is in the way that I can't dig or cross)."
                 : legs > 0 ? $"I looked for {what}: 64 blocks around me at every depth, and I walked about {walked:0} blocks in {legs} different directions to look further, but I haven't found any."
                 : $"I couldn't find any {what} I could reach nearby.");
@@ -2167,6 +2185,136 @@ public sealed partial class Skills(MinecraftClient client)
             .OrderBy(e => e.DistanceTo(x, y, z)).FirstOrDefault();
     }
 
+    /// <summary>Why he cannot dig in right here, in words, or null when he can: checked without moving, so a choice is not spent on something that would fail at once (the island he respawns on is mostly sand).</summary>
+    public string? DigInProblem()
+    {
+        var (px, py, pz) = client.Position;
+        int x = (int)Math.Floor(px), y0 = (int)Math.Floor(py + 1e-6), z = (int)Math.Floor(pz);
+        if (InWaterNow()) return "I can't dig in while I'm in the water.";
+        for (var d = 1; d <= 4; d++)
+        {
+            var s = client.World.GetState(x, y0 - d, z);
+            if (s <= 0 || !Standable(s) || client.IsBuiltBlock(D.BlockOf(s)) || D.Hardness[s] < 0 || LavaAround(x, y0 - d, z)) return "The ground here is no good for digging in (not solid, someone's build, or lava near).";
+            // Sand and gravel fall into a hole and bury whoever is in it (he "suffocated in a wall", 2026-11-03).
+            if (D.BlockOf(s).Name is "minecraft:sand" or "minecraft:red_sand" or "minecraft:gravel" or "minecraft:suspicious_sand" or "minecraft:suspicious_gravel" or "minecraft:concrete_powder" || D.BlockOf(s).Name.EndsWith("_concrete_powder"))
+                return "Sand or gravel would fall into the hole.";
+            foreach (var (dx, dz) in new[] { (1, 0), (-1, 0), (0, 1), (0, -1) })
+                if (client.World.GetState(x + dx, y0 - d, z + dz) is var n && n > 0 && (D.StateFlags[n] & GameData.FlagWater) != 0) return "There is water beside the ground here: it would flood the hole.";
+        }
+        return null;
+    }
+
+    /// <summary>The nearest surface water within `reach` blocks, as a block to stand (swim) in, or null: for getting into it when he is on fire.</summary>
+    public (int X, int Y, int Z)? NearestWater(int reach)
+    {
+        var (bx, by, bz) = client.FeetBlock;
+        (int X, int Y, int Z)? best = null;
+        var bestD = int.MaxValue;
+        for (var dx = -reach; dx <= reach; dx++)
+        for (var dz = -reach; dz <= reach; dz++)
+        {
+            var d2 = dx * dx + dz * dz;
+            if (d2 > reach * reach || d2 >= bestD || !client.World.IsLoaded(bx + dx, bz + dz)) continue;
+            for (var y = by + 2; y >= by - 4; y--)
+            {
+                var s = client.World.GetState(bx + dx, y, bz + dz);
+                if (s > 0 && (D.StateFlags[s] & GameData.FlagWater) != 0) { best = (bx + dx, y, bz + dz); bestD = d2; break; }
+                if (s > 0 && D.HasCollision(s)) break;
+            }
+        }
+        return best;
+    }
+
+    /// <summary>On fire: into the water, the only thing that puts it out at once (2026-11-03: he burned from 5 hearts to nothing digging a hole one block from the sea). Done the moment the fire is out.</summary>
+    public async Task<(bool, string)> PutOutFireAsync(CancellationToken ct)
+    {
+        for (var hop = 0; hop < 12 && client.OnFire; hop++)
+        {
+            ct.ThrowIfCancellationRequested();
+            if (NearestWater(24) is not { } water) return (false, "I'm on fire and there is no water near.");
+            using var step = CancellationTokenSource.CreateLinkedTokenSource(ct);
+            step.CancelAfter(TimeSpan.FromSeconds(1));
+            // The column, not the block: to the path finder the air over water is where a swimmer floats, so a block under the surface is a place it never ends up.
+            try { await client.GoToAsync(Goal.XZ(water.X, water.Z), new PathOptions { MaxNodes = 4_000, Sprint = true }, step.Token); }
+            catch (OperationCanceledException) when (!ct.IsCancellationRequested) { }
+        }
+        return (!client.OnFire, client.OnFire ? "I'm still on fire." : "I put the fire out in the water.");
+    }
+
+    /// <summary>
+    /// Open water to wait in, or null: at least two deep, no land within 8 blocks of it, within `reach` of him, the farther from monsters the better. Walkers and archers do not follow out there (skeletons shoot about
+    /// 16 blocks), which on a sand island with nothing to dig in is often the only safe place there is.
+    /// </summary>
+    public (int X, int Y, int Z)? FindOpenWater(int reach = 40)
+    {
+        var (bx, by, bz) = client.FeetBlock;
+        var (px, py, pz) = client.Position;
+        var foes = client.Entities.Values.Where(e => IsThreatOnFoot(e.Name) && e.DistanceTo(px, py, pz) < 48).ToList();
+        int? Surface(int x, int z)
+        {
+            if (!client.World.IsLoaded(x, z)) return null;
+            for (var y = by + 3; y >= by - 6; y--)
+            {
+                var s = client.World.GetState(x, y, z);
+                if (s > 0 && (D.StateFlags[s] & GameData.FlagWater) != 0)
+                    return client.World.GetState(x, y - 1, z) is var below && below > 0 && (D.StateFlags[below] & GameData.FlagWater) != 0 ? y : null;
+                if (s > 0 && D.HasCollision(s)) return null;
+            }
+            return null;
+        }
+        (int X, int Y, int Z)? best = null;
+        var bestScore = double.MinValue;
+        for (var dx = -reach; dx <= reach; dx += 2)
+        for (var dz = -reach; dz <= reach; dz += 2)
+        {
+            var d = Math.Sqrt(dx * dx + dz * dz);
+            if (d > reach || Surface(bx + dx, bz + dz) is not int y) continue;
+            var open = true;
+            foreach (var (ox, oz) in new[] { (8, 0), (-8, 0), (0, 8), (0, -8), (6, 6), (6, -6), (-6, 6), (-6, -6) })
+                if (Surface(bx + dx + ox, bz + dz + oz) == null) { open = false; break; }
+            if (!open) continue;
+            var foeD = foes.Count == 0 ? 48 : foes.Min(e => Math.Sqrt((e.X - bx - dx) * (e.X - bx - dx) + (e.Z - bz - dz) * (e.Z - bz - dz)));
+            var score = Math.Min(foeD, 32) - d * 0.75;
+            if (score > bestScore) { bestScore = score; best = (bx + dx, y, bz + dz); }
+        }
+        return best;
+    }
+
+    /// <summary>Swims out to open water and treads water until no monster is within 24 blocks and it is day, or for three minutes at most. The leave-water reflex brings him back afterwards.</summary>
+    public async Task<(bool, string)> SwimOutAsync(CancellationToken ct)
+    {
+        if (FindOpenWater() is not { } spot) return (false, "There is no open water near enough.");
+        var feet = (X: 0.0, Z: 0.0);
+        for (var round = 0; round < 6; round++)
+        {
+            ct.ThrowIfCancellationRequested();
+            var (fx, _, fz) = client.Position;
+            feet = (fx, fz);
+            using var step = CancellationTokenSource.CreateLinkedTokenSource(ct);
+            step.CancelAfter(TimeSpan.FromSeconds(10));
+            try { if (await client.GoToAsync(Goal.XZ(spot.X, spot.Z), new PathOptions { MaxNodes = 12_000, Sprint = true }, step.Token)) break; }
+            catch (OperationCanceledException) when (!ct.IsCancellationRequested) { }
+            var (nx, _, nz) = client.Position;
+            if (Math.Sqrt((nx - feet.X) * (nx - feet.X) + (nz - feet.Z) * (nz - feet.Z)) < 1) return (false, "I couldn't swim out from here.");
+        }
+        if (!InWaterNow()) return (false, "I didn't get to the water.");
+        var seconds = 0;
+        try
+        {
+            while (seconds < 180)
+            {
+                ct.ThrowIfCancellationRequested();
+                client.Controls.Jump = true;         // treading water: head above it
+                await client.WaitTicksAsync(20, ct);
+                seconds++;
+                var night = client.World.DayTime % 24000 is >= 12600 and < 23400;
+                if (!night && NearestHostile(24) == null && NearestFlier(16) == null) break;
+            }
+        }
+        finally { client.Controls.Clear(); }
+        return (true, $"I waited {seconds} seconds out in the water.");
+    }
+
     /// <summary>
     /// Takes cover when he is losing a fight he cannot win by running or hitting (phantoms in a swarm killed him 70 seconds after god mode went off, 2026-11-03): digs a 1 by 1 shaft 3 blocks down
     /// into solid ground, seals the top with a block of what he dug, and waits below until nothing hostile is near and his health is back, then digs out and builds himself up to the surface.
@@ -2176,17 +2324,7 @@ public sealed partial class Skills(MinecraftClient client)
     {
         var (px, py, pz) = client.Position;
         int x = (int)Math.Floor(px), y0 = (int)Math.Floor(py + 1e-6), z = (int)Math.Floor(pz);
-        if (InWaterNow()) return (false, "I can't dig in while I'm in the water.");
-        for (var d = 1; d <= 4; d++)
-        {
-            var s = client.World.GetState(x, y0 - d, z);
-            if (s <= 0 || !Standable(s) || client.IsBuiltBlock(D.BlockOf(s)) || D.Hardness[s] < 0 || LavaAround(x, y0 - d, z)) return (false, "The ground here is no good for digging in (not solid, someone's build, or lava near).");
-            // Sand and gravel fall into a hole and bury whoever is in it (he "suffocated in a wall", 2026-11-03).
-            if (D.BlockOf(s).Name is "minecraft:sand" or "minecraft:red_sand" or "minecraft:gravel" or "minecraft:suspicious_sand" or "minecraft:suspicious_gravel" or "minecraft:concrete_powder" || D.BlockOf(s).Name.EndsWith("_concrete_powder"))
-                return (false, "Sand or gravel would fall into the hole.");
-            foreach (var (dx, dz) in new[] { (1, 0), (-1, 0), (0, 1), (0, -1) })
-                if (client.World.GetState(x + dx, y0 - d, z + dz) is var n && n > 0 && (D.StateFlags[n] & GameData.FlagWater) != 0) return (false, "There is water beside the ground here: it would flood the hole.");
-        }
+        if (DigInProblem() is { } problem) return (false, problem);
         // Down three blocks: the path finder digs straight down (the cheapest way to a goal below).
         await client.EquipBestToolAsync(client.World.GetState(x, y0 - 1, z), ct);
         var down = await client.GoToAsync(Goal.Block(x, y0 - 3, z), new PathOptions { CanDig = true, MaxNodes = 4_000 }, ct);
@@ -2249,6 +2387,17 @@ public sealed partial class Skills(MinecraftClient client)
 
     /// <summary>Does he carry a sword or an axe?</summary>
     public bool HasWeapon => client.Inventory.Find(s => s.Name.EndsWith("_sword") || s.Name.EndsWith("_axe")).Any();
+
+    /// <summary>The name of the best weapon he carries, or null.</summary>
+    public string? BestWeaponName
+    {
+        get
+        {
+            string[] order = ["netherite_sword", "diamond_sword", "iron_sword", "stone_sword", "netherite_axe", "diamond_axe", "iron_axe", "stone_axe", "golden_sword", "wooden_sword", "golden_axe", "wooden_axe"];
+            foreach (var w in order) if (client.Inventory.Count(w) > 0) return w;
+            return null;
+        }
+    }
 
     /// <summary>
     /// What a player does with empty pockets (after a death, every item is gone: the lessons he wrote at 18:38 and 18:39 said "I had no weapon. I had no food." and he went back out barehanded to be

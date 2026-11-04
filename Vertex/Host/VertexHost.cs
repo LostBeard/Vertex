@@ -734,6 +734,7 @@ public sealed class VertexHost : IAsyncDisposable
                 MemoryScope = $"{Settings.Server}:{Settings.Port}",
             };
             _brain.Log += AddLog;
+            _brain.LearnFromDanger();
             await _client.ConnectAsync(Settings.Server, Settings.Port);
             _brain.Start();
             Add(LineKind.System, $"Playing as {_companion.Character.Name} ({profile.Name}) on {Settings.Server}");

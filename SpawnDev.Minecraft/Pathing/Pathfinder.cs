@@ -358,6 +358,27 @@ public sealed class Pathfinder
                 // Never dig into fluid (a lava/water flood) and need a floor on the other side.
                 if (ok && dig.Count > 0 && !IsFluid(State(x, n.Y + 2, z)) && Solid(State(x, n.Y - 1, z)) && Top(State(x, n.Y - 1, z)) >= 1.0)
                     yield return (new Node(x, n.Y, z), 1 + 2 + ticks / 10.0, new PathStep(x, n.Y, z, MoveKind.DigThrough, dig.ToArray(), null));
+
+                // A stair up: the block ahead at foot level stays as the step; clear the two above it, and the one over his head to jump. Without this nothing dug can be climbed out of: he mined stone at his
+                // feet, stood in the pit, and could only tunnel sideways under the trees he was after (a test, 2026-11-03: 69 cobblestone and no way up).
+                if (!inWater && !afloat && hereDoor == 0 && Solid(State(x, n.Y, z)) && Top(State(x, n.Y, z)) >= 1.0 && !Dangerous(State(x, n.Y, z)))
+                {
+                    var stair = new List<(int, int, int)>();
+                    double stairTicks = 0;
+                    var stairOk = true;
+                    foreach (var (sx, sy, sz) in new[] { (n.X, n.Y + 2, n.Z), (x, n.Y + 1, z), (x, n.Y + 2, z) })
+                    {
+                        var st = State(sx, sy, sz);
+                        if (st < 0 || Dangerous(st) || IsFluid(st)) { stairOk = false; break; }
+                        if (!Solid(st)) continue;
+                        if (o.DigTicks(st) is not int t) { stairOk = false; break; }
+                        stairTicks += t;
+                        stair.Add((sx, sy, sz));
+                    }
+                    // Nothing that would pour in from above what he opens.
+                    if (stairOk && stair.Count > 0 && !IsFluid(State(x, n.Y + 3, z)) && !IsFluid(State(n.X, n.Y + 3, n.Z)))
+                        yield return (new Node(x, n.Y + 1, z), 3 + 2 + stairTicks / 10.0, new PathStep(x, n.Y + 1, z, MoveKind.JumpUp, stair.ToArray(), null));
+                }
             }
         }
 

@@ -25,6 +25,8 @@ public sealed class Reflexes : IDisposable
     private int _avoidRepeats;
     private long _nextSwatTick, _nextCoverTick, _nextRangedTick;
     private long _lastAvoidTick;
+    private long _nextFireTick;
+    private bool _puttingOut;
 
     /// <summary>How close a monster may be, idle, before he walks away from it (blocks).</summary>
     public const double AvoidWithin = 8;
@@ -66,12 +68,25 @@ public sealed class Reflexes : IDisposable
             {
                 try { return await _skills.EscapeCreeperAsync(id, ct); }
                 finally { _escaping = -1; }
-            });
+            }, quiet: Learner != null);
             return;
         }
         if (_busy || _tick % 6 != 0) return;
         var hurt = c.Health < _lastHealth - 0.01f;
         _lastHealth = c.Health;
+
+        // On fire: into the water, whatever he was doing (he goes back to it after).
+        if (c.OnFire && !_puttingOut && _tick >= _nextFireTick && _skills.NearestWater(24) != null)
+        {
+            _nextFireTick = _tick + 40;
+            _puttingOut = true;
+            _tasks.Interrupt("putting out the fire", async ct =>
+            {
+                try { return await _skills.PutOutFireAsync(ct); }
+                finally { _puttingOut = false; }
+            }, quiet: true);
+            return;
+        }
 
         // Come up for air: under water and not on a job that is steering.
         var body = c.BodySnapshot();
@@ -87,8 +102,15 @@ public sealed class Reflexes : IDisposable
             return;
         }
 
+        // Monsters, by what has worked for him. When this is on it replaces the fixed rungs below (dig in at so many hearts, charge archers, step away, fight back).
+        if (Learner is { } learner && c.GameMode == GameMode.Survival)
+        {
+            CloseEpisodeIfDue();
+            if (TryDecideDanger(learner, hurt)) return;
+        }
+
         // Losing: five hearts or fewer with a monster close (a flier counts: they killed him in 70 seconds): dig in and wait it out. He fights or flees on the ordinary rules until then.
-        if (!_tasks.IsBusy && c.Health <= CoverBelow && c.GameMode == GameMode.Survival && _tick >= _nextCoverTick && (_skills.NearestHostile(10) != null || _skills.NearestFlier(10) != null))
+        if (Learner == null && !_tasks.IsBusy && c.Health <= CoverBelow && c.GameMode == GameMode.Survival && _tick >= _nextCoverTick && (_skills.NearestHostile(10) != null || _skills.NearestFlier(10) != null))
         {
             _nextCoverTick = _tick + 600;
             _tasks.Start("taking cover underground", ct => _skills.TakeCoverAsync(ct));
@@ -97,7 +119,7 @@ public sealed class Reflexes : IDisposable
 
         // Shot at from a distance (skeletons: TJ, 2026-11-03): walking away in the open gives the archer a clear shot, so he either closes in and hits it (with a weapon and the health for it) or gets out of
         // its sight underground. Checked every 5 seconds; not while a job runs.
-        if (!_tasks.IsBusy && _tick >= _nextRangedTick && c.GameMode == GameMode.Survival && _skills.NearestRanged(26) is { } shooter)
+        if (Learner == null && !_tasks.IsBusy && _tick >= _nextRangedTick && c.GameMode == GameMode.Survival && _skills.NearestRanged(26) is { } shooter)
         {
             _nextRangedTick = _tick + 100;
             var kind = shooter.Name.Bare();
@@ -122,7 +144,7 @@ public sealed class Reflexes : IDisposable
 
         // Idle with a monster close: do not stand there (live on AubsCraft, 2026-11-01, he stood among four creepers). Creepers are always walked away from; any other monster gets the
         // same fight-or-flight rule as one that hurt us. Not while a job runs (jobs have their own care), and at most once every 10 seconds.
-        if (!_tasks.IsBusy && _tick >= _nextAvoidTick && _skills.NearestHostile(AvoidWithin) is { } threat)
+        if (Learner == null && !_tasks.IsBusy && _tick >= _nextAvoidTick && _skills.NearestHostile(AvoidWithin) is { } threat)
         {
             // Stepping away that keeps being needed is not working: live 2026-11-03 15:48 to 15:52 and beyond, a spider and three zombies at 1 to 2 blocks, "could not get away from the monsters"
             // every 10 seconds, nothing ever fought back, and he went round in circles. A third time in a minute, he turns on them (creepers are never fought: they blow up).
@@ -182,13 +204,152 @@ public sealed class Reflexes : IDisposable
 
         // Hit by a mob: brave characters fight it, careful ones back away from it.
         if (hurt && _tasks.Current is { } doing && doing.StartsWith("taking cover")) hurt = false;      // digging in is the answer to being hurt: a fight started now would cancel it half way down (the archer test)
-        if (hurt)
+        if (hurt && Learner == null)
         {
             var (x, y, z) = c.Position;
             // On foot only: a phantom's swoop is neither something to run from nor, from the ground, something he can chase (the fight skill walks to its target, and one in the air cannot be walked to).
             var attacker = c.Entities.Values.Where(e => Skills.IsThreatOnFoot(e.Name) && e.DistanceTo(x, y, z) < 6).OrderBy(e => e.DistanceTo(x, y, z)).FirstOrDefault();
             if (attacker == null) return;
             Respond(attacker, "attacked me");
+        }
+    }
+
+    // ---------------------------------------------------------------- monsters, by what has worked (DangerLearner)
+
+    /// <summary>When set, what he does about monsters is chosen by this from what has happened to him, instead of the fixed rungs. Null: the fixed rungs (no learning, deterministic).</summary>
+    public DangerLearner? Learner { get; set; }
+
+    /// <summary>A choice made ("what, against what, the odds"), for the log.</summary>
+    public event Action<string>? Decided;
+
+    private sealed class Episode
+    {
+        public required DangerSituation Situation;
+        public required DangerAction Action;
+        public required float HealthBefore;
+        public required DateTime Started;
+        public DateTime? JobEnded;
+        public bool JobWorked = true;
+    }
+
+    private Episode? _episode;
+    private readonly object _episodeLock = new();
+    private bool _dangerJob;
+    private long _nextDangerTick;
+    private readonly Dictionary<DangerAction, long> _armBlockedUntil = [];
+
+    /// <summary>Jobs that deal with monsters themselves: hurting him during those is no reason to stop them.</summary>
+    private static bool HandlesMonsters(string? job) => job != null && (job.Contains("fight", StringComparison.OrdinalIgnoreCase) || job.Contains("guard", StringComparison.OrdinalIgnoreCase)
+        || job.Contains("protect", StringComparison.OrdinalIgnoreCase) || job.Contains("shoot", StringComparison.OrdinalIgnoreCase) || job.Contains("attack", StringComparison.OrdinalIgnoreCase)
+        || job.Contains("fire") || job.Contains("creeper"));
+
+    /// <summary>Is there something to decide about, and if so decide and start it. True when a job was started.</summary>
+    private bool TryDecideDanger(DangerLearner learner, bool hurt)
+    {
+        if (_dangerJob || _tick < _nextDangerTick) return false;
+        var c = _client;
+        var (x, y, z) = c.Position;
+        var close = c.Entities.Values.Where(e => Skills.IsThreatOnFoot(e.Name) && e.DistanceTo(x, y, z) < 12).OrderBy(e => e.DistanceTo(x, y, z)).ToList();
+        var archer = _skills.NearestRanged(26);
+        var melee = close.FirstOrDefault(e => e.DistanceTo(x, y, z) < AvoidWithin);
+        if (archer == null && melee == null) return false;
+
+        // On another job: only being hurt by something close stops it (a monster over there is the job's own care). It goes back to the job afterwards.
+        var busy = _tasks.IsBusy;
+        if (busy && (HandlesMonsters(_tasks.Current) || !hurt)) return false;
+
+        var foe = melee != null && (archer == null || melee.DistanceTo(x, y, z) < 5) ? melee : archer!;
+        var foeClass = close.Count(e => e.DistanceTo(x, y, z) < 10) >= 3 ? "swarm" : foe.Name == "minecraft:creeper" ? "creeper" : Skills.Ranged.Contains(foe.Name) ? "archer" : "melee";
+        var situation = new DangerSituation(foeClass, DangerSituation.KitOf(_skills.BestWeaponName), DangerSituation.HealthOf(c.Health));
+
+        // The shield: what is never worth learning by dying. Never hit a creeper (it blows up); a choice that would fail at once is not on offer.
+        var legal = new List<DangerAction> { DangerAction.Flee };
+        if (foe.Name != "minecraft:creeper" && c.Health >= 6 && foeClass != "creeper") legal.Add(DangerAction.Fight);
+        if (_skills.DigInProblem() == null) legal.Add(DangerAction.DigIn);
+        if (_skills.FindOpenWater() != null) legal.Add(DangerAction.SwimOut);
+        legal.RemoveAll(a => _armBlockedUntil.GetValueOrDefault(a) > _tick);
+        if (legal.Count == 0) legal.Add(DangerAction.Flee);
+
+        var action = learner.Choose(situation, legal);
+        Decided?.Invoke($"{DangerLearner.Doing(action)} against {foe.Name.Bare().Replace('_', ' ')} at {foe.DistanceTo(x, y, z):0} blocks ({situation}); odds {string.Join(", ", legal.Select(a => $"{DangerLearner.Doing(a)} {learner.Expected(situation, a):0.00}"))}");
+
+        var episode = new Episode { Situation = situation, Action = action, HealthBefore = c.Health, Started = DateTime.UtcNow };
+        lock (_episodeLock) { CloseEpisode(learner, _episode, died: false); _episode = episode; }
+        _dangerJob = true;
+        _nextDangerTick = _tick + 20;
+        var kind = foe.Name.Bare();
+        var (description, work) = action switch
+        {
+            DangerAction.Fight => ($"fighting the {kind.Replace('_', ' ')}", (Func<CancellationToken, Task<(bool, string)>>)(ct => _skills.AttackAsync(kind, ct))),
+            DangerAction.DigIn => ("taking cover underground", ct => _skills.TakeCoverAsync(ct)),
+            DangerAction.SwimOut => ("swimming out to open water", ct => _skills.SwimOutAsync(ct)),
+            _ => ("stepping away from monsters", ct => _skills.StepAwayFromMonstersAsync(AvoidWithin + 2, ct)),
+        };
+        Func<CancellationToken, Task<(bool, string)>> wrapped = async ct =>
+        {
+            _dangerJob = true;
+            var started = DateTime.UtcNow;
+            try
+            {
+                var result = await work(ct);
+                episode.JobWorked = result.Item1;
+                // Failed straight away: it never had a chance, so it teaches nothing about the action. Not on offer for half a minute; he decides again at once.
+                if (!result.Item1 && DateTime.UtcNow - started < TimeSpan.FromSeconds(2))
+                {
+                    _armBlockedUntil[action] = _tick + 600;
+                    _nextDangerTick = _tick;
+                    lock (_episodeLock) if (_episode == episode) _episode = null;
+                }
+                return result;
+            }
+            finally
+            {
+                episode.JobEnded = DateTime.UtcNow;
+                _dangerJob = false;
+            }
+        };
+        if (busy) _tasks.Interrupt(description, wrapped, quiet: true);
+        else _tasks.StartReflex(description, wrapped);
+        return true;
+    }
+
+    /// <summary>A choice is judged a few seconds after its job ended (what happened next is part of the result), or after two and a half minutes whatever it is doing.</summary>
+    private void CloseEpisodeIfDue()
+    {
+        if (Learner is not { } learner) return;
+        lock (_episodeLock)
+        {
+            if (_episode is not { } e) return;
+            var now = DateTime.UtcNow;
+            if ((e.JobEnded is { } ended && now - ended > TimeSpan.FromSeconds(4)) || now - e.Started > TimeSpan.FromSeconds(150))
+            {
+                CloseEpisode(learner, e, died: false);
+                _episode = null;
+            }
+        }
+    }
+
+    private void CloseEpisode(DangerLearner learner, Episode? e, bool died)
+    {
+        if (e == null) return;
+        var c = _client;
+        var (x, y, z) = c.Position;
+        var after = died ? 0 : c.Health;
+        var stillClose = !died && c.Entities.Values.Any(m => Skills.IsThreatOnFoot(m.Name) && m.DistanceTo(x, y, z) < 6);
+        var reward = DangerLearner.Reward(died, e.HealthBefore, after, stillClose, e.JobWorked);
+        learner.Record(e.Situation, e.Action, reward, died, e.HealthBefore, after, (DateTime.UtcNow - e.Started).TotalSeconds);
+        Decided?.Invoke($"result: {DangerLearner.Doing(e.Action)} ({e.Situation}) scored {reward:0.00}{(died ? ": I died" : $", health {e.HealthBefore / 2:0.#} to {after / 2:0.#} hearts")}; now expected {learner.Expected(e.Situation, e.Action):0.00}");
+    }
+
+    /// <summary>He died: whatever he had chose last gets the blame.</summary>
+    public void NoteDeath()
+    {
+        _dangerJob = false;
+        if (Learner is not { } learner) return;
+        lock (_episodeLock)
+        {
+            CloseEpisode(learner, _episode, died: true);
+            _episode = null;
         }
     }
 
