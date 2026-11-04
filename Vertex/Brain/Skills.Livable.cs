@@ -88,6 +88,66 @@ public sealed partial class Skills
         return best;
     }
 
+    private readonly Dictionary<(int X, int Z), DateTime> _searchedLand = [];
+
+    /// <summary>
+    /// Goes and looks for a land animal where land animals are: the nearest land he can see and has not been over lately, not known to be too hot. The plain search walks fixed compass legs whatever is under him, and he spent 19 minutes
+    /// at sea looking for sheep with plains in sight (2026-11-04). Nothing of the kind in sight, it does what the plain search does.
+    /// </summary>
+    private async Task<(bool Found, int Legs, double Walked)> LookOverLandAsync(Func<bool> found, int maxLegs, CancellationToken ct)
+    {
+        var legs = 0;
+        double walked = 0;
+        while (!found() && legs < maxLegs && !ct.IsCancellationRequested)
+        {
+            legs++;
+            var (bx, by, bz) = client.FeetBlock;
+            var now = DateTime.UtcNow;
+            (int X, int Z)? best = null;
+            var bestD = double.MaxValue;
+            lock (_searchedLand)
+            {
+                foreach (var old in _searchedLand.Where(c => now - c.Value > TimeSpan.FromMinutes(20)).Select(c => c.Key).ToList()) _searchedLand.Remove(old);
+                const int reach = 160;
+                for (var dx = -reach; dx <= reach; dx += 8)
+                for (var dz = -reach; dz <= reach; dz += 8)
+                {
+                    var d = Math.Sqrt(dx * dx + dz * dz);
+                    if (d >= bestD || d < 24) continue;       // what is closer than that he can already see the animals on
+                    int x = bx + dx, z = bz + dz;
+                    if (_searchedLand.ContainsKey((x >> 5, z >> 5)) || LandAt(x, z, by) is not int y) continue;
+                    if (HotAt?.Invoke() is double h && KnownTooHot(BiomeAt(x, y, z), h)) continue;
+                    best = (x, z);
+                    bestD = d;
+                }
+            }
+            if (best is not { } goal)
+            {
+                var (_, plainLegs, plainWalked) = await LookFurtherAsync(found, 1, ct);
+                walked += plainWalked;
+                if (plainLegs == 0) break;
+                continue;
+            }
+            Trace?.Invoke($"looking on the land at {goal.X} {goal.Z}");
+            var before = client.Position;
+            for (var hop = 0; hop < 6 && !found(); hop++)
+            {
+                var (px, _, pz) = client.Position;
+                using var step = CancellationTokenSource.CreateLinkedTokenSource(ct);
+                step.CancelAfter(TimeSpan.FromSeconds(6));
+                var there = false;
+                try { there = await client.GoToAsync(Goal.XZ(goal.X, goal.Z), new PathOptions { CanDig = true, MaxNodes = 20_000 }, step.Token); }
+                catch (OperationCanceledException) when (!ct.IsCancellationRequested) { }
+                var (nx, _, nz) = client.Position;
+                if (there || Math.Sqrt((nx - px) * (nx - px) + (nz - pz) * (nz - pz)) < 1) break;
+            }
+            var after = client.Position;
+            walked += Math.Sqrt((after.X - before.X) * (after.X - before.X) + (after.Z - before.Z) * (after.Z - before.Z));
+            lock (_searchedLand) _searchedLand[(goal.X >> 5, goal.Z >> 5)] = DateTime.UtcNow;
+        }
+        return (found(), legs, walked);
+    }
+
     /// <summary>
     /// Leaves for somewhere he can live: walks and swims to land in a biome not known to be too hot, and stays there half a minute to read it. No such land in sight, he keeps going one way over the sea until there is. Up to ten minutes; the
     /// job he was on carries on from there.

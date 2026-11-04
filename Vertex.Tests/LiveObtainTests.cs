@@ -55,6 +55,51 @@ public class LiveObtainTests
     }
 
     [Test]
+    public async Task HungryAtSea_FishAreFood()
+    {
+        var (client, skills, ax, az) = await StageAsync("ObtainFish",
+            (x, z) => $"fill {x - 12} 197 {z + 6} {x + 12} 199 {z + 20} minecraft:water",
+            (x, z) => $"summon minecraft:cod {x - 3} 198 {z + 10} {{NoAI:1b}}",
+            (x, z) => $"summon minecraft:cod {x} 198 {z + 12} {{NoAI:1b}}",
+            (x, z) => $"summon minecraft:salmon {x + 3} 198 {z + 10} {{NoAI:1b}}",
+            (x, z) => $"summon minecraft:salmon {x + 6} 198 {z + 12} {{NoAI:1b}}");
+        await using var _c = client;
+        using var cts = new CancellationTokenSource(TimeSpan.FromMinutes(3));
+        var food = skills.Milestones().First(m => m.Item == "food");
+        var (ok, text) = await skills.AdvanceAsync(food, cts.Token);
+        TestContext.Out.WriteLine(text);
+        Assert.That(ok, Is.True, text);
+        Assert.That(skills.HasFood, Is.True);
+    }
+
+    [Test]
+    public async Task LookingForAnimals_HeGoesToTheLand_NotOutOverTheWater()
+    {
+        // He stands on a small island with water all round, and the only other land lies 52 blocks east. No sheep anywhere: this test is about where he looks. (A server shows animals out to about 96 blocks, so one on that land would be seen from here and he would never have to search.)
+        var (client, skills, ax, az) = await StageAsync("ObtainLand",
+            (x, z) => $"forceload add {x - 40} {z - 40} {x + 80} {z + 40}",
+            (x, z) => $"fill {x - 28} 197 {z - 28} {x - 3} 199 {z + 28} minecraft:water",
+            (x, z) => $"fill {x + 3} 197 {z - 28} {x + 28} 199 {z + 28} minecraft:water",
+            (x, z) => $"fill {x - 2} 197 {z - 28} {x + 2} 199 {z - 3} minecraft:water",
+            (x, z) => $"fill {x - 2} 197 {z + 3} {x + 2} 199 {z + 28} minecraft:water",
+            (x, z) => $"fill {x + 29} 197 {z - 28} {x + 50} 199 {z + 28} minecraft:water",
+            (x, z) => $"fill {x + 51} 197 {z - 6} {x + 60} 199 {z + 6} minecraft:stone",
+            (x, z) => $"fill {x + 12} 200 {z - 2} {x + 16} 206 {z + 2} minecraft:air",
+            (x, z) => $"fill {x - 14} 200 {z + 3} {x - 14} 205 {z + 3} minecraft:air");
+        await using var _c = client;
+        var looked = new List<string>();
+        skills.Trace += m => { lock (looked) looked.Add(m); TestContext.Out.WriteLine(m); };
+        using var cts = new CancellationTokenSource(TimeSpan.FromMinutes(3));
+        var (ok, text) = await skills.ObtainAsync("mutton", 1, cts.Token);
+        TestContext.Out.WriteLine(text);
+        Assert.That(ok, Is.False, "no sheep in this world");
+        string first;
+        lock (looked) first = looked.First(l => l.StartsWith("looking on the land"));
+        var x0 = int.Parse(first.Split(' ')[5]);
+        Assert.That(x0, Is.GreaterThanOrEqualTo(ax + 45), $"the first place he went to look was the land to the east, not a compass leg over the water: {first}");
+    }
+
+    [Test]
     public async Task ABed_FromWhateverColourTheSheepAre_AndItBecomesWhereHeComesBack()
     {
         // Sheep of two colours, as a real flock is: three gray, one white. Only the gray make a bed.
@@ -171,7 +216,8 @@ public class LiveObtainTests
         skills.MilestoneReached += m => reached.Add(m.Label);
         using var cts = new CancellationTokenSource(TimeSpan.FromMinutes(5));
         // No sheep or animals on this stage: the bed and the food cannot be had, and he must not stand still for them.
-        for (var i = 0; i < 6 && skills.NextMilestone() is { } step && !cts.IsCancellationRequested; i++)
+        // A failed step comes round again after its wait, so this is not one try each: what it must not do is keep him from the rest.
+        for (var i = 0; i < 12 && !reached.Contains("a stone sword") && skills.NextMilestone() is { } step && !cts.IsCancellationRequested; i++)
         {
             var (_, text) = await skills.AdvanceAsync(step, cts.Token);
             TestContext.Out.WriteLine($"{step.Label}: {text}");

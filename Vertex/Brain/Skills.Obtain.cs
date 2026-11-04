@@ -62,7 +62,7 @@ public sealed partial class Skills
                 return why == null ? (true, $"I made a {Plain(bed)}. I have: {InventorySummary()}.") : (false, $"I couldn't make a bed: {why}");
             }
             Entity? Find() { var (x, y, z) = client.Position; return client.Entities.Values.Where(e => e.Name == "minecraft:sheep" && !IsBaby(e)).OrderBy(e => e.DistanceTo(x, y, z)).FirstOrDefault(); }
-            var (_, legs, walked) = await LookFurtherAsync(() => Find() != null, 3, ct);
+            var (_, legs, walked) = await LookOverLandAsync(() => Find() != null, 3, ct);
             if (Find() is not { } sheep) return (false, "I looked for sheep for a bed and found none" + Looked(legs, walked) + ".");
             Trace?.Invoke("hunting a sheep for its wool, for a bed");
             await EquipWeaponAsync(ct);
@@ -231,7 +231,7 @@ public sealed partial class Skills
         for (var round = 0; round < 8; round++)
         {
             if (client.Inventory.Count(item) >= target) return null;
-            await LookFurtherAsync(() => Find() != null, 3, ct);
+            await LookOverLandAsync(() => Find() != null, 3, ct);
             if (Find() is not { } animal) return $"I looked for a {kinds[0]} and found none.";
             Trace?.Invoke($"hunting a {kinds[0]} for {Plain(item)}");
             await EquipWeaponAsync(ct);
@@ -320,11 +320,12 @@ public sealed partial class Skills
     public Milestone? WorkingToward() => Milestones().FirstOrDefault(m => !m.Done());
 
     /// <summary>
-    /// Works on one step. A failed step waits (1 minute, then 2, 4, up to 15) while he goes on to the next: failing to find iron is no reason to stand still, and the world round him changes as he moves. Time he was
+    /// Works on one step. A failed step waits (1 minute, then 2, 4, up to 15, and at least three times what the try took) while he goes on to the next: failing to find iron is no reason to stand still, and the world round him changes as he moves. Time he was
     /// interrupted does not count as failing (he just goes back to it).
     /// </summary>
     public async Task<(bool, string)> AdvanceAsync(Milestone step, CancellationToken ct)
     {
+        var started = DateTime.UtcNow;
         (bool Ok, string Text) result;
         if (step.Item == "food") result = await GetEnoughFoodAsync(step.Count, ct);
         else result = await ObtainAsync(step.Item, step.Count, ct);
@@ -340,7 +341,10 @@ public sealed partial class Skills
             return result;
         }
         var failures = _milestoneBackoff.TryGetValue(step.Item, out var b) ? b.Failures + 1 : 1;
-        _milestoneBackoff[step.Item] = (DateTime.UtcNow + TimeSpan.FromMinutes(Math.Min(15, 1 << Math.Min(failures - 1, 4))), failures);
+        // At least three times as long as the try took: a search takes minutes, and with a fixed wait two failing searches took turns for ever and he never got to the stone tools he could have had (19 minutes live, 2026-11-04).
+        var wait = TimeSpan.FromMinutes(Math.Min(15, 1 << Math.Min(failures - 1, 4)));
+        var tookThrice = (DateTime.UtcNow - started) * 3;
+        _milestoneBackoff[step.Item] = (DateTime.UtcNow + (tookThrice > wait ? tookThrice : wait), failures);
         Trace?.Invoke($"not reached yet, {step.Label}: {result.Text}");
         return result;
     }
@@ -348,11 +352,12 @@ public sealed partial class Skills
     /// <summary>Food enough for a while: whatever meat is nearest. Hunted bare-handed if it comes to that.</summary>
     private async Task<(bool, string)> GetEnoughFoodAsync(int pieces, CancellationToken ct)
     {
-        var names = new HashSet<string> { "minecraft:cow", "minecraft:pig", "minecraft:chicken", "minecraft:sheep", "minecraft:rabbit" };
+        // Fish too: he spent 19 minutes hungry at sea looking for cows with cod and salmon all round him (2026-11-04).
+        var names = new HashSet<string> { "minecraft:cow", "minecraft:pig", "minecraft:chicken", "minecraft:sheep", "minecraft:rabbit", "minecraft:cod", "minecraft:salmon", "minecraft:tropical_fish" };
         for (var round = 0; round < 6 && EdibleStacks.Sum(s => s.Count) < pieces; round++)
         {
             Entity? Find() { var (x, y, z) = client.Position; return client.Entities.Values.Where(e => names.Contains(e.Name) && !IsBaby(e)).OrderBy(e => e.DistanceTo(x, y, z)).FirstOrDefault(); }
-            var (_, legs, walked) = await LookFurtherAsync(() => Find() != null, 3, ct);
+            var (_, legs, walked) = await LookOverLandAsync(() => Find() != null, 3, ct);
             if (Find() is not { } animal) return (false, "I looked for an animal to eat and found none" + Looked(legs, walked) + ".");
             await EquipWeaponAsync(ct);
             var won = await FightAsync(animal.Id, null, ct);
