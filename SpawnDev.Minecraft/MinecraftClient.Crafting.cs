@@ -178,13 +178,7 @@ public sealed partial class MinecraftClient
                 if (!made) return false;
             }
             if (!await EquipAsync("crafting_table", ct)) return false;
-            var feet = FeetBlock;
-            var spots = new[] { (1, 0), (-1, 0), (0, 1), (0, -1), (1, 1), (-1, -1), (1, -1), (-1, 1) }
-                .Select(d => (X: feet.X + d.Item1, feet.Y, Z: feet.Z + d.Item2));
-            var placed = false;
-            foreach (var s in spots)
-                if (await PlaceBlockAsync(s.X, s.Y, s.Z, ct)) { placed = true; break; }
-            if (!placed) return false;
+            if (!await PlaceBesideUsAsync(ct)) return false;
             near = World.FindBlocks(st => st > 0 && World.Data.StateBlock[st] == tableBlock.Id, EyePosition, BlockReach, 1);
             if (near.Count == 0) return false;
         }
@@ -201,6 +195,31 @@ public sealed partial class MinecraftClient
         {
             WindowOpened -= OnOpen;
         }
+    }
+
+    /// <summary>
+    /// Places what is in hand somewhere beside us: an open spot at foot level, then at head level, and failing that (standing in a pit or a tunnel, all stone round him: he held a furnace and "could not make or reach one") cuts a
+    /// spot out of the wall at foot level. Never into someone's build. The tool used to cut it is swapped back for what was in hand.
+    /// </summary>
+    private async Task<bool> PlaceBesideUsAsync(CancellationToken ct)
+    {
+        var feet = FeetBlock;
+        var held = Inventory.MainHand.Name;
+        (int X, int Z)[] sides = [(1, 0), (-1, 0), (0, 1), (0, -1), (1, 1), (-1, -1), (1, -1), (-1, 1)];
+        foreach (var (dx, dz) in sides)
+            if (await PlaceBlockAsync(feet.X + dx, feet.Y, feet.Z + dz, ct)) return true;
+        foreach (var (dx, dz) in sides)
+            if (await PlaceBlockAsync(feet.X + dx, feet.Y + 1, feet.Z + dz, ct)) return true;
+        foreach (var (dx, dz) in sides.Take(4))
+        {
+            var s = World.GetState(feet.X + dx, feet.Y, feet.Z + dz);
+            if (s <= 0 || World.Data.Hardness[s] < 0 || IsBuiltBlock(World.Data.BlockOf(s)) || World.Data.IsUnknownBlock(s)) continue;
+            await EquipBestToolAsync(s, ct);
+            if (!await DigAsync(feet.X + dx, feet.Y, feet.Z + dz, ct)) continue;
+            if (!await EquipAsync(held, ct)) return false;
+            if (await PlaceBlockAsync(feet.X + dx, feet.Y, feet.Z + dz, ct)) return true;
+        }
+        return false;
     }
 
     /// <summary>Shift-clicks anything left in the crafting grid back into the inventory.</summary>

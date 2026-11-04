@@ -227,8 +227,10 @@ public sealed partial class Skills(MinecraftClient client)
             // 64 blocks sideways at ANY depth (a sphere of 48 never reached the diamonds 70 blocks down: "I couldn't find any diamond ore", in two seconds, 2026-11-03).
             // Near his own level first: wood or stone under the ground is a long dig away, and a tree 30 blocks off is a short walk. (The nearest first otherwise: 3D distance puts a log in a cave under him ahead of a tree in plain sight.)
             var feetY = client.Position.Y;
+            // And out of the land that burns him while there is any other: he walked past cooler ground to the nearest tree in the savanna, life after life (2026-11-04).
+            var hotAt = HotAt?.Invoke();
             var found = client.World.FindBlocksTall(Wanted, client.Position, 64, 256).Where(p => !tried.Contains(p))
-                .OrderBy(p => Math.Abs(p.Y - feetY) > 8 ? 1 : 0).Take(64).ToList();
+                .OrderBy(p => hotAt is double h && KnownTooHot(BiomeAt(p.Item1, p.Item2, p.Item3), h) ? 1 : 0).ThenBy(p => Math.Abs(p.Y - feetY) > 8 ? 1 : 0).Take(64).ToList();
             // Opening a block with lava beside it (or lava above it, which falls in) lets the lava out onto whoever is digging: leave it (found 2026-10-15: a diamond ringed with lava took 11 of 20 health).
             // From the top of a stack of sand or gravel only: taking one from under the rest brings them down on him (2026-11-04: he dug into a sand bank, went from 7 hearts to nothing "in wall", and died with the job still going).
             found = found.Where(p => !UnderFallingBlock(p.Item1, p.Item2, p.Item3)).ToList();
@@ -263,7 +265,8 @@ public sealed partial class Skills(MinecraftClient client)
             Trace?.Invoke($"collecting {what}: going for the one at {bx} {by} {bz} ({broken} of {count} so far)");
             // With blocks to stand on he can build his way up to what is out of reach.
             var scaffold = Have(s => client.ThrowawayBlocks.Contains(s.Name));
-            if (!await client.GoToAsync(new GoalReachBlock(bx, by, bz, 4.0), new PathOptions { CanDig = true, CanPlace = scaffold > 0, MaxNodes = 30_000 }, ct))
+            // Only for what really is out of reach: allowed always, he built up to a tree with the cobblestone he had just mined for a pickaxe.
+            if (!await client.GoToAsync(new GoalReachBlock(bx, by, bz, 4.0), new PathOptions { CanDig = true, CanPlace = scaffold > 0 && by - client.FeetBlock.Y >= 4, MaxNodes = 30_000 }, ct))
             {
                 // Too high: go and get something to stand on and try again. Live 2026-11-04 the trees round his respawn spot had no trunk left below y 70, only crowns six blocks over his head: "I could see wood but I couldn't
                 // get to any of it", for days. A player stacks a few blocks.
@@ -314,6 +317,12 @@ public sealed partial class Skills(MinecraftClient client)
         // Back down from whatever he built to reach it: on top of a pillar there is nothing beside him to put a crafting table against, and nothing he does next starts up there.
         if (ground is { } back && client.FeetBlock.Y > back.Y + 1 && !ct.IsCancellationRequested)
             await client.GoToAsync(Goal.Near(back.X + 0.5, back.Y, back.Z + 0.5, 2), new PathOptions { CanDig = true, MaxDrop = 3, MaxNodes = 8_000 }, ct);
+        // What he cut from up there fell further than the usual look round the spot reaches: a log from a crown lands 8 blocks down, and that is the wood he climbed for.
+        if (ground != null && !ct.IsCancellationRequested)
+        {
+            var (gx, gy, gz) = client.FeetBlock;
+            await PickUpNearbyAsync(gx, gy, gz, ct, reach: 12);
+        }
         var have = InventorySummary();
         var lavaNote = nextToLava > 0 ? $" {nextToLava} {(nextToLava == 1 ? "was" : "were")} next to lava, so I left {(nextToLava == 1 ? "it" : "them")} alone." : "";
         return broken > 0
@@ -360,12 +369,12 @@ public sealed partial class Skills(MinecraftClient client)
     /// Walks over the item drops near a spot. Digging to a drop is only allowed when the caller mined something that can leave one sealed in a pocket (ore) and the drop is within two blocks
     /// of the spot: with digging always on, a field's water hole made Vertex dig a shaft after the dirt it had just dropped (found 2026-10-15 on the AubsCraft dev world).
     /// </summary>
-    public async Task PickUpNearbyAsync(int x, int y, int z, CancellationToken ct, bool mayDig = false, Func<Entity, bool>? leave = null)
+    public async Task PickUpNearbyAsync(int x, int y, int z, CancellationToken ct, bool mayDig = false, Func<Entity, bool>? leave = null, double reach = 5)
     {
         await client.WaitTicksAsync(8, ct); // drops spawn and settle
         for (var tries = 0; tries < 4; tries++)
         {
-            var drop = client.Entities.Values.Where(e => e.IsItem && e.DistanceTo(x + 0.5, y + 0.5, z + 0.5) < 5 && (leave == null || !leave(e))).OrderBy(e => e.DistanceTo(x + 0.5, y, z + 0.5)).FirstOrDefault();
+            var drop = client.Entities.Values.Where(e => e.IsItem && e.DistanceTo(x + 0.5, y + 0.5, z + 0.5) < reach && (leave == null || !leave(e))).OrderBy(e => e.DistanceTo(x + 0.5, y, z + 0.5)).FirstOrDefault();
             if (drop == null) return;
             // Digging allowed: a drop from ore reached from a few blocks away lies in the sealed pocket the ore left (found 2026-10-15: a diamond mined from above was never picked up).
             await client.GoToAsync(Goal.Near(drop.X, drop.Y, drop.Z, 0.8), new PathOptions { MaxNodes = 5_000, CanDig = mayDig && drop.DistanceTo(x + 0.5, y + 0.5, z + 0.5) < 2.5 }, ct);
@@ -472,7 +481,8 @@ public sealed partial class Skills(MinecraftClient client)
         var stuck = 0;
         while (client.Entities.TryGetValue(id, out var t) && !ct.IsCancellationRequested)
         {
-            if (client.Health < 6 || (keepGoing != null && !keepGoing(t))) return false;
+            // Backing off at 3 hearts is for what hits back. A cow does not, and low health is when he most needs to eat ("I'm too hurt to hunt right now", at 2 hearts and 16 food, 2026-11-04).
+            if ((client.Health < 6 && Hostile.Contains(t.Name)) || (keepGoing != null && !keepGoing(t))) return false;
             // A creeper whose fuse is burning (it is within 3 blocks of us): run until its fuse stops, then carry on. (The brain's reflex does the same; a fight run on its own needs it too.)
             // Hit it once first when it is in reach and the sword is ready (the blow knocks it back; the fuse is 1.5 s and a run of eight blocks takes less): hit and run, until it falls.
             if (LitCreeper(5) is { } lit)

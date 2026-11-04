@@ -104,11 +104,7 @@ public sealed partial class MinecraftClient
         {
             if (Inventory.Count("furnace") == 0 && !(await CraftItemAsync("furnace", 1, ct)).Success) return false;
             if (!await EquipAsync("furnace", ct)) return false;
-            var feet = FeetBlock;
-            var placed = false;
-            foreach (var (dx, dz) in new[] { (1, 0), (-1, 0), (0, 1), (0, -1), (1, 1), (-1, -1), (1, -1), (-1, 1) })
-                if (await PlaceBlockAsync(feet.X + dx, feet.Y, feet.Z + dz, ct)) { placed = true; break; }
-            if (!placed) return false;
+            if (!await PlaceBesideUsAsync(ct)) return false;
             near = World.FindBlocks(s => s > 0 && World.Data.StateBlock[s] == furnace.Id, EyePosition, BlockReach, 1);
             if (near.Count == 0) return false;
         }

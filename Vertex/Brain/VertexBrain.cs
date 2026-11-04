@@ -168,6 +168,7 @@ public sealed class VertexBrain : IBody
         Skills.Trace += m => Log?.Invoke("  (" + m + ")");
         Skills.PriorLessons = LessonsFor;
         Reflexes.Temperature = () => Temperature;
+        Skills.HotAt = () => Temperature == null ? null : Reflexes.HotAt;
         companion.Attach(this);
         companion.AddChannel(Channel);
     }

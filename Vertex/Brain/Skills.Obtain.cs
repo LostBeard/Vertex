@@ -37,12 +37,39 @@ public sealed partial class Skills
         var bare = name.Bare();
         // What people call things: "wood" or "logs" is any log, a "bed" is any bed.
         if (bare is "wood" or "log" or "logs") return await WoodForAsync(count * 4, ct) is null ? (true, $"I have wood. I have: {InventorySummary()}.") : (false, "I couldn't get any wood.");
-        if (bare == "bed") name = "minecraft:white_bed";
+        if (bare == "bed") return await ObtainBedAsync(ct);
         var target = client.Inventory.Count(name) + Math.Max(1, count);
         var why = await ObtainStepAsync(name, target, [], ct);
         return why == null
             ? (true, $"I got {count} {Plain(name)}. I have: {InventorySummary()}.")
             : (false, $"I couldn't get {Plain(name)}: {why} I have: {InventorySummary()}.");
+    }
+
+    /// <summary>
+    /// A bed, of any colour: three wool of one colour and three planks. Sheep come in colours and a sheep killed gives one wool, so he goes on until three match: asking for white only, he held light gray wool and looked for more white sheep (2026-11-04).
+    /// </summary>
+    private async Task<(bool, string)> ObtainBedAsync(CancellationToken ct)
+    {
+        if (client.Inventory.Find(s => s.Name.EndsWith("_bed")).Any()) return (true, "I have a bed.");
+        for (var round = 0; round < 12; round++)
+        {
+            ct.ThrowIfCancellationRequested();
+            var best = client.Inventory.Slots.Skip(PlayerInventory.MainStart).Where(s => !s.IsEmpty && s.Name.EndsWith("_wool")).GroupBy(s => s.Name).Select(g => (Name: g.Key, Count: g.Sum(s => s.Count))).OrderByDescending(g => g.Count).FirstOrDefault();
+            if (best.Count >= 3)
+            {
+                var bed = best.Name.Replace("_wool", "_bed");
+                var why = await ObtainStepAsync(bed, 1, [], ct);
+                return why == null ? (true, $"I made a {Plain(bed)}. I have: {InventorySummary()}.") : (false, $"I couldn't make a bed: {why}");
+            }
+            Entity? Find() { var (x, y, z) = client.Position; return client.Entities.Values.Where(e => e.Name == "minecraft:sheep" && !IsBaby(e)).OrderBy(e => e.DistanceTo(x, y, z)).FirstOrDefault(); }
+            var (_, legs, walked) = await LookFurtherAsync(() => Find() != null, 3, ct);
+            if (Find() is not { } sheep) return (false, "I looked for sheep for a bed and found none" + Looked(legs, walked) + ".");
+            Trace?.Invoke("hunting a sheep for its wool, for a bed");
+            await EquipWeaponAsync(ct);
+            if (await FightAsync(sheep.Id, null, ct))
+                await PickUpNearbyAsync((int)Math.Floor(sheep.X), (int)Math.Floor(sheep.Y), (int)Math.Floor(sheep.Z), ct);
+        }
+        return (false, "I couldn't get three wool of one colour.");
     }
 
     /// <summary>Makes sure he holds `target` of the item. Null when he does, else why not.</summary>
@@ -101,7 +128,17 @@ public sealed partial class Skills
     /// <summary>Everything a recipe needs, in his pockets. Wood is counted once for the whole recipe (a pickaxe's planks and sticks come from the same logs), and the table a large recipe needs is counted in.</summary>
     private async Task<string?> MaterialsForAsync(CraftingRecipe recipe, int batches, HashSet<string> making, CancellationToken ct)
     {
+        // Getting one thing can cost another (blocks he stood on to reach a log were the cobblestone he had just mined): look again until it all holds, a few times at most.
         var needs = recipe.Cells.Where(c => c != null).GroupBy(c => c!).Select(g => (Ingredient: g.Key, Count: g.Count() * batches)).ToList();
+        for (var pass = 0; ; pass++)
+        {
+            if (await GatherMaterialsAsync(recipe, needs, making, ct) is { } why) return why;
+            if (pass >= 2 || needs.Where(n => !Woody(n.Ingredient)).All(n => n.Ingredient.Items.Sum(client.Inventory.Count) >= n.Count)) return null;
+        }
+    }
+
+    private async Task<string?> GatherMaterialsAsync(CraftingRecipe recipe, List<(Ingredient Ingredient, int Count)> needs, HashSet<string> making, CancellationToken ct)
+    {
         foreach (var (ingredient, count) in needs.Where(n => !Woody(n.Ingredient)))
         {
             var have = ingredient.Items.Sum(client.Inventory.Count);
@@ -144,12 +181,16 @@ public sealed partial class Skills
     /// <summary>Logs for this many planks, counting what he carries. Null when he has enough.</summary>
     private async Task<string?> WoodForAsync(double planks, CancellationToken ct)
     {
-        var have = Have(s => s.Name.EndsWith("_log")) * 4 + Have(s => s.Name.EndsWith("_planks"));
-        if (have >= planks) return null;
-        var logs = (int)Math.Ceiling((planks - have) / 4);
-        var (ok, text) = await CollectAsync("wood", logs, ct);
-        var nowHave = Have(s => s.Name.EndsWith("_log")) * 4 + Have(s => s.Name.EndsWith("_planks"));
-        return ok || nowHave >= planks ? null : text;
+        int Held() => Have(s => s.Name.EndsWith("_log")) * 4 + Have(s => s.Name.EndsWith("_planks"));
+        // What he holds is what counts, not what he broke: a log can fall where he does not find it, and the craft then fails one plank short.
+        var text = "";
+        for (var round = 0; round < 3 && Held() < planks; round++)
+        {
+            var before = Held();
+            (_, text) = await CollectAsync("wood", (int)Math.Ceiling((planks - before) / 4), ct);
+            if (Held() <= before) break;
+        }
+        return Held() >= planks ? null : (text.Length > 0 ? text : "I couldn't get enough wood.");
     }
 
     private bool HasPickaxe(int tier) => tier <= 0 || client.Inventory.Find(s => s.Name.EndsWith("_pickaxe") && PickaxeTier(s.Name) >= tier).Any();
@@ -248,10 +289,11 @@ public sealed partial class Skills
     {
         yield return new("minecraft:wooden_pickaxe", 1, "a wooden pickaxe", () => HasPickaxe(1));
         yield return new("minecraft:wooden_sword", 1, "a wooden sword", () => BestWeaponName != null);
+        // Before anything else that a death would cost him: a bed is the one thing that stays, and without one every death puts him back where he started, however far that is.
+        yield return new("bed", 1, "a bed of my own", () => HomeBed != null || client.FindBeds(96, 1).Count > 0);
+        yield return new("food", 3, "some food", () => EdibleStacks.Sum(s => s.Count) >= 3);
         yield return new("minecraft:stone_pickaxe", 1, "a stone pickaxe", () => HasPickaxe(2));
         yield return new("minecraft:stone_sword", 1, "a stone sword", () => HasAny("stone_sword", "iron_sword", "diamond_sword", "netherite_sword"));
-        yield return new("food", 3, "some food", () => EdibleStacks.Sum(s => s.Count) >= 3);
-        yield return new("minecraft:white_bed", 1, "a bed of my own", () => client.FindBeds(96, 1).Count > 0 || client.Inventory.Find(s => s.Name.EndsWith("_bed")).Any());
         yield return new("minecraft:iron_pickaxe", 1, "an iron pickaxe", () => HasPickaxe(3));
         yield return new("minecraft:iron_sword", 1, "an iron sword", () => HasAny("iron_sword", "diamond_sword", "netherite_sword"));
         yield return new("minecraft:iron_chestplate", 1, "an iron chestplate", () => HasAny("iron_chestplate", "diamond_chestplate", "netherite_chestplate") || WearingBetter("chestplate"));
@@ -286,7 +328,7 @@ public sealed partial class Skills
         (bool Ok, string Text) result;
         if (step.Item == "food") result = await GetEnoughFoodAsync(step.Count, ct);
         else result = await ObtainAsync(step.Item, step.Count, ct);
-        if (result.Ok && step.Item.EndsWith("_bed"))
+        if (result.Ok && step.Item == "bed")
         {
             var (placed, text) = await SetUpBedAsync(ct);
             result = (placed, result.Text + " " + text);

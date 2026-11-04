@@ -11,6 +11,9 @@ namespace Vertex.Brain;
 /// </summary>
 public sealed partial class Skills
 {
+    /// <summary>The temperature from which land counts as too hot (the brain: what he has learned so far), or null on a server that shows none.</summary>
+    public Func<double?>? HotAt { get; set; }
+
     private readonly Dictionary<string, (double Degrees, DateTime At)> _landHeat = [];
     private (int X, int Z)? _heading;
 

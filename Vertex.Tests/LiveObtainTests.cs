@@ -55,6 +55,32 @@ public class LiveObtainTests
     }
 
     [Test]
+    public async Task ABed_FromWhateverColourTheSheepAre_AndItBecomesWhereHeComesBack()
+    {
+        // Sheep of two colours, as a real flock is: three gray, one white. Only the gray make a bed.
+        var (client, skills, ax, az) = await StageAsync("ObtainBed",
+            (x, z) => $"summon minecraft:sheep {x + 5} 200 {z + 5} {{Color:7b,NoAI:1b}}",
+            (x, z) => $"summon minecraft:sheep {x + 5} 200 {z - 5} {{Color:0b,NoAI:1b}}",
+            (x, z) => $"summon minecraft:sheep {x - 5} 200 {z + 5} {{Color:7b,NoAI:1b}}",
+            (x, z) => $"summon minecraft:sheep {x - 5} 200 {z - 5} {{Color:7b,NoAI:1b}}");
+        await using var _c = client;
+        skills.Trace += m => TestContext.Out.WriteLine(m);
+        using var cts = new CancellationTokenSource(TimeSpan.FromMinutes(4));
+        var bedStep = skills.Milestones().First(m => m.Item == "bed");
+        var (ok, text) = await skills.AdvanceAsync(bedStep, cts.Token);
+        TestContext.Out.WriteLine(text);
+        Assert.That(ok, Is.True, text);
+        Assert.That(client.FindBeds(8, 1), Is.Not.Empty, "it stands beside him");
+        Assert.That(skills.HomeBed, Is.Not.Null);
+        Assert.That(bedStep.Done(), Is.True);
+        // The proof that matters: he comes back beside it, not at the world's spawn.
+        var (bx, by, bz) = skills.HomeBed!.Value;
+        await _server.CommandAsync("effect clear ObtainBed");
+        await _server.CommandAsync("damage ObtainBed 100 minecraft:generic");
+        await Wait.UntilAsync(() => client.Health >= 20f && client.IsSpawned && Math.Abs(client.FeetBlock.X - bx) <= 6 && Math.Abs(client.FeetBlock.Z - bz) <= 6, TimeSpan.FromSeconds(30), () => $"coming back at the bed {bx} {by} {bz}; he is at {client.FeetBlock}");
+    }
+
+    [Test]
     public async Task WoodOnlyInCrownsOverHisHead_HeStacksBlocksAndClimbsToIt()
     {
         // What stands round his respawn spot on mc.spawndev.com: the low trunks gone, the rest six blocks up, and sand underfoot. Stage 0's two trees are removed so these are all there is.
@@ -144,13 +170,13 @@ public class LiveObtainTests
         var reached = new List<string>();
         skills.MilestoneReached += m => reached.Add(m.Label);
         using var cts = new CancellationTokenSource(TimeSpan.FromMinutes(5));
-        for (var i = 0; i < 5 && skills.NextMilestone() is { } step && !cts.IsCancellationRequested; i++)
+        // No sheep or animals on this stage: the bed and the food cannot be had, and he must not stand still for them.
+        for (var i = 0; i < 6 && skills.NextMilestone() is { } step && !cts.IsCancellationRequested; i++)
         {
             var (_, text) = await skills.AdvanceAsync(step, cts.Token);
             TestContext.Out.WriteLine($"{step.Label}: {text}");
-            if (step.Label == "some food") break;      // no animals on this stage
         }
-        Assert.That(reached, Does.Contain("a wooden pickaxe").And.Contain("a stone pickaxe").And.Contain("a stone sword"));
-        Assert.That(skills.NextMilestone()?.Label, Is.Not.EqualTo("some food"), "no animal here: it waits while he goes on to what is next");
+        Assert.That(reached, Does.Contain("a wooden pickaxe").And.Contain("a wooden sword").And.Contain("a stone pickaxe").And.Contain("a stone sword"), "past the two he could not get");
+        Assert.That(reached, Does.Not.Contain("a bed of my own").And.Not.Contain("some food"));
     }
 }

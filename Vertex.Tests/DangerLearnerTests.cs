@@ -306,6 +306,20 @@ public class LiveDangerChoiceTests
     }
 
     [Test]
+    public async Task AtTwoHearts_HeStillHuntsACow()
+    {
+        var (client, skills, tasks, ax, az) = await JoinAsync("LowHunter", (x, z) => $"summon minecraft:cow {x + 4} 200 {z} {{NoAI:1b}}");
+        await using var _ = client;
+        await _server.CommandAsync("damage LowHunter 16 minecraft:generic");
+        await Wait.UntilAsync(() => client.Health <= 4f, Timeout, () => $"the hurt (health {client.Health})");
+        using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(60));
+        var (ok, text) = await skills.ObtainAsync("beef", 1, cts.Token);
+        TestContext.Out.WriteLine(text);
+        Assert.That(ok, Is.True, text);
+        Assert.That(client.Inventory.Count("beef"), Is.GreaterThanOrEqualTo(1));
+    }
+
+    [Test]
     public async Task Buried_HeDigsHimselfOut_AndGoesBackToHisJob()
     {
         var (client, skills, tasks, ax, az) = await JoinAsync("Buried");
