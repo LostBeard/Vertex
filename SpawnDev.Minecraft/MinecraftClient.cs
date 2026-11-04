@@ -154,6 +154,15 @@ public sealed partial class MinecraftClient : IAsyncDisposable
 
     public event Action<ChatMessage>? ChatReceived;
 
+    /// <summary>Something hurt us, by the server's account (it comes just before the health update). Raised on the receive loop: must not block.</summary>
+    public event Action<DamageInfo>? Damaged;
+    /// <summary>Health changed (before, after). Raised on the receive loop: must not block.</summary>
+    public event Action<float, float>? HealthChanged;
+    /// <summary>We died, with the server's death message. Raised on the receive loop before the respawn, while the position is still where it happened: must not block.</summary>
+    public event Action<string>? Died;
+    /// <summary>On fire, by the server's account (our own entity flags, bit 0x01).</summary>
+    public bool OnFire { get; private set; }
+
     /// <summary>Play packets that failed to decode and were skipped (zero on vanilla servers).</summary>
     public int PacketErrors { get; private set; }
     public event Action<int, Exception>? PacketError;
@@ -526,18 +535,43 @@ public sealed partial class MinecraftClient : IAsyncDisposable
             }
             case CB.Play.Clientbound.SetHealth:
             {
+                var healthBefore = Health;
                 {
                     var r = packet.Reader();
                     Health = r.ReadFloat();
                     Food = r.ReadVarInt();
                     Saturation = r.ReadFloat();
                 }
+                if (Health != healthBefore) HealthChanged?.Invoke(healthBefore, Health);
                 if (Health <= 0 && _options.AutoRespawn)
                 {
                     using var respawn = new PacketWriter(CB.Play.Serverbound.ClientCommand);
                     respawn.WriteVarInt(0); // perform respawn
                     await c.SendAsync(respawn, ct);
                 }
+                return null;
+            }
+            case CB.Play.Clientbound.DamageEvent:
+            {
+                // What just hurt an entity, by the server's own account: the damage type and who did it. Ours is the only thing that says WHY health fell.
+                var r = packet.Reader();
+                var target = r.ReadVarInt();
+                var typeId = r.ReadVarInt();
+                var cause = r.ReadVarInt() - 1;   // the wire says entity id + 1, 0 for none
+                var direct = r.ReadVarInt() - 1;
+                (double X, double Y, double Z)? from = null;
+                if (r.ReadBool()) { double fx = r.ReadDouble(), fy = r.ReadDouble(), fz = r.ReadDouble(); from = (fx, fy, fz); }
+                if (target == EntityId)
+                    Damaged?.Invoke(new DamageInfo((Registries.Get("minecraft:damage_type", typeId)?.Key ?? $"unknown #{typeId}").Replace("minecraft:", ""), cause, direct, from));
+                return null;
+            }
+            case CB.Play.Clientbound.PlayerCombatKill:
+            {
+                // The death screen: sent at the moment of death with the message, and only to the one who died. Auto-respawn answers within a few ticks, so reading health once a second misses most deaths.
+                var r = packet.Reader();
+                var who = r.ReadVarInt();
+                var message = TextComponent.ToPlainText(r.ReadNbt());
+                if (who == EntityId) Died?.Invoke(message);
                 return null;
             }
             case CB.Play.Clientbound.GameEvent:

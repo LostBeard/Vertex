@@ -456,10 +456,14 @@ public sealed partial class MinecraftClient
                 if (entries == null) return;
                 if (id == EntityId)
                 {
-                    // Our own data: the pose (index 6) says when we are asleep in a bed.
+                    // Our own data: the pose (index 6) says when we are asleep in a bed; the flags (index 0) say when we are on fire.
                     foreach (var entry in entries)
-                        if (entry is Dictionary<string, object?> m && Convert.ToInt32(m["key"]) == 6 && m.GetValueOrDefault("value") is { } pose)
-                            Pose = (EntityPose)Convert.ToInt32(pose);
+                    {
+                        if (entry is not Dictionary<string, object?> m || m.GetValueOrDefault("value") is not { } value) continue;
+                        var key = Convert.ToInt32(m["key"]);
+                        if (key == 6) Pose = (EntityPose)Convert.ToInt32(value);
+                        else if (key == 0) OnFire = (Convert.ToInt32(value) & 0x01) != 0;
+                    }
                     return;
                 }
                 if (e == null) return;

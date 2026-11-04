@@ -4,6 +4,9 @@ namespace Vertex.Brain;
 /// <param name="Mobs">Hostile mobs within 24 blocks: what kind and how far (fliers included).</param>
 public sealed record Moment(DateTime At, float Health, int Food, string? Task, long DayTime, string Weather, string Where, IReadOnlyList<(string Kind, double Distance)> Mobs, bool HasWeapon, bool HasFood, double Y = 0, string? Hazard = null);
 
+/// <summary>One hurt as he felt it: how much (half hearts), what kind by the server's account ("arrow", "on_fire", "no damage event" when health fell with none), and who did it, if anyone.</summary>
+public sealed record Pain(DateTime At, float Lost, string Type, string? Source);
+
 /// <summary>
 /// The start of learning from the live game (TJ, 2026-11-03, after phantoms killed him 70 seconds after god mode went off: "help him learn to learn"). It watches a stream of <see cref="Moment"/>s and
 /// turns the two things that matter most into LESSONS in his own words, from facts it saw and nothing else: a death (what killed him, when, what was near, what he was doing, whether he had dug in,
@@ -31,6 +34,47 @@ public sealed class ExperienceLog
     /// up to 16: he starts digging in earlier once not digging in has killed him.
     /// </summary>
     public static int CoverBelow(int deathsWithoutCoverToday) => Math.Min(16, 10 + 2 * Math.Max(0, deathsWithoutCoverToday));
+
+    private readonly List<Pain> _pains = [];
+
+    /// <summary>The hurts felt in the last minute, oldest first.</summary>
+    public IReadOnlyList<Pain> RecentPains { get { lock (_pains) return _pains.ToList(); } }
+
+    /// <summary>Notes one hurt. Called from the network side as it happens, so nothing is missed between the once-a-second moments.</summary>
+    public void NotePain(Pain pain)
+    {
+        lock (_pains)
+        {
+            _pains.Add(pain);
+            _pains.RemoveAll(p => (pain.At - p.At).TotalSeconds > Window);
+        }
+    }
+
+    /// <summary>
+    /// The moment he died, from the server's own death packet. A once-a-second look at health misses nearly every death, because the respawn comes within a few ticks: live 2026-11-03 his log held 49 "big-loss,
+    /// got through it" lessons and 1 death, with 17 deaths in 9.4 minutes at the end of it (the "10 hearts left" in those was the respawn). Starts the record afresh: the next life owes nothing to this one.
+    /// </summary>
+    public Skills.Lesson Died(Moment now, string? deathMessage)
+    {
+        _ring.Add(now with { Health = 0 });
+        while (_ring.Count > Window) _ring.RemoveAt(0);
+        var lesson = Death(now with { Health = 0 }, deathMessage);
+        _ring.Clear();
+        lock (_pains) _pains.Clear();
+        _pendingPeak = null;
+        _dead = true;
+        _previousHealth = 20;
+        return lesson;
+    }
+
+    /// <summary>The hurts in words, heaviest first: "arrow from skeleton 9 hearts (3 times); on fire 1 heart". Empty when he felt none.</summary>
+    internal string PainSummary()
+    {
+        List<Pain> pains;
+        lock (_pains) pains = _pains.ToList();
+        return string.Join("; ", pains.GroupBy(p => (p.Type, p.Source)).Select(g => (g.Key, Lost: g.Sum(p => p.Lost), Times: g.Count())).OrderByDescending(x => x.Lost)
+            .Select(x => $"{x.Key.Type.Replace('_', ' ')}{(x.Key.Source is { } s ? $" from {s}" : "")} {x.Lost / 2:0.#} hearts{(x.Times > 1 ? $" ({x.Times} times)" : "")}"));
+    }
 
     /// <summary>Takes the latest moment (once a second) and says what it taught, if anything: at most one lesson per call.</summary>
     /// <param name="deathMessage">What the server said about how he died, if it has said (for example "HereticSpawn was slain by Phantom").</param>
@@ -82,10 +126,15 @@ public sealed class ExperienceLog
         var from = history.Count == 0 ? null : history.MaxBy(m => m.Health);
         var cause = CauseOf(deathMessage, history);
         var facts = Gather(now, history);
+        var pains = PainSummary();
+        // No damage event at all and yet dead: what killed him did not go through the game's damage (a server plugin setting his health, typically): that is the "died" with no reason.
+        var hurt = pains.Length > 0 ? $" What hurt me: {pains}." : " The server reported no damage before this: nothing in the game hurt me first.";
         var text = $"I died{(cause.Length > 0 ? $": {cause}" : "")}. " + facts.When + (from == null ? "" : $" In the last {Math.Max(1, (int)(now.At - from.At).TotalSeconds)} seconds my health went from {from.Health / 2:0.#} hearts to none.")
-            + facts.Around + facts.Doing + facts.Cover + facts.Kit;
+            + hurt + facts.Around + facts.Doing + facts.Cover + facts.Kit;
         var tags = new List<string> { "death", facts.Night ? "night" : "day", facts.Covered ? "cover" : "no-cover" };
         tags.AddRange(facts.Kinds.Select(k => "death:" + k.Replace("minecraft:", "")));
+        List<Pain> felt; lock (_pains) felt = _pains.ToList();
+        tags.AddRange(felt.Select(p => "hurt:" + p.Type).Distinct());
         return new Skills.Lesson(text, "death", false, tags);
     }
 

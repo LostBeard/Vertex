@@ -154,6 +154,10 @@ public sealed class VertexBrain : IBody
         Tasks.GoalOf = () => _pursuing;
         Tasks.Finished += o => companion.Post(new TaskEvent(o));
         Client.ChatReceived += OnServerText;
+        Client.Damaged += OnDamaged;
+        Client.HealthChanged += OnHealthChanged;
+        Client.Died += OnDied;
+        Tasks.Crashed += (job, e) => Log?.Invoke($"job crashed ({job}): {e}");
         Skills.LessonLearned += RecordLesson;
         Skills.Trace += m => Log?.Invoke("  (" + m + ")");
         Skills.PriorLessons = LessonsFor;
@@ -425,6 +429,70 @@ public sealed class VertexBrain : IBody
         @"\b(was slain|was shot|was killed|was blown up|was pricked|was fireballed|was squashed|was impaled|was struck|was pummeled|was stung|was burned|was doomed|died|drowned|burned to death|starved|suffocated|fell|hit the ground|tried to swim|went up in flames|withered|blew up|walked into|froze)\b",
         System.Text.RegularExpressions.RegexOptions.IgnoreCase | System.Text.RegularExpressions.RegexOptions.Compiled);
 
+    private DamageInfo? _lastDamage;
+    private DateTime _lastDamageAt = DateTime.MinValue;
+
+    /// <summary>The hurts felt in the last minute, oldest first.</summary>
+    internal IReadOnlyList<Pain> RecentPains => _experience.RecentPains;
+    /// <summary>Deaths since this brain started.</summary>
+    public int DeathsThisRun { get; private set; }
+    /// <summary>Where and when he last died, with the server's message: his things lie there for five minutes.</summary>
+    public (double X, double Y, double Z, DateTime At, string Message)? LastDeath { get; private set; }
+
+    private Moment MomentNow()
+    {
+        var (x, y, z) = Client.Position;
+        var mobs = Client.Entities.Values.Where(e => Skills.Hostile.Contains(e.Name) && e.DistanceTo(x, y, z) < 24).Select(e => (e.Name, e.DistanceTo(x, y, z))).ToList();
+        var weapon = Client.Inventory.Find(s => s.Name.EndsWith("_sword") || s.Name.EndsWith("_axe")).Any();
+        return new Moment(DateTime.UtcNow, Client.Health, Client.Food, Tasks.Current, Client.World.DayTime, Client.Weather, $"{x:0} {y:0} {z:0}", mobs, weapon, Skills.HasFood, y, Skills.HazardAround());
+    }
+
+    private void OnDamaged(DamageInfo damage)
+    {
+        _lastDamage = damage;
+        _lastDamageAt = DateTime.UtcNow;
+    }
+
+    /// <summary>Who is behind a hurt, in a word and how far: "skeleton 12 blocks away". Null when nobody is (fire, a fall, hunger).</summary>
+    private string? SourceOf(DamageInfo? damage)
+    {
+        if (damage == null) return null;
+        var id = damage.CauseEntityId >= 0 ? damage.CauseEntityId : damage.DirectEntityId;
+        return id >= 0 && Client.Entities.TryGetValue(id, out var who) ? (who.IsPlayer ? who.PlayerName : who.Name.Bare().Replace('_', ' ')) : null;
+    }
+
+    /// <summary>
+    /// Health fell: pair it with the damage event just before it, so every hurt has a reason. A fall in health with no event at all did not go through the game's damage (a server plugin): that goes on the
+    /// record too, in those words, because it is exactly the case nobody could explain (TJ, 2026-11-03: "the logs simply say he died with no reason").
+    /// </summary>
+    private void OnHealthChanged(float before, float after)
+    {
+        if (after >= before) return;
+        var now = DateTime.UtcNow;
+        var damage = now - _lastDamageAt < TimeSpan.FromSeconds(1.5) ? _lastDamage : null;
+        var type = damage?.Type ?? "no damage event";
+        var source = SourceOf(damage);
+        _experience.NotePain(new Pain(now, before - after, type, source));
+        var (x, y, z) = Client.Position;
+        Log?.Invoke($"hurt: -{(before - after) / 2:0.#} hearts by {type.Replace('_', ' ')}{(source != null ? $" from {source}" : "")}, {after / 2:0.#} left, at {x:0} {y:0} {z:0}{(Client.OnFire ? ", on fire" : "")}; doing: {Tasks.Current ?? "nothing"}");
+        _lastDamage = null;
+    }
+
+    /// <summary>He died: the true record of it, at the moment it happens, and the job he was on ends (it was steering a body that is now somewhere else).</summary>
+    private void OnDied(string message)
+    {
+        try
+        {
+            DeathsThisRun++;
+            var (x, y, z) = Client.Position;
+            LastDeath = (x, y, z, DateTime.UtcNow, message);
+            RecordLesson(_experience.Died(MomentNow(), message));
+            RefreshCoverThreshold();
+        }
+        catch (Exception e) { Log?.Invoke("could not record a death: " + e); }
+        Tasks.Abort("I died: " + message);
+    }
+
     /// <summary>Once a second: what is near, what he is doing, how he is. The log turns it into lessons about deaths and big losses; they are stored, and how soon he takes cover follows from them.</summary>
     private async Task ExperienceLoopAsync(CancellationToken ct)
     {
@@ -435,10 +503,7 @@ public sealed class VertexBrain : IBody
             while (await timer.WaitForNextTickAsync(ct))
             {
                 if (!Client.IsSpawned) continue;
-                var (x, y, z) = Client.Position;
-                var mobs = Client.Entities.Values.Where(e => Skills.Hostile.Contains(e.Name) && e.DistanceTo(x, y, z) < 24).Select(e => (e.Name, e.DistanceTo(x, y, z))).ToList();
-                var weapon = Client.Inventory.Find(s => s.Name.EndsWith("_sword") || s.Name.EndsWith("_axe")).Any();
-                var moment = new Moment(DateTime.UtcNow, Client.Health, Client.Food, Tasks.Current, Client.World.DayTime, Client.Weather, $"{x:0} {y:0} {z:0}", mobs, weapon, Skills.HasFood, y, Skills.HazardAround());
+                var moment = MomentNow();
                 var message = DateTime.UtcNow - _deathMessageAt < TimeSpan.FromSeconds(15) ? _deathMessage : null;
                 foreach (var lesson in _experience.Observe(moment, message))
                 {
@@ -852,6 +917,10 @@ public sealed class VertexBrain : IBody
     public async ValueTask DisposeAsync()
     {
         Client.PlayerAdded -= OnPlayerAdded;
+        Client.ChatReceived -= OnServerText;
+        Client.Damaged -= OnDamaged;
+        Client.HealthChanged -= OnHealthChanged;
+        Client.Died -= OnDied;
         Tasks.Stop();
         Reflexes.Dispose();
         _cts.Cancel();

@@ -221,6 +221,9 @@ static Microsoft.AspNetCore.Builder.WebApplication BuildControlPanel(string[] ar
     app.UseAntiforgery();
     app.MapStaticAssets(); // serves _framework/blazor.web.js (without it the page renders but nothing is clickable)
     app.MapRazorComponents<Vertex.Components.App>().AddInteractiveServerRenderMode();
+    // The live game as data (read-only): how he is and what he sees, without driving the Blazor page.
+    app.MapGet("/state", (Vertex.Host.VertexHost host) => host.Brain is { } brain ? Microsoft.AspNetCore.Http.Results.Json(StateDump.Snapshot(brain)) : Microsoft.AspNetCore.Http.Results.NotFound("not in a game"));
+    app.MapGet("/map", (Vertex.Host.VertexHost host, int? r, bool? heights) => host.Brain is { } brain ? Microsoft.AspNetCore.Http.Results.Text(StateDump.Map(brain, r ?? 48, heights == true)) : Microsoft.AspNetCore.Http.Results.NotFound("not in a game"));
     return app;
 }
 

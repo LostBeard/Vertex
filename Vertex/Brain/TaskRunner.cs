@@ -93,6 +93,7 @@ public sealed class TaskRunner
             }
             catch (Exception e)
             {
+                Crashed?.Invoke(description, e);
                 outcome = new TaskOutcome(description, false, "failed: " + e.Message, forPlayer, interruption, goal, quiet);
             }
             lock (_lock)
@@ -109,6 +110,30 @@ public sealed class TaskRunner
                 lock (_lock)
                     if (_cts == cts) Run(r.Description, r.Work, null, r.For, r.Goal, quiet: r.Quiet); // nothing new was started meanwhile; a reflex job stays a reflex job
         });
+    }
+
+    /// <summary>A job threw something other than being cancelled (a bug): the whole exception, for the log; the outcome only carries its message.</summary>
+    public event Action<string, Exception>? Crashed;
+
+    /// <summary>
+    /// Ends the current job because it can no longer go on (he died: the job's position, plan and pockets are all gone, and a job left running keeps steering a body that is somewhere else). Unlike
+    /// <see cref="Stop"/> its ending is reported, so whoever asked for it hears; a job done for nobody ends quietly. Nothing resumes.
+    /// </summary>
+    public void Abort(string reason)
+    {
+        TaskOutcome? outcome = null;
+        lock (_lock)
+        {
+            if (Current is { } description) outcome = new TaskOutcome(description, false, reason, _for, false, _goal, _quiet || (_for == null && _goal == null));
+            _cts?.Cancel();
+            _cts = null;
+            _work = null;
+            _for = null;
+            _goal = null;
+            _quiet = false;
+            Current = null;
+        }
+        if (outcome != null) Finished?.Invoke(outcome);
     }
 
     /// <summary>Stops whatever is running.</summary>
