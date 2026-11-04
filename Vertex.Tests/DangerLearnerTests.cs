@@ -359,6 +359,45 @@ public class LiveDangerChoiceTests
     }
 
     [Test]
+    public async Task BurnedLowOnAMilestone_HeLeavesTheHeatWhetherOrNotHeCanHeal_AndDoesNotGoBackToIt()
+    {
+        var (client, skills, tasks, ax, az) = await JoinAsync("Leaves");
+        await using var _ = client;
+        double? shown = null;
+        client.ChatReceived += m => { if (m.Kind == ChatKind.ActionBar && VertexBrain.TemperatureIn(m.Content) is double d) { shown = d; skills.NoteHeat(d); } };
+        using var stop = new CancellationTokenSource();
+        var plugin = Task.Run(async () =>
+        {
+            while (!stop.IsCancellationRequested)
+            {
+                await _server.CommandAsync($"title Leaves actionbar {{\"text\":\"Temperature: {(client.FeetBlock.X <= ax - 12 ? 25.0 : 56.6):0.0} C\"}}");
+                await Task.Delay(500);
+            }
+        });
+        try
+        {
+            // Food under 18 with nothing to eat, as he always is by then: healing has stopped.
+            await _server.CommandAsync("effect give Leaves minecraft:hunger 60 200 true");
+            await Wait.UntilAsync(() => client.Food < 17, TimeSpan.FromSeconds(40), () => $"the food bar to fall (food {client.Food})");
+            await _server.CommandAsync("effect clear Leaves");
+            var started = 0;
+            tasks.StartReflex("working toward a wooden pickaxe", async ct => { Interlocked.Increment(ref started); await Task.Delay(-1, ct); return (true, "done"); });
+            using var reflexes = new Reflexes(client, skills, tasks, () => Character.BuiltIn[0].Style) { Temperature = () => shown };
+            await _server.CommandAsync("damage Leaves 12 minecraft:generic");
+            await Wait.UntilAsync(() => tasks.Current == "cooling off", Timeout, () => $"going to cool off (health {client.Health}, food {client.Food}, doing {tasks.Current})");
+            await Wait.UntilAsync(() => client.FeetBlock.X <= ax - 12, TimeSpan.FromSeconds(60), () => $"out of the heat, at {client.FeetBlock}");
+            await Wait.UntilAsync(() => tasks.Current != "cooling off", TimeSpan.FromSeconds(60), () => "the short rest to end");
+            Assert.That(Volatile.Read(ref started), Is.EqualTo(1), "the milestone is not restarted: what comes next gets chosen afresh");
+            Assert.That(tasks.Current, Is.Null);
+        }
+        finally
+        {
+            await stop.CancelAsync();
+            try { await plugin; } catch (OperationCanceledException) { }
+        }
+    }
+
+    [Test]
     public async Task HurtAndHungry_HeEatsWhileWorking_AndWithNothingToEatFoodComesBeforeTools()
     {
         var (client, skills, tasks, ax, az) = await JoinAsync("Hungry");

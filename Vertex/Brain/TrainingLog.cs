@@ -12,8 +12,14 @@ namespace Vertex.Brain;
 /// </summary>
 public sealed class TrainingLog(string folder, string? source = null)
 {
-    /// <summary>On every line, so the trainer can tell old lines from new. 2: rendered_prompt and rendered_target from the engine; a tool call is in rendered_target as the model wrote it. The target does not include the end-of-turn token: the formatter adds it.</summary>
-    public const int FormatVersion = 2;
+    /// <summary>
+    /// On every line, so the trainer can tell old lines from new. 2: rendered_prompt and rendered_target from the engine; a tool call is in rendered_target as the model wrote it; the target does not include the end-of-turn token, the formatter adds it.
+    /// 3: also prompt_ids, the token ids the model was given (the end that was kept, when prompt_cut), so training does not have to tokenize the text again and differ from inference. target_ids is null until the engine reports them.
+    /// </summary>
+    public const int FormatVersion = 3;
+
+    /// <summary>The ids the model really saw: the decoder keeps the newest tokens when the prompt does not fit its context.</summary>
+    public static int[] KeptIds(int[] ids, int promptTokens) => promptTokens > 0 && promptTokens < ids.Length ? ids[^promptTokens..] : ids;
 
     private readonly object _lock = new();
     private long _next;
@@ -46,7 +52,8 @@ public sealed class TrainingLog(string folder, string? source = null)
 
     /// <summary>Writes one pass, if it may be written. A disk that cannot take it costs the line, never the game.</summary>
     /// <param name="promptCut">The decoder dropped the oldest tokens to fit its context, so the rendered prompt is longer than what the model saw.</param>
-    public bool Record(IReadOnlyList<AiChatMessage> messages, IReadOnlyList<string>? toolsJson, string rawOutput, string renderedPrompt, bool promptCut = false)
+    /// <param name="promptIds">The token ids the model was given.</param>
+    public bool Record(IReadOnlyList<AiChatMessage> messages, IReadOnlyList<string>? toolsJson, string rawOutput, string renderedPrompt, bool promptCut = false, int[]? promptIds = null)
     {
         if (!Allowed(messages)) return false;
         var sent = messages.Select(m => new { role = m.Role, content = m.Content }).ToList();
@@ -62,6 +69,8 @@ public sealed class TrainingLog(string folder, string? source = null)
             source = Source,
             rendered_prompt = renderedPrompt,
             rendered_target = rawOutput,
+            prompt_ids = promptIds,
+            target_ids = (int[]?)null,
             prompt_cut = promptCut,
         });
         try

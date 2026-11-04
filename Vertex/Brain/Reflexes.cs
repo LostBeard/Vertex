@@ -131,18 +131,21 @@ public sealed class Reflexes : IDisposable
 
         // Too hot (a server's temperature plugin): the heat takes a heart every 6 seconds or so and he has work to do in it, as a player does: he stays at it while his health holds, then goes where it is cool, heals, and comes back
         // to what he was doing. Going at the first high reading he would never reach a tree on a hot island; staying in the water beside it he burned down to nothing (2026-11-03).
-        // Only when he can heal once there: under 18 food with nothing to eat natural healing has stopped, and he sat cool in the sea at 2 hearts for minutes (2026-11-04), unable to heal and unwilling to go back to work.
-        if (!_cooling && _tick >= _nextCoolTick && Temperature?.Invoke() is double hot && hot >= HotAt && c.Health <= RetreatAtHealth && (c.Food >= 18 || _skills.HasFood) && !HandlesMonsters(_tasks.Current)
+        // Whether or not he can heal once there: not being burned is worth it by itself, and with food under 18 the next step chosen is food. A milestone job is not resumed afterwards (it is what walked him here, and the next choice may be better:
+        // at 2 hearts it is food); a job someone asked for is.
+        if (!_cooling && _tick >= _nextCoolTick && Temperature?.Invoke() is double hot && hot >= HotAt && c.Health <= RetreatAtHealth && !HandlesMonsters(_tasks.Current)
             && _tasks.Current?.Contains("somewhere I can live") != true)      // already leaving for good
         {
             _cooling = true;
             var target = HotAt - CoolBy;
-            Decided?.Invoke($"too hot ({hot:0.#} degrees) and down to {c.Health / 2:0.#} hearts: going where it is under {target:0.#} to heal");
-            _tasks.Interrupt("cooling off", async ct =>
+            Decided?.Invoke($"too hot ({hot:0.#} degrees) and down to {c.Health / 2:0.#} hearts: going where it is under {target:0.#}");
+            Func<CancellationToken, Task<(bool, string)>> cool = async ct =>
             {
                 try { return await _skills.CoolOffAsync(() => Temperature?.Invoke(), target, HealTo, ct); }
                 finally { _cooling = false; _nextCoolTick = _tick + 100; }
-            }, quiet: true);
+            };
+            if (_tasks.Current?.StartsWith("working toward") == true) _tasks.StartReflex("cooling off", cool);
+            else _tasks.Interrupt("cooling off", cool, quiet: true);
             return;
         }
 

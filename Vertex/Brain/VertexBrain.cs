@@ -521,6 +521,7 @@ public sealed class VertexBrain : IBody
         {
             DeathsThisRun++;
             Reflexes.NoteDeath();
+            _nextLivableTry = DateTime.MinValue;      // dying says nothing about whether he can find somewhere: from where he comes back, he looks again at once
             var (x, y, z) = Client.Position;
             LastDeath = (x, y, z, DateTime.UtcNow, message);
             var pains = _experience.PainSummary();
@@ -861,6 +862,8 @@ public sealed class VertexBrain : IBody
                     });
                     continue;
                 }
+                // Too hot here but not yet time to try again: wait, do not start work. Falling through to the next rung sent him off on a long job on the burning island, which nothing re-examines until it ends: 33 deaths in 30 minutes (2026-11-04).
+                if (tooHot && SelfDirectedPlay && goal == null && !Staying && Client.IsSpawned && !_projectQueued && Client.GameMode == GameMode.Survival) continue;
                 // Getting on in the world: tools, food, a bed, iron... whatever comes next from what he has right now. Never a fixed script: after a death he is back at the top, and nothing else needs to know.
                 // Quiet (the job's start and end are not news); reaching a step is, and is said once. A friend's request or a goal replaces it at once.
                 if (SelfDirectedPlay && goal == null && !Staying && Client.IsSpawned && !_projectQueued && Client.GameMode == GameMode.Survival && now - _lastActivity >= TimeSpan.FromSeconds(3)

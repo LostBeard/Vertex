@@ -44,6 +44,22 @@ public class TrainingLogTests
     }
 
     [Test]
+    public void TheIdsAreWhatTheModelSaw_TheEndThatWasKept_WhenThePromptWasCut()
+    {
+        Assert.That(TrainingLog.KeptIds([1, 2, 3, 4, 5], 5), Is.EqualTo(new[] { 1, 2, 3, 4, 5 }));
+        Assert.That(TrainingLog.KeptIds([1, 2, 3, 4, 5], 3), Is.EqualTo(new[] { 3, 4, 5 }), "the decoder drops the oldest");
+        var folder = NewFolder();
+        try
+        {
+            new TrainingLog(folder, "session-c").Record(GameTurn(), null, "ok then", "x", false, [7, 8, 9]);
+            using var doc = JsonDocument.Parse(File.ReadAllLines(Directory.GetFiles(folder).Single()).Single());
+            Assert.That(doc.RootElement.GetProperty("prompt_ids").GetArrayLength(), Is.EqualTo(3));
+            Assert.That(doc.RootElement.GetProperty("target_ids").ValueKind, Is.EqualTo(JsonValueKind.Null), "until the engine reports them");
+        }
+        finally { if (Directory.Exists(folder)) Directory.Delete(folder, true); }
+    }
+
+    [Test]
     public void WhatAPersonSaid_IsNeverWritten()
     {
         var folder = NewFolder();

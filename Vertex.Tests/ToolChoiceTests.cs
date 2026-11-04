@@ -69,6 +69,9 @@ public class ToolChoiceTests
         ("Vertex, can you see any land from here?", "look_around", []),
     ];
 
+    /// <summary>The requests of this test: the gate for the adapter work, which must never appear in what it trains on.</summary>
+    internal static IEnumerable<string> CaseWordings => Cases.Select(c => c.Says);
+
     private static readonly Regex ToolLine = new(@"^\s+tool (\w+)\((.*)\) ->", RegexOptions.Compiled);
 
     [Test]
