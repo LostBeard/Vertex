@@ -193,6 +193,16 @@ public sealed partial class Skills
         return (found(), legs, walked);
     }
 
+    /// <summary>The nearest log he can see that stands in a biome not known to be too hot, or null. What he needs before anything else is wood, and a bare strip of cool ground beside a burning forest does not give him any: he "settled" on one again and again, and walked into the fire for wood (2026-11-04).</summary>
+    public (int X, int Y, int Z)? NearestCoolWood(double hotAt)
+    {
+        var logs = D.BlockTag("minecraft:logs").Select(n => D.Block(n)).Where(b => b != null).Select(b => b!.Id).ToHashSet();
+        var feet = client.FeetBlock;
+        foreach (var (x, y, z) in client.World.FindBlocksTall(s => s > 0 && logs.Contains(D.StateBlock[s]), client.Position, 160, 512))
+            if (Math.Abs(y - feet.Y) <= 24 && !KnownTooHot(BiomeAt(x, y, z), hotAt)) return (x, y, z);
+        return null;
+    }
+
     /// <summary>
     /// Leaves for somewhere he can live: walks and swims to land in a biome not known to be too hot, and stays there half a minute to read it. No such land in sight, he keeps going one way over the sea until there is. Up to ten minutes; the
     /// job he was on carries on from there.
@@ -212,7 +222,11 @@ public sealed partial class Skills
                 // (On a server that shows no temperature there is no heat to wait for: any land will do, and this search is just getting ashore.)
                 // Near home, when he has one: any cool ground on the way is not the point. He kept stopping at the nearest cool strip, cut bare, with the forest he had made an iron pickaxe in 270 blocks further on (2026-11-04).
                 var homeDistance = Home is { } h ? Math.Sqrt((h.X - client.FeetBlock.X) * (h.X - client.FeetBlock.X) + (h.Z - client.FeetBlock.Z) * (h.Z - client.FeetBlock.Z)) : 0;
-                if (client.OnGround && !InWaterNow() && (t is not double now || now < hotAt) && !KnownTooHot(here, hotAt) && homeDistance <= 32)
+                // With no tools yet he needs wood: somewhere to live has trees that do not burn him. A home he has already proved does not have to.
+                var needsWood = !HasPickaxe(1) && Home == null;
+                var coolWood = needsWood ? NearestCoolWood(hotAt) : null;
+                var woodClose = coolWood is { } w && Math.Sqrt((w.X - client.FeetBlock.X) * (w.X - client.FeetBlock.X) + (w.Z - client.FeetBlock.Z) * (w.Z - client.FeetBlock.Z)) <= 16;
+                if (client.OnGround && !InWaterNow() && (t is not double now || now < hotAt) && !KnownTooHot(here, hotAt) && homeDistance <= 32 && (!needsWood || woodClose))
                 {
                     if (settledSince == DateTime.MinValue) settledSince = DateTime.UtcNow;
                     if (t == null || DateTime.UtcNow - settledSince >= TimeSpan.FromSeconds(30)) { _heading = null; return (true, t is double read ? $"I can live here: {read:0.#} degrees in the {here?.Replace('_', ' ')}." : $"I'm ashore, in the {here?.Replace('_', ' ')}."); }
@@ -221,11 +235,13 @@ public sealed partial class Skills
                 }
                 settledSince = DateTime.MinValue;
                 var (fx, _, fz) = client.Position;
-                var land = Home == null ? NextLivableLand(hotAt, given) : null;
+                // Land to try: trees that will not burn him, when he needs them; failing those, land he has not been over, not known to be too hot. (Cool land he has stood on and found bare is marked as he leaves it.)
+                if (needsWood) { var (cx, _, cz) = client.FeetBlock; given.Add((cx >> 4, cz >> 4)); }
+                var land = Home == null ? (coolWood is { } cw ? (cw.X, cw.Z) : NextLivableLand(hotAt, given)) : null;
                 (int X, int Z) goal;
                 if (Home is { } homeSpot) goal = homeSpot;
                 else if (land is { } l) goal = l;
-                else if (NearestCoolLandKnown() is { } home) goal = home;
+                else if (!needsWood && NearestCoolLandKnown() is { } home) goal = home;
                 else
                 {
                     // Nothing in sight: one way, and stay on it, or he goes in circles round the island. Off the map of what he has loaded is fine: the path goes as far as it knows.

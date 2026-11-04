@@ -251,6 +251,8 @@ public class LiveDangerChoiceTests
             (x, z) => $"fill {x + 13} 200 {z - 20} {x + 44} 203 {z + 20} minecraft:air",
             (x, z) => $"fillbiome {x + 13} 196 {z - 20} {x + 44} 206 {z + 20} minecraft:plains");
         await using var _ = client;
+        await _server.CommandAsync("give Leaver minecraft:wooden_pickaxe");       // with tools he has no need of trees here: any land that does not burn him will do
+        await Wait.UntilAsync(() => client.Inventory.Count("wooden_pickaxe") > 0, Timeout, () => "the pickaxe");
         Assert.That(skills.BiomeHere, Is.EqualTo("desert"), "he can read the biome he stands in");
         double? shown = null;
         client.ChatReceived += m => { if (m.Kind == ChatKind.ActionBar && VertexBrain.TemperatureIn(m.Content) is double d) { shown = d; skills.NoteHeat(d); } };
@@ -348,6 +350,8 @@ public class LiveDangerChoiceTests
 
         // Out in the middle of it he knows he is at sea, and he goes ashore: the only land is the stone at the far end, 41 blocks on. This server shows no temperature, so there is nothing to wait for once he is there.
         var skills = new Skills(client);
+        await _server.CommandAsync($"give {name} minecraft:wooden_pickaxe");      // any land will do for this one
+        await Wait.UntilAsync(() => client.Inventory.Count("wooden_pickaxe") > 0, Timeout, () => "the pickaxe");
         Assert.That(skills.AtSea, Is.True, $"at {client.FeetBlock}");
         using var ashore = new CancellationTokenSource(TimeSpan.FromSeconds(60));
         var (landed, text) = await skills.FindLivableLandAsync(() => null, 50, ashore.Token);
@@ -455,6 +459,48 @@ public class LiveDangerChoiceTests
         Assert.That(client.Air, Is.GreaterThan(250));
         lock (hurts) Assert.That(hurts, Does.Not.Contain("drown"), "he never got as far as drowning");
         tasks.Stop();
+    }
+
+    [Test]
+    public async Task WithNoTools_HeDoesNotSettleOnBareCoolGround_HeGoesOnToCoolTrees()
+    {
+        // From burning desert with a tree in it, past cool bare ground, to a cool tree further on. The nearest wood burns; the nearest cool ground has none.
+        var (client, skills, tasks, ax, az) = await JoinAsync("WoodFirst",
+            (x, z) => $"forceload add {x - 24} {z - 24} {x + 72} {z + 24}",
+            (x, z) => $"fillbiome {x - 20} 196 {z - 20} {x + 12} 206 {z + 20} minecraft:desert",
+            (x, z) => $"fill {x + 13} 197 {z - 20} {x + 60} 199 {z + 20} minecraft:stone",
+            (x, z) => $"fill {x + 13} 200 {z - 20} {x + 60} 203 {z + 20} minecraft:air",
+            (x, z) => $"fillbiome {x + 13} 196 {z - 20} {x + 60} 206 {z + 20} minecraft:plains",
+            (x, z) => $"fill {x - 8} 200 {z} {x - 8} 203 {z} minecraft:oak_log",
+            (x, z) => $"fill {x + 50} 200 {z + 2} {x + 50} 203 {z + 2} minecraft:oak_log");
+        await using var _ = client;
+        skills.Trace += m => TestContext.Out.WriteLine(m);
+        double? shown = null;
+        client.ChatReceived += m => { if (m.Kind == ChatKind.ActionBar && VertexBrain.TemperatureIn(m.Content) is double d) { shown = d; skills.NoteHeat(d); } };
+        using var stop = new CancellationTokenSource();
+        var plugin = Task.Run(async () =>
+        {
+            while (!stop.IsCancellationRequested)
+            {
+                await _server.CommandAsync($"title WoodFirst actionbar {{\"text\":\"Temperature: {(skills.BiomeHere == "desert" ? 56.6 : 25.0):0.0} C\"}}");
+                await Task.Delay(500);
+            }
+        });
+        try
+        {
+            await Wait.UntilAsync(() => skills.KnownTooHot("desert", 50), TimeSpan.FromSeconds(40), () => "the desert's reading on his map");
+            Assert.That(skills.NearestCoolWood(50)?.X, Is.EqualTo(ax + 50), "the tree in the desert is nearer, and it does not count");
+            using var cts = new CancellationTokenSource(TimeSpan.FromMinutes(3));
+            var (ok, text) = await skills.FindLivableLandAsync(() => shown, 50, cts.Token);
+            TestContext.Out.WriteLine(text);
+            Assert.That(ok, Is.True, text);
+            Assert.That(client.FeetBlock.X, Is.GreaterThanOrEqualTo(ax + 34), $"past the bare ground, to the tree; at {client.FeetBlock}");
+        }
+        finally
+        {
+            await stop.CancelAsync();
+            try { await plugin; } catch (OperationCanceledException) { }
+        }
     }
 
     [Test]
