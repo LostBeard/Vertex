@@ -586,6 +586,14 @@ public sealed partial class MinecraftClient : IAsyncDisposable
                 else if (e == 8) ThunderLevel = value;                      // thunder level change, 0 to 1
                 return null;
             }
+            case CB.Play.Clientbound.SetActionBarText:
+            {
+                // The line above the hotbar, by its own packet (the /title command and plugins use this; SystemChat's overlay flag is the other way there).
+                var r = packet.Reader();
+                var text = TextComponent.ToPlainText(r.ReadNbt());
+                ChatReceived?.Invoke(new ChatMessage(ChatKind.ActionBar, text, text));
+                return null;
+            }
             case CB.Play.Clientbound.SystemChat:
             {
                 var r = packet.Reader();

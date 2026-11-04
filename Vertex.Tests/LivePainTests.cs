@@ -126,6 +126,18 @@ public class LivePainTests
         Assert.That(log.RecentPains, Is.Empty, "each life starts its own record");
     }
 
+    [Test]
+    public async Task TheActionBarPacket_Reaches_HimAsAnActionBarLine()
+    {
+        await using var client = await JoinAsync("PainBar");
+        string? line = null;
+        client.ChatReceived += m => { if (m.Kind == ChatKind.ActionBar) line = m.Content; };
+        await _server.CommandAsync("title PainBar actionbar {\"text\":\"33\\u00b0C\"}");     // escaped: the server console's input is not UTF-8
+        await Wait.UntilAsync(() => line != null, Timeout, () => "the action bar line");
+        TestContext.Out.WriteLine(line);
+        Assert.That(VertexBrain.TemperatureIn(line!), Is.EqualTo(33).Within(1e-9), line);
+    }
+
     [TestCase("23°C", 23)]
     [TestCase("Temperature: -4.5 °C", -4.5)]
     [TestCase("🌡 66° C", 66)]
