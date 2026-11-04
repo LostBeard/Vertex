@@ -66,6 +66,17 @@ public class ExperienceLogTests
         Assert.That(loss.Text, Does.Contain("I fell about 18 blocks").And.Contain("Nothing hostile was near"));
     }
 
+    /// <summary>"HereticSpawn burned to death" says nothing about the ground. The blocks round him in the last seconds are in the lesson.</summary>
+    [Test]
+    public void ABurnedToDeath_SaysWhatWasRoundHim()
+    {
+        var log = new ExperienceLog();
+        for (var s = 0; s < 8; s++) log.Observe(At(s, 20, "collecting wood", [], dayTime: 6000) with { Hazard = s >= 5 ? "lava 1 blocks away" : null });
+        var death = log.Observe(At(8, 0, "collecting wood", [], dayTime: 6000) with { Hazard = "I was standing in lava" }, "HereticSpawn burned to death").Single();
+        TestContext.Out.WriteLine(death.Text);
+        Assert.That(death.Text, Does.Contain("burned to death").And.Contain("Round me: lava 1 blocks away; I was standing in lava."));
+    }
+
     [Test]
     public void ADeathIsOneLesson_HoweverLongHeStaysDead_AndTheNextDeathAnother()
     {

@@ -798,7 +798,8 @@ public sealed partial class Skills(MinecraftClient client)
 
     /// <summary>What he fills a hollow with: dirt and ordinary stone (what digging the high ground gives him), never sand or gravel (they fall).</summary>
     private static bool IsFiller(ItemStack s) => s.Name is "minecraft:dirt" or "minecraft:coarse_dirt" or "minecraft:cobblestone" or "minecraft:stone" or "minecraft:andesite" or "minecraft:diorite"
-        or "minecraft:granite" or "minecraft:tuff" or "minecraft:netherrack" or "minecraft:cobbled_deepslate" or "minecraft:deepslate";
+        or "minecraft:granite" or "minecraft:tuff" or "minecraft:netherrack" or "minecraft:cobbled_deepslate" or "minecraft:deepslate" or "minecraft:grass_block" or "minecraft:podzol" or "minecraft:mud"
+        or "minecraft:terracotta" || s.Name.EndsWith("sandstone") || s.Name.EndsWith("_terracotta");
 
     /// <summary>
     /// Makes the footprint of a plan level: goes there, cuts away everything standing in it above the floor level (hill, trees, leaves), picks up what that gave (dirt, stone, wood), fills every
@@ -2179,6 +2180,9 @@ public sealed partial class Skills(MinecraftClient client)
         {
             var s = client.World.GetState(x, y0 - d, z);
             if (s <= 0 || !Standable(s) || client.IsBuiltBlock(D.BlockOf(s)) || D.Hardness[s] < 0 || LavaAround(x, y0 - d, z)) return (false, "The ground here is no good for digging in (not solid, someone's build, or lava near).");
+            // Sand and gravel fall into a hole and bury whoever is in it (he "suffocated in a wall", 2026-11-03).
+            if (D.BlockOf(s).Name is "minecraft:sand" or "minecraft:red_sand" or "minecraft:gravel" or "minecraft:suspicious_sand" or "minecraft:suspicious_gravel" or "minecraft:concrete_powder" || D.BlockOf(s).Name.EndsWith("_concrete_powder"))
+                return (false, "Sand or gravel would fall into the hole.");
             foreach (var (dx, dz) in new[] { (1, 0), (-1, 0), (0, 1), (0, -1) })
                 if (client.World.GetState(x + dx, y0 - d, z + dz) is var n && n > 0 && (D.StateFlags[n] & GameData.FlagWater) != 0) return (false, "There is water beside the ground here: it would flood the hole.");
         }
@@ -2202,6 +2206,32 @@ public sealed partial class Skills(MinecraftClient client)
         await client.GoToAsync(Goal.Block(x, y0, z), new PathOptions { CanDig = true, CanPlace = true, MaxNodes = 6_000 }, ct);
         var out_ = client.FeetBlock.Y >= y0;
         return (out_, $"I dug in {(sealed_ ? "and sealed the hole" : "(I had nothing to seal it with)")}, waited {waited} seconds below, and {(out_ ? "came back up" : "am still down there")}.");
+    }
+
+    /// <summary>
+    /// What is dangerous in the blocks round him, in words, or null: standing IN fire, lava, water or a wall; standing ON magma or a cactus; lava, fire, magma or a cactus within two blocks. The
+    /// experience log keeps it so that "burned to death" and "suffocated in a wall" (nine deaths in 37 minutes, 2026-11-03) say what the ground was.
+    /// </summary>
+    public string? HazardAround()
+    {
+        var (px, py, pz) = client.Position;
+        int x = (int)Math.Floor(px), y = (int)Math.Floor(py + 1e-6), z = (int)Math.Floor(pz);
+        string? Name(int bx, int by, int bz) => client.World.GetBlock(bx, by, bz)?.Name.Replace("minecraft:", "");
+        static bool Bad(string? n) => n != null && (n is "lava" or "fire" or "soul_fire" or "magma_block" or "campfire" or "soul_campfire" or "cactus" or "sweet_berry_bush" or "powder_snow" or "wither_rose");
+        var feet = Name(x, y, z);
+        var head = Name(x, y + 1, z);
+        var below = Name(x, y - 1, z);
+        if (feet != null && Bad(feet)) return $"I was standing in {feet.Replace('_', ' ')}";
+        if (head is "lava" or "fire") return $"{head} was at my head";
+        if (below != null && Bad(below)) return $"I was standing on {below.Replace('_', ' ')}";
+        if (InWaterNow()) return "I was in the water";
+        if (head != null && head != "air" && head != "cave_air" && client.World.GetState(x, y + 1, z) is var hs && hs > 0 && D.HasCollision(hs) && !D.IsAir(hs) && (D.StateFlags[hs] & GameData.FlagReplaceable) == 0)
+            return $"my head was inside {head.Replace('_', ' ')} (a wall)";
+        for (var dx = -2; dx <= 2; dx++)
+        for (var dy = -1; dy <= 2; dy++)
+        for (var dz = -2; dz <= 2; dz++)
+            if (Name(x + dx, y + dy, z + dz) is { } n && Bad(n)) return $"{n.Replace('_', ' ')} {Math.Max(Math.Abs(dx), Math.Abs(dz))} blocks away";
+        return null;
     }
 
     /// <summary>Does he carry a sword or an axe?</summary>

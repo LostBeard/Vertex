@@ -2,7 +2,7 @@ namespace Vertex.Brain;
 
 /// <summary>One second of his life as the recorder sees it: health, what was near, what he was doing, when and where it was.</summary>
 /// <param name="Mobs">Hostile mobs within 24 blocks: what kind and how far (fliers included).</param>
-public sealed record Moment(DateTime At, float Health, int Food, string? Task, long DayTime, string Weather, string Where, IReadOnlyList<(string Kind, double Distance)> Mobs, bool HasWeapon, bool HasFood, double Y = 0);
+public sealed record Moment(DateTime At, float Health, int Food, string? Task, long DayTime, string Weather, string Where, IReadOnlyList<(string Kind, double Distance)> Mobs, bool HasWeapon, bool HasFood, double Y = 0, string? Hazard = null);
 
 /// <summary>
 /// The start of learning from the live game (TJ, 2026-11-03, after phantoms killed him 70 seconds after god mode went off: "help him learn to learn"). It watches a stream of <see cref="Moment"/>s and
@@ -122,6 +122,10 @@ public sealed class ExperienceLog
         var highest = history.Where(m => (now.At - m.At).TotalSeconds <= 15 && m.Y > 0).Select(m => m.Y).DefaultIfEmpty(now.Y).Max();
         var fell = now.Y > 0 && highest - now.Y >= 5 ? (int)Math.Round(highest - now.Y) : 0;
         var around = (fell > 0 ? $" I fell about {fell} blocks." : "") + (most.Count == 0 ? " Nothing hostile was near that I saw." : " Near me: " + string.Join(", ", most.Select(x => x.Max > 1 ? $"{x.Max} {Plain(x.Kind)}s" : $"a {Plain(x.Kind)}")) + ".");
+        // What the ground and air round him were, in the last 10 seconds (lava, fire, water, a wall that was suffocating him...): the block facts the death message does not give ("burned to death").
+        var hazards = history.Where(m => (now.At - m.At).TotalSeconds <= 10 && !string.IsNullOrEmpty(m.Hazard)).Select(m => m.Hazard!).Distinct().Take(3).ToList();
+        if (!string.IsNullOrEmpty(now.Hazard) && !hazards.Contains(now.Hazard)) hazards.Add(now.Hazard);
+        if (hazards.Count > 0) around += " Round me: " + string.Join("; ", hazards) + ".";
         var tasks = history.Select(m => m.Task).Where(t => !string.IsNullOrEmpty(t)).Distinct().TakeLast(4).ToList();
         var doing = tasks.Count == 0 ? " I was not doing anything in particular." : " I was doing: " + string.Join("; ", tasks) + ".";
         var covered = tasks.Any(t => t!.StartsWith("taking cover")) || history.Any(m => m.Task?.StartsWith("taking cover") == true);
