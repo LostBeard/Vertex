@@ -5,6 +5,49 @@ those servers through the ViaVersion plugins on the proxy; Vertex itself speaks 
 
 Every milestone is tested against REAL servers started locally (Paper 1.21.5 build 114, Velocity), never mocks.
 
+## START HERE: where it stands (handoff, end of the 2026-11-02/03 session)
+
+**Running now:** build `aab9ad7`, installed per user on Aubs' PC (GATEGAMER; `X:` there is TJ's `D:`), in `mc.spawndev.com` as HereticSpawn (TJ's account, survival), self-directed play ON, long-term
+memory ON, Reachy parked (`Reachy: false`; wake it on the panel's Robot tab). AI chain from nuget.org: SpawnDev.AI.Server 1.4.0, ML 5.8.1, ILGPU 5.4.15; `SpawnDev.Reachy` is pinned exactly to
+`[0.1.0-local.24]` (local feed; nuget.org only has older previews; a preview.5 from local.24 is TJ's call). `TurnOffGodMode` is on in his settings (the server had god mode ON for the account, which is why
+his health never moved; he asks `/whois` and turns it off with `/god` once per join). The PC and Vertex are free for me to stop and use until TJ says otherwise.
+
+**TJ's direction, in his words (2026-11-03):** the world is all buildable and destructible, so a skill must make the world fit or go and find what it needs, never refuse in two seconds ("he refuses to
+do anything he is asked without moving a single block"); "figure out how to make him learn so he actually plays the game and not just runs stupid scripts"; he has very limited resources, so work only
+on what changes the live game, keep messages short, stop when interrupted. Memory notes: `feedback-make-it-so-dont-refuse`, `feedback-tj-resources-are-limited`, `feedback-listen-to-the-team`,
+`project-pc-free-until-tj-says`.
+
+**Done this session (all pushed, each with a test on a real Paper server; run log in `_TestStats\Vertex.jsonl`):** sm_75 tensor-core prefill confirmed on the RTX 2060 (first word 8x sooner) and the
+chat pacing it needed (Paper kicks at a chat line a second); water: no jump out of the surface onto a bank, shore chosen by reachability, steady head while swimming; sites are LEVELLED not searched
+(`PlanSite`/`LevelSiteAsync`), `CollectAsync` searches 64 blocks at any depth and walks legs (`FindBlocksTall`, `LookFurtherAsync`, used by shear/milk/breed/shoot/fish too), he leaves the house he built;
+phantoms (fliers) are swatted not fled from, ranged mobs are charged (weapon) or hidden from (`TakeCoverAsync`: dig 3 down and seal), monsters that keep following get fought; night: sleeps with a bed in
+48 blocks, builds and gathers close by; kit after a death (`GetKitAsync`: logs, table, wooden then stone tools, food bare-handed if need be), hunger is urgent (`finding food`), falls he chooses are capped at 8;
+panel: the Minecraft tab shows game mode, invulnerable/god mode, health, food, server time of day, weather, place; LEARNING v1 (`ExperienceLog`): deaths and big losses become tagged lessons in his
+words (cause from the death message, time, what was near, the ground round him, falls, what he was doing, dug in or not, weapon, food), the last three go into his prompt for his own projects, and
+`Reflexes.CoverBelow` rises 1 heart per death in the last day without digging in.
+
+**What the live game showed at the end (read it again first, see below):** 9 deaths in 37 minutes, always from the respawn spot `240 64 -256`: burned to death (2), burned to a crisp fighting a skeleton (2),
+suffocated in a wall, shot by a skeleton, slain by a spider, five plain "died" (probably arrows). Kit tries ended in ~35 s with "I couldn't find any wood I could reach nearby" (cause not found; suspect the
+8-block drop cap on a plateau, or trees across water); TJ thinks he then starved. Dig-in vs archers survived with 0.33 of 20 health in the test: a close call. All of these were changed after (hazard facts in
+lessons, no digging in sand/gravel, wider seal material, bare-handed hunting, hunger job, 90 s kit retry), none has been seen working live yet.
+
+**Next, in this order:**
+1. Read the live log (how below) and check the new lessons ("Round me: ...", "I fell ...", "My food bar was ... I was starving") for what burns, suffocates and starves him at the respawn spot.
+2. Find why wood is out of reach from there (add a path trace to the panel; try digging stairs down or a ladder instead of refusing drops); a **respawn protocol**: first minute after a respawn, shelter first
+   (dig in, seal), then kit, never wander the open with nothing.
+3. LEARNING step 2 (TJ's goal): write every decision point (situation features, action, outcome) to a JSONL experience log; choose fight / flee / eat / dig in from the logged outcomes (a bandit on top of today's
+   rules); retrain the fight-or-flight network (`LearnedReflexPolicy`, `ReflexTraining`) on REAL episodes on the GPU while he is idle; measure deaths, damage and jobs finished per hour against the
+   god-mode-off baseline (about 15 deaths an hour at the end of this session).
+4. Still refusing: farming without flat soil (use `LevelSiteAsync` + dirt top layer), diamonds need an iron pickaxe he cannot make (iron, furnace, fuel), follow/come-here need the person in sight, no bed-making.
+5. Unexplained flaky tests in full runs: SheepAreShorn, BuildsAPen door, FightingWithAShield, CollectRequest, WorksOnAGoal (all pass alone). `BringMeWood` was a test bug (fixed).
+
+**How to work here:** deploy = `installer\build-installer.bat` (full path from PowerShell), then `VertexSetup-0.1.0.exe /VERYSILENT /SUPPRESSMSGBOXES /NORESTART /TASKS=autostart` (it quits the running Vertex;
+check no `Vertex` process is left before starting `Vertex.exe --background`, and never start two). Read the live game without a UI: `msedge --headless=new --disable-gpu --virtual-time-budget=10000 --dump-dom
+http://localhost:5280` (the log; `/?tab=minecraft` for the status block), strip tags and pair each time-stamp line with the next. Build tests with `dotnet build Vertex.Tests -c Release -o <scratch> --no-incremental`
+(PC clocks differ: stale builds), set `VERTEX_VOICECHAT_JAR=X:\users\tj\Projects\AubsCraft\voicechat-bukkit-2.6.16.jar`, log every run with `py -3 X:\users\tj\Projects\_TestStats\log_run.py Vertex <file.json>`.
+Test on ROUGH terrain (`LiveRoughGroundTests`: hills, trees, stone below), not flat arenas, and check the live log after every deploy for jobs that end in seconds with a refusal. A GPU test needs Vertex
+stopped (`Vertex.exe quit`, wait for the GPU to free), and the AubsCraft viewer must not run on this PC (it takes 2 GB of the card).
+
 ## 2026-10-12 PIVOT (TJ): a responsive companion first, Minecraft second
 
 The first real session (TJ on AubsCraft, 10-12) showed Vertex is too slow to be useful: "Hi, Vertex" got its answer

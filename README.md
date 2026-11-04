@@ -13,7 +13,9 @@ All Rights Reserved. Use of the model must follow Meta's [Acceptable Use Policy]
 
 > **Status: early, playable.** Vertex joins servers (Microsoft accounts, signed chat), moves with vanilla physics, pathfinds, digs,
 > builds, crafts, farms, trades, fights, hears and speaks in proximity voice, lives in a Reachy Mini (hearing, speaking, seeing,
-> body language) and takes requests through a language model that runs on your own GPU. [PLAN.md](PLAN.md) has what is done and what is next.
+> body language) and takes requests through a language model that runs on your own GPU. It makes the ground fit a job (levels a building site, digs down to ore, walks to find animals and water), takes
+> cover from archers and swarms, and starts to learn from what happens to it: deaths and big losses become lessons it remembers and acts on. It is still learning to survive a night alone.
+> [PLAN.md](PLAN.md) starts with where it stands and what is next.
 
 ## Goals
 
