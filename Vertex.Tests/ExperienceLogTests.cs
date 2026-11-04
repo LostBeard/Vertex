@@ -78,6 +78,15 @@ public class ExperienceLogTests
     }
 
     [Test]
+    public void AnEmptyFoodBar_IsInTheLesson()
+    {
+        var log = new ExperienceLog();
+        for (var s = 0; s < 4; s++) log.Observe(At(s, 4, null, [], dayTime: 6000, food: false) with { Food = 2 });
+        var death = log.Observe(At(4, 0, null, [], dayTime: 6000, food: false) with { Food = 0 }, "HereticSpawn starved to death").Single();
+        Assert.That(death.Text, Does.Contain("starved to death").And.Contain("My food bar was 0 of 10: I was starving").And.Contain("I had no food"));
+    }
+
+    [Test]
     public void ADeathIsOneLesson_HoweverLongHeStaysDead_AndTheNextDeathAnother()
     {
         var log = new ExperienceLog();

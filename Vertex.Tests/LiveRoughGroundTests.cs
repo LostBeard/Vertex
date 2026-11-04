@@ -224,15 +224,16 @@ public class LiveRoughGroundTests
     }
 
     /// <summary>Hungry with a sword in his hand and a cow close by on the same ground: he kills it and picks up the meat.</summary>
-    [Test]
-    public async Task WithASword_AndACowClose_HeKillsItForFood()
+    [TestCase(true)]
+    [TestCase(false)]
+    public async Task WithACowClose_HeKillsItForFood_WithASword_OrBareHanded(bool withSword)
     {
-        const string name = "VertexHunter";
+        var name = withSword ? "VertexHuntSword" : "VertexHuntBare";
         var (client, ax, az) = await JoinOnRoughGroundAsync(name);
         await using var _ = client;
-        await _server.CommandAsync($"give {name} minecraft:iron_sword 1");
+        if (withSword) await _server.CommandAsync($"give {name} minecraft:iron_sword 1");
         await _server.CommandAsync($"summon minecraft:cow {ax + 0.5} {200 + StripeHeight(ax, ax)} {az + 5.5} {{NoAI:1b,Tags:[\"vkit\"]}}");
-        await Wait.UntilAsync(() => client.Entities.Values.Any(e => e.Name == "minecraft:cow") && client.Inventory.Count("iron_sword") >= 1, Timeout, () => client.Inventory.ToString());
+        await Wait.UntilAsync(() => client.Entities.Values.Any(e => e.Name == "minecraft:cow") && (!withSword || client.Inventory.Count("iron_sword") >= 1), Timeout, () => client.Inventory.ToString());
         var skills = new Skills(client);
         Assert.That(skills.HasFood, Is.False, "the setup: nothing to eat");
         (bool ok, string text) result;

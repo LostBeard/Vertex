@@ -404,7 +404,7 @@ public sealed class VertexBrain : IBody
         return null;
     }
 
-    private DateTime _lastBlockerLog = DateTime.MinValue, _nextSleepTry = DateTime.MinValue, _nextKitTry = DateTime.MinValue;
+    private DateTime _lastBlockerLog = DateTime.MinValue, _nextSleepTry = DateTime.MinValue, _nextKitTry = DateTime.MinValue, _nextFoodTry = DateTime.MinValue;
     private string _lastStatus = "";
     private bool _whoisAsked;
 
@@ -679,11 +679,21 @@ public sealed class VertexBrain : IBody
                     Tasks.Start("sleeping until morning", Skills.SleepAsync);
                     continue;
                 }
+                // Hungry with nothing to eat: food comes first (2026-11-03: he gave up on a kit that needed wood and, TJ thinks, starved). Half a bar or less, every 45 seconds until he has some.
+                if (goal == null && !Staying && Client.IsSpawned && !_projectQueued && Client.GameMode == GameMode.Survival && Client.Food <= 10 && !Skills.HasFood
+                    && now - _lastActivity >= TimeSpan.FromSeconds(5) && now >= _nextFoodTry && Skills.NearestHostile(8) == null)
+                {
+                    _nextFoodTry = now + TimeSpan.FromSeconds(45);
+                    _lastActivity = now;
+                    Log?.Invoke($"hungry (food {Client.Food / 2.0:0.#} of 10) and nothing to eat: going to hunt");
+                    Tasks.Start("finding food", ct => Skills.GetFoodThenSummaryAsync([], hunt: true, ct));
+                    continue;
+                }
                 // Empty pockets (after a death every item is gone): get a weapon, tools and food before anything else, as any player does. The two deaths at 18:38 and 18:39 on 2026-11-03 were barehanded.
                 if (SelfDirectedPlay && goal == null && !Staying && Client.IsSpawned && !_projectQueued && Client.GameMode == GameMode.Survival && !Skills.HasWeapon && now - _lastActivity >= TimeSpan.FromSeconds(15)
                     && now >= _nextKitTry && Skills.NearestHostile(10) == null)
                 {
-                    _nextKitTry = now + TimeSpan.FromMinutes(4);
+                    _nextKitTry = now + TimeSpan.FromSeconds(90);      // a failed try is tried again soon, not in four minutes (the first thing a kit needs is wood, and wood may be a walk away)
                     _lastActivity = now;
                     Log?.Invoke("no weapon: going to get a kit (wood, tools, food)");
                     Tasks.Start("getting a weapon, tools and food", ct => Skills.GetKitAsync(ct));

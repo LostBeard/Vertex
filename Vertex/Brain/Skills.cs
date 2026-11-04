@@ -278,6 +278,7 @@ public sealed partial class Skills(MinecraftClient client)
         return broken > 0
             ? (broken >= count, $"I mined {broken} {what}{(broken < count ? $" (wanted {count}, couldn't find more nearby)" : "")}. I have: {have}.{lavaNote}")
             : (false, nextToLava > 0 ? $"I won't mine that {what}: it is next to lava, which would pour out onto me."
+                : failures >= 6 ? $"I could see {what} but I couldn't get to any of it ({failures} tries: something is in the way that I can't dig or cross)."
                 : legs > 0 ? $"I looked for {what}: 64 blocks around me at every depth, and I walked about {walked:0} blocks in {legs} different directions to look further, but I haven't found any."
                 : $"I couldn't find any {what} I could reach nearby.");
     }
@@ -2294,7 +2295,8 @@ public sealed partial class Skills(MinecraftClient client)
     {
         bool Has(string suffix) => client.Inventory.Find(s => s.Name.EndsWith(suffix)).Any();
         // Food: one or two wild animals, hit with the best weapon he has, their drops picked up.
-        if (hunt && !HasFood && HasWeapon)
+        // Bare hands will do: a cow takes ten blows, a chicken four, and starving is the alternative (2026-11-03: no wood, so no sword, so no hunting, so no food).
+        if (hunt && !HasFood)
         {
             await EquipWeaponAsync(ct);
             for (var animals = 0; animals < 2 && !HasFood; animals++)
@@ -2311,7 +2313,7 @@ public sealed partial class Skills(MinecraftClient client)
         }
         Trace?.Invoke("kit: food step done: " + InventorySummary());
         var kit = new[] { (Has("_sword"), "a sword"), (Has("_pickaxe"), "a pickaxe"), (Has("_axe"), "an axe"), (HasFood, "food") }.Where(k => k.Item1).Select(k => k.Item2).ToList();
-        var missing = new[] { (Has("_sword"), "a sword"), (Has("_pickaxe"), "a pickaxe"), (HasFood, "food") }.Where(k => !k.Item1).Select(k => k.Item2).ToList();
+        var missing = new[] { (Has("_sword"), "a sword"), (Has("_pickaxe"), "a pickaxe"), (HasFood, "food") }.Where(k => !k.Item1).Select(k => k.Item2.Replace("a sword", "sword").Replace("a pickaxe", "pickaxe")).ToList();
         var summary = kit.Count == 0 ? "I still have nothing" : "I have " + string.Join(", ", kit);
         return (missing.Count == 0, $"{summary}{(missing.Count > 0 ? $" but no {string.Join(" or ", missing)}" : "")}." + (got.Count > 0 ? " " + string.Join(" ", got.Where(g => g.Length > 0).Select(g => g.Length > 160 ? g[..160] + "..." : g)) : ""));
     }

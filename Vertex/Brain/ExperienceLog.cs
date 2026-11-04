@@ -130,7 +130,7 @@ public sealed class ExperienceLog
         var doing = tasks.Count == 0 ? " I was not doing anything in particular." : " I was doing: " + string.Join("; ", tasks) + ".";
         var covered = tasks.Any(t => t!.StartsWith("taking cover")) || history.Any(m => m.Task?.StartsWith("taking cover") == true);
         var cover = covered ? " I had dug in." : " I had not taken cover.";
-        var kit = (now.HasWeapon ? " I had a weapon." : " I had no weapon.") + (now.HasFood ? " I had food." : " I had no food.");
+        var kit = (now.HasWeapon ? " I had a weapon." : " I had no weapon.") + (now.HasFood ? " I had food." : " I had no food.") + (now.Food <= 6 ? $" My food bar was {now.Food / 2.0:0.#} of 10: I was starving." : "");
         return new Facts(when, around, doing, cover, kit, night, covered, most.Select(x => x.Kind).ToList());
     }
 
