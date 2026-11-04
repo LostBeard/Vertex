@@ -844,12 +844,12 @@ public sealed class VertexBrain : IBody
                 }
                 // Before anything else, somewhere he can live: nothing gets built on land that burns him down in a minute. He has this from his own readings (the biome he stands in has read too hot, or he reads too hot now), so it is
                 // true on any server with heat of this kind and never comes up on one without. A failed search waits five minutes while he does what he can where he is.
-                if (SelfDirectedPlay && goal == null && !Staying && Client.IsSpawned && !_projectQueued && Client.GameMode == GameMode.Survival && now >= _nextLivableTry
-                    && Temperature is double degreesNow && (degreesNow >= Reflexes.HotAt || Skills.KnownTooHot(Skills.BiomeHere, Reflexes.HotAt)))
+                var tooHot = Temperature is double degreesNow && (degreesNow >= Reflexes.HotAt || Skills.KnownTooHot(Skills.BiomeHere, Reflexes.HotAt));
+                if (SelfDirectedPlay && goal == null && !Staying && Client.IsSpawned && !_projectQueued && Client.GameMode == GameMode.Survival && now >= _nextLivableTry && (tooHot || Skills.AtSea))
                 {
                     _nextLivableTry = now + TimeSpan.FromSeconds(10);
                     _lastActivity = now;
-                    Log?.Invoke($"too hot to live here ({degreesNow:0.#} degrees in the {Skills.BiomeHere?.Replace('_', ' ')}): looking for somewhere I can live. What I know: {string.Join(", ", Skills.BiomeHeat().Select(b => $"{b.Biome.Replace('_', ' ')} {b.Degrees:0}"))}");
+                    Log?.Invoke($"{(tooHot ? $"too hot to live here ({Temperature:0.#} degrees in the {Skills.BiomeHere?.Replace('_', ' ')})" : $"out at sea, in the {Skills.BiomeHere?.Replace('_', ' ')}")}: looking for somewhere I can live. What I know: {string.Join(", ", Skills.BiomeHeat().Select(b => $"{b.Biome.Replace('_', ' ')} {b.Degrees:0}"))}");
                     Tasks.StartReflex("looking for somewhere I can live", async ct =>
                     {
                         var result = await Skills.FindLivableLandAsync(() => Temperature, Reflexes.HotAt, ct);

@@ -282,6 +282,75 @@ public class LiveDangerChoiceTests
     }
 
     [Test]
+    public async Task ALongSwim_IsOneSteadySwim_NotThreeBlocksAndStop()
+    {
+        // TJ, watching live 2026-11-04: "he swims about 3 blocks. stops. swims 3 blocks and stops." A lake 90 blocks long, and his speed sampled ten times a second over the swim.
+        var name = "Swimmer";
+        var logs = new List<string>();
+        var client = new MinecraftClient(GameProfile.Offline(name), new ClientOptions { Log = m => { lock (logs) logs.Add($"{DateTime.UtcNow:mm:ss.f} {m}"); } });
+        await using var _ = client;
+        using var cts0 = new CancellationTokenSource(Timeout);
+        await client.ConnectAsync("127.0.0.1", Port, cts0.Token);
+        await _server.CommandAsync($"effect give {name} minecraft:resistance 200 4 true");
+        var ax = 1000 + 200 * _nextStage++;
+        const int az = 0;
+        await _server.CommandAsync($"forceload add {ax - 16} {az - 16} {ax + 112} {az + 16}");
+        await Task.Delay(1500);
+        await _server.CommandAsync($"fill {ax - 4} 190 {az - 8} {ax + 100} 199 {az + 8} minecraft:water");
+        await _server.CommandAsync($"fill {ax - 4} 189 {az - 8} {ax + 100} 189 {az + 8} minecraft:stone");
+        await _server.CommandAsync($"fill {ax - 4} 200 {az - 8} {ax + 100} 204 {az + 8} minecraft:air");
+        await _server.CommandAsync($"fill {ax + 101} 195 {az - 8} {ax + 110} 199 {az + 8} minecraft:stone");
+        await _server.CommandAsync($"fill {ax + 101} 200 {az - 8} {ax + 110} 204 {az + 8} minecraft:air");
+        await _server.CommandAsync($"tp {name} {ax + 0.5} 200 {az + 0.5}");
+        await Wait.UntilAsync(() => client.World.IsLoaded(ax + 60, az) && Math.Abs(client.Position.X - ax) < 2, Timeout, () => $"at the lake, {client.FeetBlock}");
+        await client.WaitTicksAsync(40);
+
+        var samples = new List<(double T, double X)>();
+        using var stop = new CancellationTokenSource();
+        var sampler = Task.Run(async () =>
+        {
+            var clock = System.Diagnostics.Stopwatch.StartNew();
+            while (!stop.IsCancellationRequested)
+            {
+                lock (samples) samples.Add((clock.Elapsed.TotalSeconds, client.Position.X));
+                await Task.Delay(100);
+            }
+        });
+        using var run = new CancellationTokenSource(TimeSpan.FromSeconds(90));
+        var ok = await client.GoToAsync(SpawnDev.Minecraft.Pathing.Goal.XZ(ax + 60, az), new SpawnDev.Minecraft.Pathing.PathOptions { MaxNodes = 15_000 }, run.Token);
+        await stop.CancelAsync();
+        await sampler;
+        var pauses = 0;
+        var longest = 0.0;
+        var still = 0.0;
+        List<(double T, double X)> s;
+        lock (samples) s = samples.ToList();
+        for (var i = 1; i < s.Count; i++)
+        {
+            if (Math.Abs(s[i].X - s[i - 1].X) < 0.02) { still += s[i].T - s[i - 1].T; longest = Math.Max(longest, still); }
+            else { if (still >= 0.4) pauses++; still = 0; }
+        }
+        var seconds = s[^1].T - s[0].T;
+        var speed = (s[^1].X - s[0].X) / seconds;
+        lock (logs) foreach (var line in logs.Where(l => l.Contains("path")).Take(25)) TestContext.Out.WriteLine(line);
+        TestContext.Out.WriteLine($"reached {ok}, {s[^1].X - s[0].X:0.0} blocks in {seconds:0.0} s = {speed:0.00} blocks/s; {pauses} pauses of 0.4 s or more, longest {longest:0.0} s");
+        Assert.That(ok, Is.True, $"ended at {client.FeetBlock}");
+        Assert.That(pauses, Is.LessThanOrEqualTo(1), "a swim does not stop and start");
+        Assert.That(speed, Is.GreaterThan(1.8), "a player swims about 2.2 blocks a second on the surface");
+
+        // Out in the middle of it he knows he is at sea, and he goes ashore: the only land is the stone at the far end, 41 blocks on. This server shows no temperature, so there is nothing to wait for once he is there.
+        var skills = new Skills(client);
+        Assert.That(skills.AtSea, Is.True, $"at {client.FeetBlock}");
+        using var ashore = new CancellationTokenSource(TimeSpan.FromSeconds(60));
+        var (landed, text) = await skills.FindLivableLandAsync(() => null, 50, ashore.Token);
+        TestContext.Out.WriteLine(text);
+        Assert.That(landed, Is.True, text);
+        Assert.That(client.FeetBlock.X, Is.GreaterThanOrEqualTo(ax + 101), "on the far shore");
+        Assert.That(client.FeetBlock.Y, Is.EqualTo(200));
+        Assert.That(skills.AtSea, Is.False);
+    }
+
+    [Test]
     public async Task HurtAndHungry_HeEatsWhileWorking_AndWithNothingToEatFoodComesBeforeTools()
     {
         var (client, skills, tasks, ax, az) = await JoinAsync("Hungry");

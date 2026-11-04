@@ -52,6 +52,23 @@ public sealed partial class Skills
         lock (_landHeat) return _landHeat.TryGetValue(biome, out var known) && known.Degrees >= hotAt;
     }
 
+    /// <summary>
+    /// In the water with no land near: nothing a player does at this stage of the game can be done here. It comes up by itself: the open sea is cool and safe by day, so nothing hurts him and nothing moves him on, and live 2026-11-04 he spent 21
+    /// minutes unharmed, 650 blocks from anywhere, digging up the sea floor and walking search legs that brought him back where he started.
+    /// </summary>
+    public bool AtSea
+    {
+        get
+        {
+            if (!InWaterNow()) return false;
+            var (x, y, z) = client.FeetBlock;
+            foreach (var d in new[] { 8, 16, 24 })
+                foreach (var (dx, dz) in new[] { (1, 0), (-1, 0), (0, 1), (0, -1), (1, 1), (-1, -1), (1, -1), (-1, 1) })
+                    if (LandAt(x + dx * d, z + dz * d, y) != null) return false;
+            return true;
+        }
+    }
+
     /// <summary>The surface at a column when it is land he could stand on: its height, or null for water, nothing, or what is not loaded.</summary>
     private int? LandAt(int x, int z, int aroundY)
     {
@@ -164,10 +181,11 @@ public sealed partial class Skills
                 ct.ThrowIfCancellationRequested();
                 var here = BiomeHere;
                 var t = temperature();
-                if (client.OnGround && !InWaterNow() && t is double now && now < hotAt && !KnownTooHot(here, hotAt))
+                // (On a server that shows no temperature there is no heat to wait for: any land will do, and this search is just getting ashore.)
+                if (client.OnGround && !InWaterNow() && (t is not double now || now < hotAt) && !KnownTooHot(here, hotAt))
                 {
                     if (settledSince == DateTime.MinValue) settledSince = DateTime.UtcNow;
-                    if (DateTime.UtcNow - settledSince >= TimeSpan.FromSeconds(30)) { _heading = null; return (true, $"I can live here: {now:0.#} degrees in the {here?.Replace('_', ' ')}."); }
+                    if (t == null || DateTime.UtcNow - settledSince >= TimeSpan.FromSeconds(30)) { _heading = null; return (true, t is double read ? $"I can live here: {read:0.#} degrees in the {here?.Replace('_', ' ')}." : $"I'm ashore, in the {here?.Replace('_', ' ')}."); }
                     await client.WaitTicksAsync(20, ct);
                     continue;
                 }

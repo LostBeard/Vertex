@@ -257,9 +257,13 @@ public sealed partial class MinecraftClient
             double dx = tx - body.X, dz = tz - body.Z;
             var dist = Math.Sqrt(dx * dx + dz * dz);
             var feet = FeetBlock;
-            var levelOk = feet.Y == step.Y || (body.InWater && Math.Abs(feet.Y - step.Y) <= 1);
-            // Close enough: tight on the final block, looser mid-path so we flow into the next step.
-            if (levelOk && (body.OnGround || body.InWater || body.OnClimbable) && dist < (last ? 0.2 : 0.45))
+            // A swimmer floats with his feet about 1.3 below the surface: at y 198.7 on water whose surface the path gives as the air block at y 200, two blocks from the step's level however close he gets. Asking for less stalled
+            // him on each such step until it gave up after 2 seconds, and he replanned: "he swims about 3 blocks. stops" (TJ, 2026-11-04), 0.65 blocks a second with 12 pauses on a 37 block swim.
+            var levelOk = feet.Y == step.Y || (body.InWater && Math.Abs(feet.Y - step.Y) <= 2);
+            var swimming = step.Kind == MoveKind.Swim || (body.InWater && step.Kind != MoveKind.Climb);
+            // Close enough: tight on the final block, looser mid-path so we flow into the next step. In the water looser still, past the half block within which he stops pushing (below): between the two he would drift to a stop and never arrive.
+            // (The last step in the water must end inside its block: a goal is a block, and half a block short of it he has not arrived.)
+            if (levelOk && (body.OnGround || body.InWater || body.OnClimbable) && dist < (swimming ? (last ? 0.4 : 0.6) : last ? 0.2 : 0.45))
             {
                 if (last) Controls.Clear();
                 return true;
@@ -273,7 +277,7 @@ public sealed partial class MinecraftClient
             // In the water he coasts: pushing forward at a block half a step away overshot it, aiming turned him round to face it, he overshot back, and so on, every 14 ticks (measured: 76 swings
             // of the head of up to 180 degrees on a 13 block swim). In the water (and on swim steps) the dead zone is the same half block the step counts as reached from; what is left is up or down.
             var coasting = step.Kind == MoveKind.Swim || (body.InWater && step.Kind != MoveKind.Climb);      // not a ladder: up a ladder he has to keep pressing against it
-            var aim = dist > (coasting ? 0.5 : 0.3);
+            var aim = dist > (coasting && !last ? 0.5 : 0.3);
             if (aim) Look((float)(Math.Atan2(-dx, dz) * 180 / Math.PI), 0);
             // Coasting distance on the ground after letting go: v * f / (1 - f), f = 0.546 on normal blocks.
             var speed = Math.Sqrt(body.VelX * body.VelX + body.VelZ * body.VelZ);
