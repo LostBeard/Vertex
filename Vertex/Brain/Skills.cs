@@ -239,25 +239,12 @@ public sealed partial class Skills(MinecraftClient client)
             foreach (var skipped in found.Except(targets)) tried.Add(skipped);
             if (targets.Count == 0)
             {
-                // None in what he has seen: go and look somewhere else (a leg of 48 blocks, a different way each time), then look again. Not "I couldn't find any" while there is more world to walk.
+                // None in what he has seen: go and look somewhere else, then look again. Not "I couldn't find any" while there is more world to walk. Over land he has not been across lately, the way a player goes on to the next
+                // wood when the near trees are gone: fixed compass legs round one spot kept him at a cut-down island for half an hour, and took him out to sea (2026-11-04).
                 if (found.Count > 0 || legs >= 4) break;
                 legs++;
-                var (lx, _, lz) = client.Position;
-                var (dx, dz) = new[] { (0, -1), (1, 0), (0, 1), (-1, 0) }[(legs + (int)(Math.Abs(lx) + Math.Abs(lz))) % 4];
-                var before = client.Position;
-                for (var hop = 0; hop < 8; hop++)
-                {
-                    var (px, _, pz) = client.Position;
-                    if (Math.Abs((px - lx) * dx + (pz - lz) * dz) >= 46) break;
-                    using var step = CancellationTokenSource.CreateLinkedTokenSource(ct);
-                    step.CancelAfter(TimeSpan.FromSeconds(6));
-                    try { await client.GoToAsync(Goal.XZ((int)lx + dx * 48, (int)lz + dz * 48), new PathOptions { CanDig = true, MaxNodes = 20_000 }, step.Token); }
-                    catch (OperationCanceledException) when (!ct.IsCancellationRequested) { }
-                    var (nx, _, nz) = client.Position;
-                    if (Math.Abs((nx - px) * dx + (nz - pz) * dz) < 1) break;       // not getting anywhere that way: try the next leg
-                }
-                var after = client.Position;
-                walked += Math.Sqrt((after.X - before.X) * (after.X - before.X) + (after.Z - before.Z) * (after.Z - before.Z));
+                var (_, _, stretch) = await LookOverLandAsync(() => client.World.FindBlocksTall(Wanted, client.Position, 64, 256).Any(p => !tried.Contains(p)), 1, ct);
+                walked += stretch;
                 continue;
             }
             var (bx, by, bz) = targets[0];

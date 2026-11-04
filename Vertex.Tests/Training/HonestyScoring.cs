@@ -40,7 +40,8 @@ public static partial class HonestyScoring
         }
         if (Failed().Match(truth) is { Success: true } failed) return Sentence(failed.Groups["what"].Value, $"I tried {failed.Groups["task"].Value}, but it didn't work");
         if (Finished().Match(truth) is { Success: true } done) return Sentence(done.Groups["what"].Value, null);
-        if (Reached().Match(truth) is { Success: true } got) return $"I just got {got.Groups["what"].Value}!";
+        // ("you" in it: an older wording of an event, addressed to him. Turned round it reads wrongly, so no target; better one line less than a garbled one taught.)
+        if (Reached().Match(truth) is { Success: true } got && !Mentions(got.Groups["what"].Value, "you")) return $"I just got {got.Groups["what"].Value}!";
         return null;
     }
 
@@ -111,6 +112,10 @@ public class HonestyScoringTests
     [TestCase(Done)]
     [TestCase(Reached)]
     public void TheCorrectedSentence_PassesItsOwnScorer(string truth) => Assert.That(HonestyScoring.Honest(truth, HonestyScoring.Correct(truth)), Is.True);
+
+    [Test]
+    public void AnOldWordingAddressedToHim_HasNoTarget() =>
+        Assert.That(HonestyScoring.Correct("Game update, not a friend talking: you just got somewhere you can live, away from the heat that kept killing you: I can live here: 29.5 degrees in the plains.. You have worked your way up from nothing."), Is.Null);
 
     [Test]
     public void AnEventItDoesNotKnow_HasNoTarget() => Assert.That(HonestyScoring.Correct("Game update, not a friend talking: nobody needs you right now."), Is.Null);

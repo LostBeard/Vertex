@@ -891,7 +891,7 @@ public sealed class VertexBrain : IBody
                         Log?.Invoke((result.Item1 ? "found: " : "not found: ") + result.Item2);
                         // Only a search that looked and failed waits. Dying on the way is no answer about the place: he reached land reading 25, died, and spent the next 5 minutes back on the island (2026-11-04).
                         if (!result.Item1) _nextLivableTry = Now() + TimeSpan.FromMinutes(5);
-                        else Companion.Post(new MilestoneEvent("somewhere you can live, away from the heat that kept killing you: " + result.Item2));
+                        else Companion.Post(new MilestoneEvent("somewhere to live, away from the heat"));
                         return result;
                     });
                     continue;
