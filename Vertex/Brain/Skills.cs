@@ -230,6 +230,8 @@ public sealed partial class Skills(MinecraftClient client)
             var found = client.World.FindBlocksTall(Wanted, client.Position, 64, 256).Where(p => !tried.Contains(p))
                 .OrderBy(p => Math.Abs(p.Y - feetY) > 8 ? 1 : 0).Take(64).ToList();
             // Opening a block with lava beside it (or lava above it, which falls in) lets the lava out onto whoever is digging: leave it (found 2026-10-15: a diamond ringed with lava took 11 of 20 health).
+            // From the top of a stack of sand or gravel only: taking one from under the rest brings them down on him (2026-11-04: he dug into a sand bank, went from 7 hearts to nothing "in wall", and died with the job still going).
+            found = found.Where(p => !UnderFallingBlock(p.Item1, p.Item2, p.Item3)).ToList();
             var targets = found.Where(p => !LavaAround(p.Item1, p.Item2, p.Item3)).ToList();
             nextToLava += found.Count - targets.Count;
             foreach (var skipped in found.Except(targets)) tried.Add(skipped);
@@ -321,6 +323,30 @@ public sealed partial class Skills(MinecraftClient client)
                 : failures >= 6 ? $"I could see {what} but I couldn't get to any of it ({failures} tries: something is in the way that I can't dig or cross)."
                 : legs > 0 ? $"I looked for {what}: 64 blocks around me at every depth, and I walked about {walked:0} blocks in {legs} different directions to look further, but I haven't found any."
                 : $"I couldn't find any {what} I could reach nearby.");
+    }
+
+    private bool Falls(int state) => state > 0 && (D.BlockOf(state).Name is "minecraft:sand" or "minecraft:red_sand" or "minecraft:gravel" or "minecraft:suspicious_sand" or "minecraft:suspicious_gravel" || D.BlockOf(state).Name.EndsWith("_concrete_powder"));
+
+    /// <summary>Is the block above this one sand or gravel, which would come down when it is gone?</summary>
+    private bool UnderFallingBlock(int x, int y, int z) => Falls(client.World.GetState(x, y + 1, z));
+
+    /// <summary>
+    /// Buried (his head inside a block, "in wall"): breaks what is at his head and his feet so he can breathe and move. Sand takes less than a second by hand; standing there he loses a heart a second. Whatever he cannot break, he
+    /// says so: nothing else he does works from inside a wall.
+    /// </summary>
+    public async Task<(bool, string)> DigOutAsync(CancellationToken ct)
+    {
+        var (x, y, z) = client.FeetBlock;
+        var cleared = 0;
+        foreach (var by in new[] { y + 1, y })
+        {
+            var s = client.World.GetState(x, by, z);
+            if (s <= 0 || !D.HasCollision(s) || (D.StateFlags[s] & GameData.FlagReplaceable) != 0) continue;
+            if (D.Hardness[s] < 0) return (false, "I'm stuck in something I can't break.");
+            await client.EquipBestToolAsync(s, ct);
+            if (await client.DigAsync(x, by, z, ct)) cleared++;
+        }
+        return (true, $"I dug myself out ({cleared} blocks).");
     }
 
     /// <summary>Lava beside a block, below it, or above it (two up: it flows down into the hole once the block is gone).</summary>

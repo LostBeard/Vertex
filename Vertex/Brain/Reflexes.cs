@@ -71,9 +71,12 @@ public sealed class Reflexes : IDisposable
     }
 
     private DateTime _lastMonsterHit = DateTime.MinValue;
+    private DateTime _buriedAt = DateTime.MinValue;
+    private bool _diggingOut;
 
     private void OnDamaged(DamageInfo damage)
     {
+        if (damage.Type == "in_wall") _buriedAt = DateTime.UtcNow;
         var id = damage.CauseEntityId >= 0 ? damage.CauseEntityId : damage.DirectEntityId;
         if (id >= 0 && _client.Entities.TryGetValue(id, out var who) && Skills.Hostile.Contains(who.Name)) _lastMonsterHit = DateTime.UtcNow;
     }
@@ -93,6 +96,17 @@ public sealed class Reflexes : IDisposable
                 try { return await _skills.EscapeCreeperAsync(id, ct); }
                 finally { _escaping = -1; }
             }, quiet: Learner != null);
+            return;
+        }
+        // Buried: it says so by hurting, a heart a second. Nothing else matters until he can breathe, and he goes back to what he was doing.
+        if (!_diggingOut && DateTime.UtcNow - _buriedAt < TimeSpan.FromSeconds(1))
+        {
+            _diggingOut = true;
+            _tasks.Interrupt("digging myself out", async ct =>
+            {
+                try { return await _skills.DigOutAsync(ct); }
+                finally { _diggingOut = false; }
+            }, quiet: true);
             return;
         }
         if (_busy || _tick % 6 != 0) return;

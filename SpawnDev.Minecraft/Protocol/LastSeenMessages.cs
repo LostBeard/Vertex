@@ -16,6 +16,21 @@ public sealed class LastSeenMessages
     private byte[]? _lastTracked;
     private readonly object _lock = new(); // Add runs on the receive loop, TakeUpdate on the sender
 
+    /// <summary>
+    /// Starts over, for a new server: each server keeps its own window from empty, so one carried across a proxy's server switch can never match, and the first chat after the switch is kicked ("Chat message validation
+    /// failure", 2026-11-04: from the fallback server 73 seconds after the switch, at his first word).
+    /// </summary>
+    public void Reset()
+    {
+        lock (_lock)
+        {
+            Array.Clear(_window);
+            _tail = 0;
+            _offset = 0;
+            _lastTracked = null;
+        }
+    }
+
     /// <summary>Messages received since the last update was sent; vanilla sends a chat_ack above 64.</summary>
     public int PendingCount => _offset;
 

@@ -448,6 +448,7 @@ public sealed partial class MinecraftClient : IAsyncDisposable
                 _awaitingLoaded = true;
                 Log($"joined {WorldName} as entity {EntityId} in {GameMode}");
                 _tickLoop ??= Task.Run(() => TickLoopAsync(_cts!.Token));
+                _lastSeen.Reset();      // as vanilla's handleLogin: a new server (a proxy switch) has its own window
                 await StartChatSessionAsync(ct);
                 return null;
             }
@@ -902,9 +903,11 @@ public sealed partial class MinecraftClient : IAsyncDisposable
         await _chatLock.WaitAsync(cancellationToken);
         try
         {
+            cancellationToken.ThrowIfCancellationRequested();
             var now = DateTimeOffset.UtcNow;
             var salt = Random.Shared.NextInt64();
             var (offset, acknowledged, seenSignatures) = _lastSeen.TakeUpdate();
+            NoteChatSent(offset, seenSignatures.Count);
             var signature = _chatSession?.Sign(Profile.Id, message, now, salt, seenSignatures);
             using var chat = new PacketWriter(CB.Play.Serverbound.Chat);
             chat.WriteString(message)
@@ -915,7 +918,8 @@ public sealed partial class MinecraftClient : IAsyncDisposable
             chat.WriteVarInt(offset)
                 .WriteBytes(acknowledged)
                 .WriteByte(0); // checksum 0 = "not checked" (LastSeenMessages$Update.verifyChecksum)
-            await c.SendAsync(chat, cancellationToken);
+            // Past the point of no return: the update above is already taken from the tracker, so a send cancelled here (a turn cut short) would lose what it acknowledges and the server's window and ours would part for good.
+            await c.SendAsync(chat, CancellationToken.None);
         }
         finally
         {
@@ -944,9 +948,11 @@ public sealed partial class MinecraftClient : IAsyncDisposable
         await _chatLock.WaitAsync(cancellationToken);
         try
         {
+            cancellationToken.ThrowIfCancellationRequested();
             var now = DateTimeOffset.UtcNow;
             var salt = Random.Shared.NextInt64();
             var (offset, acknowledged, seenSignatures) = _lastSeen.TakeUpdate();
+            NoteChatSent(offset, seenSignatures.Count);
             using var signed = new PacketWriter(CB.Play.Serverbound.ChatCommandSigned, 1024 + 300 * signable.Count);
             signed.WriteString(command)
                 .WriteLong(now.ToUnixTimeMilliseconds())
@@ -957,13 +963,27 @@ public sealed partial class MinecraftClient : IAsyncDisposable
             signed.WriteVarInt(offset)
                 .WriteBytes(acknowledged)
                 .WriteByte(0);
-            await c.SendAsync(signed, cancellationToken);
+            await c.SendAsync(signed, CancellationToken.None);       // see SendChatMessageAsync: the update is already taken
         }
         finally
         {
             _chatLock.Release();
         }
     }
+
+    private readonly Queue<string> _chatSends = new();
+
+    private void NoteChatSent(int offset, int seen)
+    {
+        lock (_chatSends)
+        {
+            _chatSends.Enqueue($"{DateTime.Now:HH:mm:ss} offset {offset} seen {seen}");
+            while (_chatSends.Count > 6) _chatSends.Dequeue();
+        }
+    }
+
+    /// <summary>The last few chats sent, as the server would judge them (offset, window size): for the log when a kick says validation failed. The cause of the first such kick could not be read back from anything.</summary>
+    public string ChatDiagnostics { get { lock (_chatSends) return string.Join("; ", _chatSends); } }
 
     private async Task WaitForChatSessionAsync(CancellationToken cancellationToken)
     {

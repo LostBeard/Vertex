@@ -242,6 +242,23 @@ public class LiveDangerChoiceTests
     }
 
     [Test]
+    public async Task Buried_HeDigsHimselfOut_AndGoesBackToHisJob()
+    {
+        var (client, skills, tasks, ax, az) = await JoinAsync("Buried");
+        await using var _ = client;
+        var started = 0;
+        tasks.Start("a long job", async ct => { Interlocked.Increment(ref started); await Task.Delay(-1, ct); return (true, "done"); });
+        using var reflexes = new Reflexes(client, skills, tasks, () => Character.BuiltIn[0].Style);
+        // Sand round his head and feet, held up by nothing falling: the fill puts it right where he stands.
+        await _server.CommandAsync($"fill {ax - 1} 200 {az - 1} {ax + 1} 202 {az + 1} minecraft:sand");
+        await Wait.UntilAsync(() => client.World.GetBlock(ax, 201, az)?.Name == "minecraft:sand", Timeout, () => "the sand to land on him");
+        await Wait.UntilAsync(() => client.World.GetBlock(ax, 201, az)?.Name != "minecraft:sand", TimeSpan.FromSeconds(20), () => $"digging out (health {client.Health}, doing {tasks.Current})");
+        await Wait.UntilAsync(() => Volatile.Read(ref started) >= 2, TimeSpan.FromSeconds(30), () => $"back to the job (doing {tasks.Current})");
+        Assert.That(client.Health, Is.GreaterThan(4f), "he got out with most of his health: it costs a heart a second");
+        tasks.Stop();
+    }
+
+    [Test]
     public async Task HeSwimsOutToOpenWater_AndTreadsWater_WithoutDrowning()
     {
         var (client, skills, tasks, ax, az) = await JoinAsync("SwimOut",

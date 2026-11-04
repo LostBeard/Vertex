@@ -138,6 +138,26 @@ public class LivePainTests
         Assert.That(VertexBrain.TemperatureIn(line!), Is.EqualTo(33).Within(1e-9), line);
     }
 
+    [Test]
+    public void TheChatWindow_StartsOverForANewServer()
+    {
+        var seen = new SpawnDev.Minecraft.Protocol.LastSeenMessages();
+        seen.Add(new byte[256]);
+        seen.Reset();
+        var (offset, bits, signatures) = seen.TakeUpdate();
+        Assert.That(offset, Is.EqualTo(0));
+        Assert.That(signatures, Is.Empty);
+        Assert.That(bits.All(b => b == 0), Is.True);
+        seen.Add(new byte[256]);
+        Assert.That(seen.TakeUpdate().Offset, Is.EqualTo(1), "the same message as before the reset is new to the new server");
+    }
+
+    [TestCase("You were kicked from spooky: Chat message validation failure", true)]
+    [TestCase("Chat message validation failure", true)]
+    [TestCase("You were kicked from spooky: the admin kicked you", false)]
+    [TestCase("You are banned", false)]
+    public void AKickForOurOwnChatFault_IsWorthGoingBackAfter_AnAdminsIsNot(string reason, bool rejoin) => Assert.That(Vertex.Host.VertexHost.ShouldRejoin(reason), Is.EqualTo(rejoin));
+
     [TestCase("23°C", 23)]
     [TestCase("Temperature: -4.5 °C", -4.5)]
     [TestCase("🌡 66° C", 66)]

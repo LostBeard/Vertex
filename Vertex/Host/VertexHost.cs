@@ -721,7 +721,12 @@ public sealed class VertexHost : IAsyncDisposable
             _client.ChatReceived += m => { if (m.Kind != ChatKind.ActionBar) Add(LineKind.Chat, m.Text); };
             var client = _client;
             // Kicked or the server went away: leave the game, Vertex stays on.
-            _client.Disconnected += r => { Add(LineKind.System, "disconnected: " + r); _ = Task.Run(() => LeftGameAsync(client, r)); };
+            _client.Disconnected += r =>
+            {
+                Add(LineKind.System, "disconnected: " + r);
+                if (r.Contains("validation", StringComparison.OrdinalIgnoreCase)) Add(LineKind.System, "last chats sent: " + client.ChatDiagnostics);
+                _ = Task.Run(() => LeftGameAsync(client, r));
+            };
             if (Settings.Voice)
             {
                 _voice = new SimpleVoiceChat(_client, Settings.Server);
@@ -770,6 +775,8 @@ public sealed class VertexHost : IAsyncDisposable
     {
         if (string.IsNullOrWhiteSpace(reason)) return true;
         var r = reason.ToLowerInvariant();
+        // Kicked for a fault in how the client signed its chat: that is our bug, not the server's answer, and a new connection starts it clean. He sat out 3.6 hours after one (2026-11-04).
+        if (r.Contains("chat message validation") || r.Contains("out-of-order chat")) return true;
         string[] answers = ["banned", "ban ", "white-list", "whitelist", "sign in", "online mode", "invalid session", "outdated", "incompatible", "requires", "kicked", "not authorized", "disconnected by client"];
         return !answers.Any(r.Contains);
     }
