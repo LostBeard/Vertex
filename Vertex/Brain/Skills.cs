@@ -2413,7 +2413,7 @@ public sealed partial class Skills(MinecraftClient client)
         return best;
     }
 
-    /// <summary>Swims out to open water and treads water until no monster is within 24 blocks and it is day, or for three minutes at most. The leave-water reflex brings him back afterwards.</summary>
+    /// <summary>Swims out to open water and treads water until no monster is within 20 blocks, or for three minutes at most. The leave-water reflex brings him back afterwards.</summary>
     public async Task<(bool, string)> SwimOutAsync(CancellationToken ct)
     {
         if (FindOpenWater() is not { } spot) return (false, "There is no open water near enough.");
@@ -2440,8 +2440,8 @@ public sealed partial class Skills(MinecraftClient client)
                 client.Controls.Jump = true;         // treading water: head above it
                 await client.WaitTicksAsync(20, ct);
                 seconds++;
-                var night = client.World.DayTime % 24000 is >= 12600 and < 23400;
-                if (!night && NearestHostile(24) == null && NearestFlier(16) == null) break;
+                // Until nothing is after him, not until morning: three minutes treading water with no monster near is three minutes he is not getting anywhere.
+                if (seconds >= 5 && NearestHostile(20) == null && NearestFlier(16) == null) break;
             }
         }
         finally { client.Controls.Clear(); }

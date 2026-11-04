@@ -308,6 +308,8 @@ public class LiveDangerChoiceTests
         Assert.That(skills.FindOpenWater(), Is.Not.Null, "a lake 45 wide, right here");
         using var run = new CancellationTokenSource(TimeSpan.FromSeconds(50));
         await _server.CommandAsync("time set midnight");
+        // Something on the shore keeps him out there for the length of the test: nothing near, and he comes back to work after a few seconds.
+        await _server.CommandAsync($"summon minecraft:zombie {ax - 2} 200 {az} {{NoAI:1b}}");
         Task<(bool, string)>? job = skills.SwimOutAsync(run.Token);
         try { await job; } catch (OperationCanceledException) { }
         var feet = client.FeetBlock;
@@ -317,6 +319,7 @@ public class LiveDangerChoiceTests
         Assert.That(inWaterColumn, Is.True);
         Assert.That(feet.X, Is.GreaterThanOrEqualTo(ax + 11), "out from the shore");
         Assert.That(client.Health, Is.EqualTo(20f).Within(0.01f), "30-odd seconds in the water and no drowning: air runs out in 15");
+        await _server.CommandAsync("kill @e[type=minecraft:zombie]");
         await _server.CommandAsync("time set day");
     }
 

@@ -846,14 +846,16 @@ public sealed class VertexBrain : IBody
                 if (SelfDirectedPlay && goal == null && !Staying && Client.IsSpawned && !_projectQueued && Client.GameMode == GameMode.Survival && now >= _nextLivableTry
                     && Temperature is double degreesNow && (degreesNow >= Reflexes.HotAt || Skills.KnownTooHot(Skills.BiomeHere, Reflexes.HotAt)))
                 {
-                    _nextLivableTry = now + TimeSpan.FromMinutes(5);
+                    _nextLivableTry = now + TimeSpan.FromSeconds(10);
                     _lastActivity = now;
                     Log?.Invoke($"too hot to live here ({degreesNow:0.#} degrees in the {Skills.BiomeHere?.Replace('_', ' ')}): looking for somewhere I can live. What I know: {string.Join(", ", Skills.BiomeHeat().Select(b => $"{b.Biome.Replace('_', ' ')} {b.Degrees:0}"))}");
                     Tasks.StartReflex("looking for somewhere I can live", async ct =>
                     {
                         var result = await Skills.FindLivableLandAsync(() => Temperature, Reflexes.HotAt, ct);
                         Log?.Invoke((result.Item1 ? "found: " : "not found: ") + result.Item2);
-                        if (result.Item1) { _nextLivableTry = now; Companion.Post(new MilestoneEvent("somewhere you can live, away from the heat that kept killing you: " + result.Item2)); }
+                        // Only a search that looked and failed waits. Dying on the way is no answer about the place: he reached land reading 25, died, and spent the next 5 minutes back on the island (2026-11-04).
+                        if (!result.Item1) _nextLivableTry = Now() + TimeSpan.FromMinutes(5);
+                        else Companion.Post(new MilestoneEvent("somewhere you can live, away from the heat that kept killing you: " + result.Item2));
                         return result;
                     });
                     continue;
