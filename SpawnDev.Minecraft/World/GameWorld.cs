@@ -65,6 +65,14 @@ public sealed class GameWorld
         return _columns.TryGetValue(Key(x >> 4, z >> 4), out var c) ? c.Get(x, y, z) : Unloaded;
     }
 
+    /// <summary>The biome (the server's network id in minecraft:worldgen/biome) at a position, or -1 where nothing is loaded. Biomes come in 4 by 4 by 4 cells.</summary>
+    public int GetBiome(int x, int y, int z)
+    {
+        if (!_columns.TryGetValue(Key(x >> 4, z >> 4), out var c)) return -1;
+        var index = (Math.Clamp(y, MinY, MaxY) - c.MinY) >> 4;
+        return index >= 0 && index < c.Sections.Length ? c.Sections[index].Biome(x & 15, Math.Clamp(y, MinY, MaxY) - c.MinY & 15, z & 15) : -1;
+    }
+
     public BlockType? GetBlock(int x, int y, int z)
     {
         var s = GetState(x, y, z);

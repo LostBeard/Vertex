@@ -116,7 +116,8 @@ public sealed class Reflexes : IDisposable
         // Too hot (a server's temperature plugin): the heat takes a heart every 6 seconds or so and he has work to do in it, as a player does: he stays at it while his health holds, then goes where it is cool, heals, and comes back
         // to what he was doing. Going at the first high reading he would never reach a tree on a hot island; staying in the water beside it he burned down to nothing (2026-11-03).
         // Only when he can heal once there: under 18 food with nothing to eat natural healing has stopped, and he sat cool in the sea at 2 hearts for minutes (2026-11-04), unable to heal and unwilling to go back to work.
-        if (!_cooling && _tick >= _nextCoolTick && Temperature?.Invoke() is double hot && hot >= HotAt && c.Health <= RetreatAtHealth && (c.Food >= 18 || _skills.HasFood) && !HandlesMonsters(_tasks.Current))
+        if (!_cooling && _tick >= _nextCoolTick && Temperature?.Invoke() is double hot && hot >= HotAt && c.Health <= RetreatAtHealth && (c.Food >= 18 || _skills.HasFood) && !HandlesMonsters(_tasks.Current)
+            && _tasks.Current?.Contains("somewhere I can live") != true)      // already leaving for good
         {
             _cooling = true;
             var target = HotAt - CoolBy;

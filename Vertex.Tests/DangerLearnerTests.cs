@@ -242,6 +242,46 @@ public class LiveDangerChoiceTests
     }
 
     [Test]
+    public async Task ALandThatBurnsHim_HeLearnsItIsTheBiome_AndLeavesForLandThatDoesNot()
+    {
+        // Real biomes in the world, real readings on the wire; the only thing faked is that this test server has no temperature plugin, so the test says the number the way it does: by the biome under him. Nothing tells him that rule.
+        var (client, skills, tasks, ax, az) = await JoinAsync("Leaver",
+            (x, z) => $"fillbiome {x - 20} 196 {z - 20} {x + 12} 206 {z + 20} minecraft:desert",      // a fillbiome counts blocks, and past 32,768 it does nothing but say so on the console
+            (x, z) => $"fill {x + 13} 197 {z - 20} {x + 44} 199 {z + 20} minecraft:stone",
+            (x, z) => $"fill {x + 13} 200 {z - 20} {x + 44} 203 {z + 20} minecraft:air",
+            (x, z) => $"fillbiome {x + 13} 196 {z - 20} {x + 44} 206 {z + 20} minecraft:plains");
+        await using var _ = client;
+        Assert.That(skills.BiomeHere, Is.EqualTo("desert"), "he can read the biome he stands in");
+        double? shown = null;
+        client.ChatReceived += m => { if (m.Kind == ChatKind.ActionBar && VertexBrain.TemperatureIn(m.Content) is double d) { shown = d; skills.NoteHeat(d); } };
+        using var stop = new CancellationTokenSource();
+        var plugin = Task.Run(async () =>
+        {
+            while (!stop.IsCancellationRequested)
+            {
+                var degrees = skills.BiomeHere == "desert" ? 56.6 : 25.0;
+                await _server.CommandAsync($"title Leaver actionbar {{\"text\":\"Temperature: {degrees:0.0} C\"}}");
+                await Task.Delay(500);
+            }
+        });
+        try
+        {
+            await Wait.UntilAsync(() => skills.KnownTooHot("desert", 50), Timeout, () => "the reading on his map");
+            using var cts = new CancellationTokenSource(TimeSpan.FromMinutes(3));
+            var (ok, text) = await skills.FindLivableLandAsync(() => shown, 50, cts.Token);
+            TestContext.Out.WriteLine(text);
+            Assert.That(ok, Is.True, text);
+            Assert.That(skills.BiomeHere, Is.EqualTo("plains"), $"at {client.FeetBlock}");
+            Assert.That(skills.KnownTooHot("plains", 50), Is.False);
+        }
+        finally
+        {
+            await stop.CancelAsync();
+            try { await plugin; } catch (OperationCanceledException) { }
+        }
+    }
+
+    [Test]
     public async Task Buried_HeDigsHimselfOut_AndGoesBackToHisJob()
     {
         var (client, skills, tasks, ax, az) = await JoinAsync("Buried");

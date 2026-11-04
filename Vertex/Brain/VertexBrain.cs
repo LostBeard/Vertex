@@ -424,7 +424,7 @@ public sealed class VertexBrain : IBody
         return null;
     }
 
-    private DateTime _lastBlockerLog = DateTime.MinValue, _nextSleepTry = DateTime.MinValue, _nextKitTry = DateTime.MinValue, _nextFoodTry = DateTime.MinValue;
+    private DateTime _lastBlockerLog = DateTime.MinValue, _nextSleepTry = DateTime.MinValue, _nextKitTry = DateTime.MinValue, _nextFoodTry = DateTime.MinValue, _nextLivableTry = DateTime.MinValue;
     private string _lastStatus = "";
     private bool _whoisAsked;
 
@@ -839,6 +839,23 @@ public sealed class VertexBrain : IBody
                     _lastActivity = now;
                     Log?.Invoke($"hungry (food {Client.Food / 2.0:0.#} of 10) and nothing to eat: going to hunt");
                     Tasks.Start("finding food", ct => Skills.GetFoodThenSummaryAsync([], hunt: true, ct));
+                    continue;
+                }
+                // Before anything else, somewhere he can live: nothing gets built on land that burns him down in a minute. He has this from his own readings (the biome he stands in has read too hot, or he reads too hot now), so it is
+                // true on any server with heat of this kind and never comes up on one without. A failed search waits five minutes while he does what he can where he is.
+                if (SelfDirectedPlay && goal == null && !Staying && Client.IsSpawned && !_projectQueued && Client.GameMode == GameMode.Survival && now >= _nextLivableTry
+                    && Temperature is double degreesNow && (degreesNow >= Reflexes.HotAt || Skills.KnownTooHot(Skills.BiomeHere, Reflexes.HotAt)))
+                {
+                    _nextLivableTry = now + TimeSpan.FromMinutes(5);
+                    _lastActivity = now;
+                    Log?.Invoke($"too hot to live here ({degreesNow:0.#} degrees in the {Skills.BiomeHere?.Replace('_', ' ')}): looking for somewhere I can live. What I know: {string.Join(", ", Skills.BiomeHeat().Select(b => $"{b.Biome.Replace('_', ' ')} {b.Degrees:0}"))}");
+                    Tasks.StartReflex("looking for somewhere I can live", async ct =>
+                    {
+                        var result = await Skills.FindLivableLandAsync(() => Temperature, Reflexes.HotAt, ct);
+                        Log?.Invoke((result.Item1 ? "found: " : "not found: ") + result.Item2);
+                        if (result.Item1) { _nextLivableTry = now; Companion.Post(new MilestoneEvent("somewhere you can live, away from the heat that kept killing you: " + result.Item2)); }
+                        return result;
+                    });
                     continue;
                 }
                 // Getting on in the world: tools, food, a bed, iron... whatever comes next from what he has right now. Never a fixed script: after a death he is back at the top, and nothing else needs to know.

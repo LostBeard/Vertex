@@ -2302,6 +2302,7 @@ public sealed partial class Skills(MinecraftClient client)
     {
         var (x, _, z) = client.FeetBlock;
         lock (_heat) _heat[(x >> HeatCell, z >> HeatCell)] = (degrees, DateTime.UtcNow);
+        NoteBiomeHeat(degrees);
     }
 
     /// <summary>The middle of the nearest place he has found no hotter than `degrees` in the last half hour, or null.</summary>
