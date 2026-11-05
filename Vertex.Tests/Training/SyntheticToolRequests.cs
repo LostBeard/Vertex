@@ -3,7 +3,11 @@ using System.Text.Json;
 namespace Vertex.Tests.Training;
 
 /// <summary>What a request must produce: the tool (null: no tool at all) and what its arguments must hold.</summary>
-public sealed record ToolRequest(string Says, string? Tool, Func<JsonElement, bool> ArgsOk);
+public sealed record ToolRequest(string Says, string? Tool, Func<JsonElement, bool> ArgsOk)
+{
+    /// <summary>The turns before this one, for requests that only make sense after them.</summary>
+    public IReadOnlyList<SpawnDev.AI.AiChatMessage>? Before { get; init; }
+}
 
 /// <summary>
 /// Requests written for training an adapter, covering every tool (Tuvok's spec, 2026-11-04): about 30 per tool in varied wording, values and speakers, plus about 15% that want no tool at all, so the adapter does not learn to call one for everything.
@@ -57,6 +61,44 @@ public static class SyntheticToolRequests
         return all;
     }
 
+    /// <summary>
+    /// Lines with a conversation before them, and what the v2.1 gate still missed. "Keep building" at the gate comes after other turns, with a build in the history, and every line in the set had no history at all: asked after "I'm building the platform now" the adapter started a tower, 5 runs of 5, while its dev lines with no history were right
+    /// (2026-11-05). So: go on with what was begun, and for balance, start something new after the same turns. Asking for a farm means planting one: `farm` with only a crop and a size harvests, by the tool's default.
+    /// </summary>
+    public static List<ToolRequest> History22(int seed = 20261106)
+    {
+        var random = new Random(seed);
+        var all = new List<ToolRequest>();
+        (string Asked, string Said)[] builds =
+        [
+            ("build a house", "I'm building the house now. I'll let you know when it's finished!"), ("put up a little hut", "On it, I'm putting up the hut now."), ("build a stone castle", "Okay, I started the castle. It will take me a while."), ("make a platform", "I'm building the platform now. It's a simple flat surface."),
+            ("build a pyramid", "I started the pyramid. It takes a few minutes."), ("build a pen for the animals", "I'm building the pen now."), ("build us a cabin", "I started the cabin. I am not done yet."), ("make a wooden house", "I'm working on the wooden house."),
+        ];
+        void Add(string tool, IEnumerable<string> says, Func<JsonElement, bool> ok, int count, bool withHistory)
+        {
+            var list = says.ToList();
+            var seen = new HashSet<string>();
+            for (var tries = 0; seen.Count < count && tries < count * 40; tries++)
+            {
+                var line = string.Format(Frames[random.Next(Frames.Length)], list[random.Next(list.Count)]);
+                line = random.Next(3) == 0 ? line : "Vertex, " + line;
+                if (!seen.Add(line)) continue;
+                IReadOnlyList<SpawnDev.AI.AiChatMessage>? before = null;
+                if (withHistory)
+                {
+                    var (asked, said) = builds[random.Next(builds.Length)];
+                    before = [new("user", $"{Players[random.Next(Players.Length)]} says (in chat): Vertex, {asked}"), new("assistant", said)];
+                }
+                all.Add(new ToolRequest(line, tool, ok) { Before = before });
+            }
+        }
+        Add("build_shape", ["keep going with it", "carry on with it", "go on with the build", "don't stop, finish it", "keep at it", "keep building it", "carry on where you stopped", "get back to it and finish", "pick it up again", "go back to what you were building"], a => Has(a, "shape", "continue"), 40, true);
+        Add("build_tower", ["now build a tower 8 blocks tall", "next put up a tower 12 high", "after that build me a tower 5 blocks tall"], a => !Blank(a, "height"), 6, true);
+        Add("build_bridge", ["now build a bridge going north", "next make a bridge east across the water"], a => Has(a, "direction", "north") || Has(a, "direction", "east"), 6, true);
+        Add("farm", Crops.SelectMany(c => new[] { $"set up a {c} farm", $"build us a {c} farm", $"I want a {c} farm", $"start a {c} farm here", $"make a {c} field" }), a => Has(a, "action", "plant") && !Blank(a, "crop"), 30, false);
+        return all;
+    }
+
     /// <summary>All of them, in a fixed order for a given seed. Speakers and wording are drawn from a seeded random: the same list every time.</summary>
     public static List<ToolRequest> All(int seed = 20261104)
     {
@@ -94,7 +136,7 @@ public static class SyntheticToolRequests
         Tool("explore", Dirs.SelectMany(d => new[] { R($"explore to the {d}", a => Has(a, "direction", d)), R($"go exploring {d} and tell me what you find", a => Has(a, "direction", d)) }).Concat(new[] { "200", "50", "500" }.Select(n => R($"scout around {n} blocks out", a => Num(a, "distance", n)))));
         Tool("build_shape", new[] { "pyramid", "house", "castle", "platform", "pen" }.SelectMany(s => new[] { R($"put up a {s}", a => Has(a, "shape", s)) }.Concat(Materials.Take(2).Select(m => R($"build a {m} {s}", a => Has(a, "shape", s) && (Has(a, "shape", m) || Has(a, "material", m)))))).Append(R("carry on with the build", a => Has(a, "shape", "continue"))));
         Tool("trade", new[] { "emerald", "bread", "carrot" }.Select(w => R($"get a {w} from the villager", a => Has(a, "want", w) && Blank(a, "give"))).Concat(new[] { "wheat", "coal", "paper" }.Select(g => R($"trade your {g} to the villager", a => Has(a, "give", g)))).Concat(new[] { "see what the trader has", "check the villager's offers", "look at what this villager offers" }.Select(s => R(s, a => Blank(a, "want") && Blank(a, "give")))));
-        Tool("farm", Crops.Select(c => R($"plant a field of {c}", a => Has(a, "action", "plant") && Has(a, "crop", c))).Concat(Crops.Select(c => R($"start a {c} patch", a => Has(a, "action", "plant") && Has(a, "crop", c)))).Concat(new[] { "pick the ripe crops", "bring in the harvest", "gather what's ripe in the field" }.Select(s => R(s, a => Blank(a, "action") || Has(a, "action", "harvest")))));
+        Tool("farm", Crops.Select(c => R($"plant a field of {c}", a => Has(a, "action", "plant") && Has(a, "crop", c))).Concat(Crops.Select(c => R($"start a {c} patch", a => Has(a, "action", "plant") && Has(a, "crop", c)))).Concat(new[] { "pick the ripe crops", "bring in the harvest", "gather what's ripe in the field" }.Select(s => R(s, a => (Blank(a, "action") || Has(a, "action", "harvest")) && Blank(a, "crop") && Blank(a, "size")))));
         Tool("animals", Animals.Select(x => R($"breed the {x}s", a => Has(a, "action", "breed") && Has(a, "animal", x))).Concat(new[] { "get some wool off that sheep", "use the shears on the sheep" }.Select(s => R(s, a => Has(a, "action", "shear")))).Concat(new[] { "get milk from the cow", "fill the bucket from the cow" }.Select(s => R(s, a => Has(a, "action", "milk")))));
         Tool("fish", new[] { "catch some fish", "cast your rod", "do some fishing" }.Select(s => R(s)).Concat(Numbers.Select(n => R($"catch {n} fish", a => Num(a, "count", n)))));
         Tool("light_up", new[] { "light this place up", "put torches around here", "it's getting dark here, light it up", "make it bright so nothing spawns" }.Select(s => R(s)).Concat(new[] { "8", "12", "16" }.Select(n => R($"put torches {n} blocks around", a => Num(a, "radius", n)))));
@@ -180,8 +222,19 @@ public class SyntheticToolRequestTests
     {
         static string Norm(string s) => new string(s.ToLowerInvariant().Where(c => char.IsLetterOrDigit(c) || c == ' ').ToArray()).Replace("vertex ", "").Replace("please", "").Replace("can you", "").Trim();
         var gate = ToolChoiceTests.CaseWordings.Select(Norm).ToHashSet();
-        var clash = Requests.Concat(SyntheticToolRequests.Continue21()).Where(r => gate.Contains(Norm(r.Says))).Select(r => r.Says).ToList();
+        var clash = Requests.Concat(SyntheticToolRequests.Continue21()).Concat(SyntheticToolRequests.History22()).Where(r => gate.Contains(Norm(r.Says))).Select(r => r.Says).ToList();
         Assert.That(clash, Is.Empty);
+    }
+
+    [Test]
+    public void TheHistoryBatch_HasNoFamilyNames_AndTheContinueLinesHaveTheirHistory()
+    {
+        var batch = SyntheticToolRequests.History22();
+        Assert.That(batch.Where(r => r.Tool == "build_shape").All(r => r.Before?.Count == 2), Is.True);
+        Assert.That(batch.Count(r => r.Tool == "build_shape"), Is.EqualTo(40));
+        Assert.That(batch.Count(r => r.Tool == "farm"), Is.EqualTo(30));
+        foreach (var name in new[] { "Aubri", "Aubs", "Aubriella", "TJ", "Todd" })
+            Assert.That(batch.Where(r => r.Says.Contains(name, StringComparison.OrdinalIgnoreCase) || (r.Before?.Any(m => m.Content.Contains(name, StringComparison.OrdinalIgnoreCase)) ?? false)), Is.Empty, name);
     }
 
     [Test]

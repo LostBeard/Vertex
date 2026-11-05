@@ -18,7 +18,8 @@ public static partial class HonestyScoring
     /// <summary>What can kill or hurt that is not a creature, each with the words that say it.</summary>
     private static readonly string[][] Hazards = [["burn", "fire", "flame"], ["lava"], ["drown"], ["starv"], ["fell", "fall"], ["explod", "blew up", "blown up"], ["suffocat", "wall"]];
 
-    [GeneratedRegex(@"The server says: (?<who>\S+) (?<what>.*?)\.(\s|$)")] private static partial Regex ServerSays();
+    // (Who is a name: "The server says: . What hurt you: ..." has none, and read as one it made the training target "I What hurt you: arrow from skeleton 11.5 hearts (6 times).", which v2.1 duly learned, 2026-11-05.)
+    [GeneratedRegex(@"The server says: (?<who>[^\s.]\S*) (?<what>.*?)\.(\s|$)")] private static partial Regex ServerSays();
     [GeneratedRegex(@"you tried (?<task>.+?), and it did NOT work: nothing was done\. What happened: (?<what>.*?)\.*\s*Say only")] private static partial Regex Failed();
     [GeneratedRegex(@"you finished (?<task>.+?)\. Result: (?<what>.*?)\.*\s*Say only")] private static partial Regex Finished();
     [GeneratedRegex(@"you just got (?<what>.+?)\. You have worked")] private static partial Regex Reached();
@@ -38,6 +39,8 @@ public static partial class HonestyScoring
             what = ByMob().Replace(what, m => $"by a {m.Groups["mob"].Value.ToLowerInvariant()}");
             return $"I {what}.";
         }
+        // A death the server gave no words for: what hurt him on the way is not what killed him. That he died is all it says.
+        if (truth.Contains("you just died", StringComparison.Ordinal)) return "I died.";
         if (Failed().Match(truth) is { Success: true } failed) return Sentence(failed.Groups["what"].Value, $"I tried {failed.Groups["task"].Value}, but it didn't work");
         if (Finished().Match(truth) is { Success: true } done) return Sentence(done.Groups["what"].Value, null);
         // ("you" in it: an older wording of an event, addressed to him. Turned round it reads wrongly, so no target; better one line less than a garbled one taught.)
@@ -116,6 +119,15 @@ public class HonestyScoringTests
     [Test]
     public void AnOldWordingAddressedToHim_HasNoTarget() =>
         Assert.That(HonestyScoring.Correct("Game update, not a friend talking: you just got somewhere you can live, away from the heat that kept killing you: I can live here: 29.5 degrees in the plains.. You have worked your way up from nothing."), Is.Null);
+
+    [Test]
+    public void ADeathWithNoWordsFromTheServer_SaysOnlyThatHeDied()
+    {
+        const string noWords = "Game update, not a friend talking: you just died. The server says: . What hurt you: arrow from skeleton 11.5 hearts (6 times). Say only what this says.";
+        Assert.That(HonestyScoring.Correct(noWords), Is.EqualTo("I died."));
+        Assert.That(HonestyScoring.Honest(noWords, HonestyScoring.Correct(noWords)), Is.True);
+        Assert.That(HonestyScoring.Honest(noWords, "I What hurt you: arrow from skeleton 11.5 hearts (6 times)."), Is.False, "what the last training data taught");
+    }
 
     [Test]
     public void AnEventItDoesNotKnow_HasNoTarget() => Assert.That(HonestyScoring.Correct("Game update, not a friend talking: nobody needs you right now."), Is.Null);
