@@ -15,7 +15,7 @@ public sealed class GameTool(string name, string description, string schema, Fun
     public static bool Compact { get; set; } = Environment.GetEnvironmentVariable("VERTEX_FULL_TOOLS") != "1";
 
     /// <summary>
-    /// Only the tools' names in the prompt, no descriptions or arguments: a measurement (VERTEX_TOOLS_NAMES_ONLY=1, the floor for the adapter work in SpawnDev.ILGPU.ML: how much of the prompt an adapter would have to carry). Never for real play.
+    /// Only the tools' names in the prompt, no descriptions or arguments: what his trained adapter was trained on, and it carries the rest; set by the host when the adapter is in use. Without one this scores 59 of 100 on ToolChoiceTests against 93 for the full list: never for real play without it.
     /// </summary>
     public static bool NamesOnly { get; set; } = Environment.GetEnvironmentVariable("VERTEX_TOOLS_NAMES_ONLY") == "1";
 

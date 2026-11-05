@@ -51,6 +51,8 @@ public sealed class VertexSettings
     public bool LongTermMemory { get; set; } = true;
     /// <summary>Keep his turns that have nobody's words in them as training pairs, in the data folder (see Docs/Privacy-and-Safety.md).</summary>
     public bool TrainingLog { get; set; } = true;
+    /// <summary>Use his trained adapter when there is one (`adapters\current` in the data folder), with the short prompt it was trained on: what the tools are for and how to call them is then in the adapter. Off, or with no adapter there: the plain model with the full tool list.</summary>
+    public bool LanguageAdapter { get; set; } = true;
     /// <summary>Use the Reachy Mini as Vertex's body at home: its microphone, speaker and body language.</summary>
     public bool Reachy { get; set; } = true;
     /// <summary>The robot's address on the LAN.</summary>
@@ -540,6 +542,14 @@ public sealed class VertexHost : IAsyncDisposable
             await EnsureAiAsync();
             if (string.IsNullOrEmpty(Settings.Model)) throw new InvalidOperationException($"the language model is not installed yet: press Install on the Start tab, or run `vertex install-models` ({ModelSetup.DefaultModel}, from models.spawndev.com)");
             SetStatus(HostState.Starting, $"Loading {Settings.Model}...");
+            var adapter = Path.Combine(Characters.Folder, "..", "adapters", "current");
+            if (Settings.LanguageAdapter && File.Exists(Path.Combine(adapter, "adapter_model.safetensors")))
+            {
+                await _ai!.Registry.SetAdapterAsync(Settings.Model, adapter);
+                Vertex.Brain.GameTool.NamesOnly = true;
+                AddLog($"language adapter: {Path.GetFullPath(adapter)}, with tool names only in the prompt");
+            }
+            else Vertex.Brain.GameTool.NamesOnly = false;
             await _ai!.EnsureChatReadyAsync(Settings.Model);
             await LoadIntentsAsync();
             await OpenMemoryAsync();
