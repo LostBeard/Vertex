@@ -436,7 +436,7 @@ public sealed partial class Skills(MinecraftClient client)
         return (true, kills > 0 ? $"I defeated {kills} {what}." : $"I don't see any {what} around.");
     }
 
-    /// <summary>Is this creature worth a fight for what it drops? He needs string for a bow, spiders come to him at night, and he has only ever fled them: 19 of 19 hunts by day found none he could reach, and he got one string in hundreds of minutes (live 2026-11-05).</summary>
+    /// <summary>Is this creature worth a fight for what it drops? He needs string for a bow, spiders come to him at night, and he was fleeing them: all 19 of his hunts in one live run failed to reach one (2026-11-05).</summary>
     public bool WantsWhatItDrops(string creature) => creature == "minecraft:spider" && !HasAny("bow") && client.Inventory.Count("string") < 3;
 
     /// <summary>Puts a shield from the inventory into the off hand (true when one is there afterwards). A shield blocks nearly all of what hits us from the front while it is raised.</summary>

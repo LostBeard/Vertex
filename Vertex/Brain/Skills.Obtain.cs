@@ -228,7 +228,8 @@ public sealed partial class Skills
         Entity? Find()
         {
             var (x, y, z) = client.Position;
-            return client.Entities.Values.Where(e => names.Contains(e.Name) && !IsBaby(e) && !outOfReach.Contains(e.Id)).OrderBy(e => e.DistanceTo(x, y, z)).FirstOrDefault();
+            // Not after a monster down a cave: going for spiders 80 blocks off took him to y 5 and y 16, where skeletons shot him twice in 4 minutes (live 2026-11-05). What is near his own level, or what comes to him.
+            return client.Entities.Values.Where(e => names.Contains(e.Name) && !IsBaby(e) && !outOfReach.Contains(e.Id) && (!Hostile.Contains(e.Name) || (e.DistanceTo(x, y, z) <= 32 && Math.Abs(e.Y - y) <= 8))).OrderBy(e => e.DistanceTo(x, y, z)).FirstOrDefault();
         }
         for (var round = 0; round < 8; round++)
         {
