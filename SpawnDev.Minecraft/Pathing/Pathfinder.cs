@@ -157,7 +157,10 @@ public sealed class Pathfinder
     private bool IsWater(int state) => state > 0 && (_data.StateFlags[state] & GameData.FlagWater) != 0;
     private bool Falls(int state) => state > 0 && (_data.BlockOf(state).Name is "minecraft:sand" or "minecraft:red_sand" or "minecraft:gravel" or "minecraft:suspicious_sand" or "minecraft:suspicious_gravel" || _data.BlockOf(state).Name.EndsWith("_concrete_powder"));
 
-    /// <summary>Would breaking this block let water or lava in: beside it, over it, or over a stack of sand or gravel that comes down when it goes (the sea bed)?</summary>
+    /// <summary>
+    /// Would breaking this block let water or lava in: beside it, over it, or over a stack of sand or gravel that comes down when it goes (the sea bed)? Not asked when he is in the water already: every wall of a flooded pit has water beside it, and being
+    /// asked then left him trapped at the bottom of one, with no block he would open (live 22:58, 2026-11-04).
+    /// </summary>
     private bool LetsFluidIn(int x, int y, int z)
     {
         if (IsFluid(State(x + 1, y, z)) || IsFluid(State(x - 1, y, z)) || IsFluid(State(x, y, z + 1)) || IsFluid(State(x, y, z - 1))) return true;
@@ -394,7 +397,7 @@ public sealed class Pathfinder
                 }
                 // Never dig into fluid (a lava/water flood) and need a floor on the other side.
                 // Nor a tunnel under sand or gravel: it comes down where he is about to walk. 12 hits "in wall" and 4 hearts in 20 seconds of mining for iron (live 21:11, 2026-11-04).
-                if (ok && dig.Count > 0 && !IsFluid(State(x, n.Y + 2, z)) && !Falls(State(x, n.Y + 1, z)) && !Falls(State(x, n.Y + 2, z)) && !dig.Any(c => LetsFluidIn(c.Item1, c.Item2, c.Item3) || NoDigAt(c.Item1, c.Item2, c.Item3)) && Solid(State(x, n.Y - 1, z)) && Top(State(x, n.Y - 1, z)) >= 1.0)
+                if (ok && dig.Count > 0 && !IsFluid(State(x, n.Y + 2, z)) && !Falls(State(x, n.Y + 1, z)) && !Falls(State(x, n.Y + 2, z)) && !dig.Any(c => (!inWater && !afloat && LetsFluidIn(c.Item1, c.Item2, c.Item3)) || NoDigAt(c.Item1, c.Item2, c.Item3)) && Solid(State(x, n.Y - 1, z)) && Top(State(x, n.Y - 1, z)) >= 1.0)
                     yield return (new Node(x, n.Y, z), 1 + 2 + ticks / 10.0, new PathStep(x, n.Y, z, MoveKind.DigThrough, dig.ToArray(), null));
 
                 // A stair up: the block ahead at foot level stays as the step; clear the two above it, and the one over his head to jump. Without this nothing dug can be climbed out of: he mined stone at his

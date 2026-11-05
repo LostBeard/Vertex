@@ -2587,7 +2587,8 @@ public sealed partial class Skills(MinecraftClient client)
         var seconds = 0;
         try
         {
-            while (seconds < 180)
+            // A minute at most, then he chooses again: live he trod water for over 2 minutes in broad daylight, because of something on the shore 20 blocks off that could not reach him (22:36, 2026-11-04).
+            while (seconds < 60)
             {
                 ct.ThrowIfCancellationRequested();
                 client.Controls.Jump = true;         // treading water: head above it

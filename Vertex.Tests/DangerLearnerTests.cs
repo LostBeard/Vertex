@@ -596,6 +596,24 @@ public class LiveDangerChoiceTests
     }
 
     [Test]
+    public async Task AtTheBottomOfAFloodedPit_HeDigsHisWayOut()
+    {
+        // Sheer rock all round, two blocks of water at the bottom and six of air over it: no swimming out. Every wall he could open has water beside it.
+        var (client, skills, _, ax, az) = await JoinAsync("Pitted",
+            (x, z) => $"fill {x + 4} 183 {z - 6} {x + 16} 199 {z + 6} minecraft:stone",
+            (x, z) => $"fill {x + 9} 190 {z - 1} {x + 11} 199 {z + 1} minecraft:air",
+            (x, z) => $"fill {x + 9} 190 {z - 1} {x + 11} 191 {z + 1} minecraft:water");
+        await using var _ = client;
+        await _server.CommandAsync("give Pitted minecraft:iron_pickaxe");
+        await Wait.UntilAsync(() => skills.InventorySummary().Contains("iron pickaxe"), Timeout, () => skills.InventorySummary());
+        await _server.CommandAsync($"tp Pitted {ax + 10.5} 190 {az + 0.5}");
+        await Wait.UntilAsync(() => client.FeetBlock.Y <= 192 && client.FeetBlock.X == ax + 10, Timeout, () => $"in the pit, at {client.FeetBlock}");
+        using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(90));
+        var there = await client.GoToAsync(Goal.XZ(ax, az), new PathOptions { CanDig = true, MaxNodes = 40_000 }, cts.Token);
+        Assert.That(there, Is.True, $"out, but he is at {client.FeetBlock}");
+    }
+
+    [Test]
     public async Task HisTunnels_GoRoundGravelOverhead()
     {
         // Solid rock with a sheet of gravel right over the straight way: dug under, it comes down on him.
