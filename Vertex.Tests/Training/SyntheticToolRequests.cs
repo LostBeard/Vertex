@@ -33,6 +33,30 @@ public static class SyntheticToolRequests
     private static bool Num(JsonElement a, string k, string n) => Text(a, k) == n;
     private static bool MeOr(JsonElement a, string k, string? name) => name != null ? Has(a, k, name) : Blank(a, k) || Text(a, k) == "me" || Players.Any(p => Text(a, k) == p.ToLowerInvariant());
 
+    /// <summary>
+    /// What v1 and v2 left out and the gate showed (Tuvok, 2026-11-05): `build_shape` with shape `continue` was in no training line at all, and the adapter guessed a different tool each run; selling everything needs no `want`. All for training. Worded apart from the gate's own cases.
+    /// </summary>
+    public static List<ToolRequest> Continue21(int seed = 20261105)
+    {
+        var random = new Random(seed);
+        var all = new List<ToolRequest>();
+        void Add(string tool, IEnumerable<string> says, Func<JsonElement, bool> ok, int count)
+        {
+            var list = says.ToList();
+            var seen = new HashSet<string>();
+            for (var tries = 0; seen.Count < count && tries < count * 40; tries++)
+            {
+                var line = string.Format(Frames[random.Next(Frames.Length)], list[random.Next(list.Count)]);
+                line = random.Next(3) == 0 ? line : "Vertex, " + line;
+                if (seen.Add(line)) all.Add(new ToolRequest(line, tool, ok));
+            }
+        }
+        Add("build_shape", ["carry on building", "finish what you started building", "pick up the build where you stopped", "go back to your build", "get back to building", "resume the build", "keep going with the build", "continue the build", "finish the build"], a => Has(a, "shape", "continue"), 40);
+        Add("trade", ["sell all your coal to the villager", "sell the villager all your paper", "sell all of your carrots to that villager", "sell all your potatoes to the trader", "sell your whole stack of wheat to the villager", "trade away all your wheat to the villager"],
+            a => (Has(a, "give", "coal") || Has(a, "give", "paper") || Has(a, "give", "carrot") || Has(a, "give", "potato") || Has(a, "give", "wheat")) && (Blank(a, "want") || Has(a, "want", "emerald")) && (Blank(a, "count") || Num(a, "count", "0")), 40);
+        return all;
+    }
+
     /// <summary>All of them, in a fixed order for a given seed. Speakers and wording are drawn from a seeded random: the same list every time.</summary>
     public static List<ToolRequest> All(int seed = 20261104)
     {
@@ -156,8 +180,19 @@ public class SyntheticToolRequestTests
     {
         static string Norm(string s) => new string(s.ToLowerInvariant().Where(c => char.IsLetterOrDigit(c) || c == ' ').ToArray()).Replace("vertex ", "").Replace("please", "").Replace("can you", "").Trim();
         var gate = ToolChoiceTests.CaseWordings.Select(Norm).ToHashSet();
-        var clash = Requests.Where(r => gate.Contains(Norm(r.Says))).Select(r => r.Says).ToList();
+        var clash = Requests.Concat(SyntheticToolRequests.Continue21()).Where(r => gate.Contains(Norm(r.Says))).Select(r => r.Says).ToList();
         Assert.That(clash, Is.Empty);
+    }
+
+    [Test]
+    public void TheContinueBatch_IsAllItSaysItIs()
+    {
+        var batch = SyntheticToolRequests.Continue21();
+        Assert.That(batch.Count(r => r.Tool == "build_shape"), Is.EqualTo(40));
+        Assert.That(batch.Count(r => r.Tool == "trade"), Is.EqualTo(40));
+        Assert.That(batch.Select(r => r.Says).Distinct().Count(), Is.EqualTo(batch.Count));
+        foreach (var name in new[] { "Aubri", "Aubs", "Aubriella", "TJ", "Todd" })
+            Assert.That(batch.Where(r => r.Says.Contains(name, StringComparison.OrdinalIgnoreCase)), Is.Empty, name);
     }
 
     [Test]

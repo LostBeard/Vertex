@@ -53,7 +53,9 @@ public class TrainingSetGeneration
         var random = new Random(20261104);
         // Only these tools, for looking at why they are dropped. Applied after the shuffle, so a request's order among the rest does not depend on it.
         var only = Environment.GetEnvironmentVariable("VERTEX_SYNTH_TOOLS")?.Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries).ToHashSet();
-        var requests = SyntheticToolRequests.All().OrderBy(_ => random.Next()).Where(r => only == null || only.Contains(r.Tool ?? "(no tool)")).Take(limit).ToList();
+        // A batch to add to the set rather than the set, all for training (VERTEX_SYNTH_BATCH=continue21).
+        var batch = Environment.GetEnvironmentVariable("VERTEX_SYNTH_BATCH");
+        var requests = (batch == "continue21" ? SyntheticToolRequests.Continue21() : SyntheticToolRequests.All()).OrderBy(_ => random.Next()).Where(r => only == null || only.Contains(r.Tool ?? "(no tool)")).Take(limit).ToList();
         // Every reply, kept or dropped: 26.6% of v1 was dropped with nothing to say why.
         await using var replies = new StreamWriter(Path.Combine(Output, "synthetic-replies.jsonl"));
         ai.Chat.MaxToolRounds = 0;     // a call comes back unexecuted: this is about what he would call, and nothing here may touch a world
@@ -76,7 +78,7 @@ public class TrainingSetGeneration
             var messages = new List<AiChatMessage> { new("system", system), new("system", SyntheticToolRequests.StateNote(random)) };
             if (Companion.InstinctHint(spoken) is { } instinct) messages.Add(new("system", instinct));
             messages.Add(new("user", spoken));
-            var split = random.Next(5) == 0 ? "dev" : "train";
+            var split = batch != null ? "train" : random.Next(5) == 0 ? "dev" : "train";
             index++;
 
             async Task<bool> TeacherAsync(IReadOnlyList<AiChatMessage> asked, string how)
@@ -101,7 +103,7 @@ public class TrainingSetGeneration
                 for (var attempt = 0; attempt < HintedTries && !good; attempt++) good = await TeacherAsync(told, "hinted");
                 if (good) { source = "synthetic-v2-hinted"; hinted[key] = hinted.GetValueOrDefault(key) + 1; }
             }
-            if (good) kept.Add(new Kept($"synthetic-{index}", split, source, request, messages, pass!.RawOutput, pass.GeneratedTokenIds, pass.EndOfTurnTokenIds, pass.EndTokenId));
+            if (good) kept.Add(new Kept(batch != null ? $"synthetic-{batch}-{index}" : $"synthetic-{index}", split, source, request, messages, pass!.RawOutput, pass.GeneratedTokenIds, pass.EndOfTurnTokenIds, pass.EndTokenId));
             else if (split == "dev" && request.Tool != null)
             {
                 kept.Add(new Kept($"synthetic-{index}", split, source, request, messages, null, null, null, null));
