@@ -7,6 +7,8 @@ public sealed record ToolRequest(string Says, string? Tool, Func<JsonElement, bo
 {
     /// <summary>The turns before this one, for requests that only make sense after them.</summary>
     public IReadOnlyList<SpawnDev.AI.AiChatMessage>? Before { get; init; }
+    /// <summary>What a teacher that got it wrong is told, when naming the tool is not enough. Never in the line's prompt.</summary>
+    public string? Told { get; init; }
 }
 
 /// <summary>
@@ -89,7 +91,8 @@ public static class SyntheticToolRequests
                     var (asked, said) = builds[random.Next(builds.Length)];
                     before = [new("user", $"{Players[random.Next(Players.Length)]} says (in chat): Vertex, {asked}"), new("assistant", said)];
                 }
-                all.Add(new ToolRequest(line, tool, ok) { Before = before });
+                // Told the tool alone it names the shape again: {"shape": "house"} on 37 of 40, which starts another house.
+                all.Add(new ToolRequest(line, tool, ok) { Before = before, Told = tool == "build_shape" ? "Call the tool build_shape now, with shape set to continue: that goes on with what was begun, and naming a shape would start a new one." : null });
             }
         }
         Add("build_shape", ["keep going with it", "carry on with it", "go on with the build", "don't stop, finish it", "keep at it", "keep building it", "carry on where you stopped", "get back to it and finish", "pick it up again", "go back to what you were building"], a => Has(a, "shape", "continue"), 40, true);

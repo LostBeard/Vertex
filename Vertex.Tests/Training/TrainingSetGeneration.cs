@@ -100,7 +100,7 @@ public class TrainingSetGeneration
             // Told which tool, for training only. The line written out has no such hint: the student has to act without being told (Tuvok's condition). Dev is never hinted: it measures the student.
             if (!good && split == "train" && request.Tool != null)
             {
-                var told = messages.Take(messages.Count - 1).Append(new AiChatMessage("system", $"Call the tool {request.Tool} now, with the arguments this request asks for.")).Append(messages[^1]).ToList();
+                var told = messages.Take(messages.Count - 1).Append(new AiChatMessage("system", request.Told ?? $"Call the tool {request.Tool} now, with the arguments this request asks for.")).Append(messages[^1]).ToList();
                 for (var attempt = 0; attempt < HintedTries && !good; attempt++) good = await TeacherAsync(told, "hinted");
                 if (good) { source = "synthetic-v2-hinted"; hinted[key] = hinted.GetValueOrDefault(key) + 1; }
             }
@@ -228,6 +228,8 @@ public class TrainingSetGeneration
     /// <summary>One sentence in four, the same one every run, numbers aside ("I mined 6 wood" and "I mined 9 wood" go together).</summary>
     private static string SplitBySentence(string sentence)
     {
+        // Never heldout: it is what a death with no words from the server must come to, and nothing else teaches it.
+        if (sentence == "I died.") return "train";
         var hash = 2166136261u;
         foreach (var c in sentence.Where(c => !char.IsDigit(c))) hash = (hash ^ c) * 16777619u;
         return hash % 4 == 0 ? "heldout" : "train";
