@@ -76,10 +76,10 @@ public class LiveObtainTests
     {
         var (client, skills, ax, az) = await StageAsync("ObtainFish",
             (x, z) => $"fill {x - 12} 197 {z + 6} {x + 12} 199 {z + 20} minecraft:water",
-            (x, z) => $"summon minecraft:cod {x - 3} 198 {z + 10} {{NoAI:1b}}",
-            (x, z) => $"summon minecraft:cod {x} 198 {z + 12} {{NoAI:1b}}",
-            (x, z) => $"summon minecraft:salmon {x + 3} 198 {z + 10} {{NoAI:1b}}",
-            (x, z) => $"summon minecraft:salmon {x + 6} 198 {z + 12} {{NoAI:1b}}");
+            (x, z) => $"summon minecraft:cod {x - 3} 198 {z + 10} {{NoAI:1b,PersistenceRequired:1b}}",
+            (x, z) => $"summon minecraft:cod {x} 198 {z + 12} {{NoAI:1b,PersistenceRequired:1b}}",
+            (x, z) => $"summon minecraft:salmon {x + 3} 198 {z + 10} {{NoAI:1b,PersistenceRequired:1b}}",
+            (x, z) => $"summon minecraft:salmon {x + 6} 198 {z + 12} {{NoAI:1b,PersistenceRequired:1b}}");
         await using var _c = client;
         using var cts = new CancellationTokenSource(TimeSpan.FromMinutes(3));
         var food = skills.Milestones().First(m => m.Item == "food");

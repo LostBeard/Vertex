@@ -356,6 +356,8 @@ public sealed partial class Skills
         return result;
     }
 
+    private static readonly HashSet<string> Fish = ["minecraft:cod", "minecraft:salmon", "minecraft:tropical_fish"];
+
     /// <summary>Food enough for a while: whatever meat is nearest. Hunted bare-handed if it comes to that.</summary>
     private async Task<(bool, string)> GetEnoughFoodAsync(int pieces, CancellationToken ct)
     {
@@ -364,7 +366,8 @@ public sealed partial class Skills
         var out_of_reach = new HashSet<int>();
         for (var round = 0; round < 6 && EdibleStacks.Sum(s => s.Count) < pieces; round++)
         {
-            Entity? Find() { var (x, y, z) = client.Position; return client.Entities.Values.Where(e => names.Contains(e.Name) && !IsBaby(e) && !out_of_reach.Contains(e.Id)).OrderBy(e => e.DistanceTo(x, y, z)).FirstOrDefault(); }
+            // Fish only when they are close: they swim off, and 15 of 20 fish hunts came to nothing, minutes at a time out on the water among pufferfish, once with a full stomach (live 2026-11-05). Anything on land, as far as he can see.
+            Entity? Find() { var (x, y, z) = client.Position; return client.Entities.Values.Where(e => names.Contains(e.Name) && !IsBaby(e) && !out_of_reach.Contains(e.Id) && (!Fish.Contains(e.Name) || e.DistanceTo(x, y, z) <= 16)).OrderBy(e => Fish.Contains(e.Name) ? 1 : 0).ThenBy(e => e.DistanceTo(x, y, z)).FirstOrDefault(); }
             var (_, legs, walked) = await LookOverLandAsync(() => Find() != null, 3, ct);
             if (Find() is not { } animal) return (false, "I looked for an animal to eat and found none" + Looked(legs, walked) + ".");
             if (!await CatchAsync(animal, out_of_reach, ct) && client.Health < 6) return (false, "I'm too hurt to hunt right now.");
