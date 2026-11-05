@@ -426,10 +426,18 @@ public sealed partial class Skills(MinecraftClient client)
             var (x, y, z) = client.Position;
             var target = client.Entities.Values.Where(e => !e.IsPlayer && Matches(e) && e.DistanceTo(x, y, z) < 24).OrderBy(e => e.DistanceTo(x, y, z)).FirstOrDefault();
             if (target == null) break;
-            if (await FightAsync(target.Id, null, ct)) kills++;
+            if (await FightAsync(target.Id, null, ct))
+            {
+                kills++;
+                // What it dropped, with nothing else on top of him: he has been leaving string on the ground.
+                if (NearestHostile(6) == null) await PickUpNearbyAsync((int)Math.Floor(target.X), (int)Math.Floor(target.Y), (int)Math.Floor(target.Z), ct);
+            }
         }
         return (true, kills > 0 ? $"I defeated {kills} {what}." : $"I don't see any {what} around.");
     }
+
+    /// <summary>Is this creature worth a fight for what it drops? He needs string for a bow, spiders come to him at night, and he has only ever fled them: 19 of 19 hunts by day found none he could reach, and he got one string in hundreds of minutes (live 2026-11-05).</summary>
+    public bool WantsWhatItDrops(string creature) => creature == "minecraft:spider" && !HasAny("bow") && client.Inventory.Count("string") < 3;
 
     /// <summary>Puts a shield from the inventory into the off hand (true when one is there afterwards). A shield blocks nearly all of what hits us from the front while it is raised.</summary>
     public async Task<bool> EquipShieldAsync(CancellationToken ct)

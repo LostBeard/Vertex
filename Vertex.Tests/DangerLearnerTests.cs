@@ -596,6 +596,40 @@ public class LiveDangerChoiceTests
     }
 
     [Test]
+    public async Task ASpiderComesToHim_ArmedAndWithNoBow_HeFightsItForTheString_WhateverHeThinksOfFighting()
+    {
+        var (client, skills, tasks, ax, az) = await JoinAsync("Stringer");
+        await using var _ = client;
+        var file = Path.Combine(TestContext.CurrentContext.WorkDirectory, $"danger-{Guid.NewGuid():N}.jsonl");
+        try
+        {
+            await _server.CommandAsync("give Stringer minecraft:iron_sword");
+            await Wait.UntilAsync(() => skills.BestWeaponName != null, Timeout, () => skills.InventorySummary());
+            // All he has learned says run.
+            var past = new List<string>();
+            foreach (var (action, reward) in new[] { ("Fight", 0), ("Flee", 1) })
+                for (var i = 0; i < 30; i++)
+                    past.Add($$"""{"At":"2026-11-05T02:00:00Z","Foe":"melee","Kit":"good","Health":"high","Action":"{{action}}","Reward":{{reward}},"Died":false,"HealthBefore":20,"HealthAfter":20,"Seconds":5}""");
+            File.WriteAllLines(file, past);
+            using var reflexes = new Reflexes(client, skills, tasks, () => Character.BuiltIn[0].Style) { Learner = new DangerLearner(file, new Random(7)) };
+            var decisions = new List<string>();
+            reflexes.Decided += m => { lock (decisions) decisions.Add(m); TestContext.Out.WriteLine(m); };
+            await _server.CommandAsync($"summon minecraft:spider {ax + 5} 200 {az} {{NoAI:1b}}");
+            await Wait.UntilAsync(() => { lock (decisions) return decisions.Any(d => d.StartsWith("fighting against spider")); }, TimeSpan.FromSeconds(30), () => "the choice to fight: " + string.Join(" | ", decisions));
+            await Wait.UntilAsync(() => !client.Entities.Values.Any(e => e.Name == "minecraft:spider"), TimeSpan.FromSeconds(30), () => $"the spider dead (doing {tasks.Current})");
+            // With what he wants in hand he goes back to what he has learned.
+            await _server.CommandAsync("give Stringer minecraft:string 3");
+            await Wait.UntilAsync(() => client.Inventory.Count("string") >= 3, Timeout, () => skills.InventorySummary());
+            Assert.That(skills.WantsWhatItDrops("minecraft:spider"), Is.False);
+        }
+        finally
+        {
+            await _server.CommandAsync("kill @e[type=minecraft:spider]");
+            File.Delete(file);
+        }
+    }
+
+    [Test]
     public async Task HuntingForWhatADropGives_HeWalksToItFromFarOff_AndPassesOverOneHeCannotReach()
     {
         // One sheep shut in a box of stone, close; one out in the open, a good walk beyond it. All the fight's own short steps did was stand and look at the first.

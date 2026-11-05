@@ -377,6 +377,8 @@ public sealed class Reflexes : IDisposable
         if (legal.Count == 0) legal.Add(DangerAction.Flee);
 
         var action = learner.Choose(situation, legal);
+        // Armed and well, a spider that comes to him is what he has been looking for. What comes of it is written down like any other choice.
+        if (legal.Contains(DangerAction.Fight) && situation.Kit != "bare" && c.Health >= 12 && close.Count(e => e.DistanceTo(x, y, z) < 10) < 3 && _skills.WantsWhatItDrops(foe.Name)) action = DangerAction.Fight;
         Decided?.Invoke($"{DangerLearner.Doing(action)} against {foe.Name.Bare().Replace('_', ' ')} at {foe.DistanceTo(x, y, z):0} blocks ({situation}); odds {string.Join(", ", legal.Select(a => $"{DangerLearner.Doing(a)} {learner.Expected(situation, a):0.00}"))}");
 
         var episode = new Episode { Situation = situation, Action = action, HealthBefore = c.Health, Started = DateTime.UtcNow };
