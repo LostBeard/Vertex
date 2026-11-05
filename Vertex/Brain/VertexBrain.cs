@@ -172,6 +172,7 @@ public sealed class VertexBrain : IBody
         Client.Spawned += OnSpawnedAfterDeath;
         Skills.LessonLearned += RecordLesson;
         Skills.Trace += m => Log?.Invoke("  (" + m + ")");
+        Client.DigNote = m => Log?.Invoke("  (" + m + ")");
         Skills.PriorLessons = LessonsFor;
         // Everything he does about heat goes through what his body has found, not the number on the screen.
         Reflexes.Temperature = () => Heat.Hurts ? Temperature : null;

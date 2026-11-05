@@ -231,9 +231,33 @@ public sealed class Pathfinder
     /// <summary>What it costs on top of the move to stand at a feet block, for ground to go round rather than over (never negative: the estimate to the goal stays a lower bound). Null: all ground is alike.</summary>
     public Func<int, int, int, double>? ExtraCost { get; set; }
 
+    /// <summary>Blocks that may not be dug on the way, for where they are and not what they are (something someone built round them). Null: nothing of the kind.</summary>
+    public Func<int, int, int, bool>? MayNotDigAt { get; set; }
+
+    /// <summary>This very block did not come away when he tried it just now.</summary>
+    public Func<int, int, int, bool>? RefusedDigAt { get; set; }
+
+    private readonly Dictionary<(int X, int Y, int Z), bool> _noDig = [];
+
+    /// <summary>Asked for every block a plan might dig, so kept for the plan, by cells of 4: a little more cautious at the edge, and thousands of nodes do not each search 343 blocks.</summary>
+    private bool NoDigAt(int x, int y, int z)
+    {
+        if (RefusedDigAt?.Invoke(x, y, z) == true) return true;
+        if (MayNotDigAt == null) return false;
+        var cell = (x >> 2, y >> 2, z >> 2);
+        if (_noDig.TryGetValue(cell, out var no)) return no;
+        no = false;
+        for (var cx = 1; cx <= 2 && !no; cx++)
+        for (var cy = 1; cy <= 2 && !no; cy++)
+        for (var cz = 1; cz <= 2 && !no; cz++)
+            no = MayNotDigAt((cell.Item1 << 2) + cx, (cell.Item2 << 2) + cy, (cell.Item3 << 2) + cz);
+        return _noDig[cell] = no;
+    }
+
     /// <summary>Finds a path from the feet block to the goal (or toward it, when not reachable: partial).</summary>
     public (List<PathStep> Steps, bool Complete) FindPath((int X, int Y, int Z) start, Goal goal, PathOptions options)
     {
+        _noDig.Clear();
         var open = new PriorityQueue<Node, double>();
         var g = new Dictionary<Node, double>();
         var came = new Dictionary<Node, (Node From, PathStep Step)>();
@@ -369,7 +393,8 @@ public sealed class Pathfinder
                     dig.Add((x, n.Y + dy, z));
                 }
                 // Never dig into fluid (a lava/water flood) and need a floor on the other side.
-                if (ok && dig.Count > 0 && !IsFluid(State(x, n.Y + 2, z)) && !dig.Any(c => LetsFluidIn(c.Item1, c.Item2, c.Item3)) && Solid(State(x, n.Y - 1, z)) && Top(State(x, n.Y - 1, z)) >= 1.0)
+                // Nor a tunnel under sand or gravel: it comes down where he is about to walk. 12 hits "in wall" and 4 hearts in 20 seconds of mining for iron (live 21:11, 2026-11-04).
+                if (ok && dig.Count > 0 && !IsFluid(State(x, n.Y + 2, z)) && !Falls(State(x, n.Y + 1, z)) && !Falls(State(x, n.Y + 2, z)) && !dig.Any(c => LetsFluidIn(c.Item1, c.Item2, c.Item3) || NoDigAt(c.Item1, c.Item2, c.Item3)) && Solid(State(x, n.Y - 1, z)) && Top(State(x, n.Y - 1, z)) >= 1.0)
                     yield return (new Node(x, n.Y, z), 1 + 2 + ticks / 10.0, new PathStep(x, n.Y, z, MoveKind.DigThrough, dig.ToArray(), null));
 
                 // A stair up: the block ahead at foot level stays as the step; clear the two above it, and the one over his head to jump. Without this nothing dug can be climbed out of: he mined stone at his
@@ -389,7 +414,7 @@ public sealed class Pathfinder
                         stair.Add((sx, sy, sz));
                     }
                     // Nothing that would pour in from above what he opens, or come down on his head: going up from a mine he opened the sand of the sea bed and died under it (TJ watched, 2026-11-04).
-                    if (stairOk && stair.Count > 0 && !IsFluid(State(x, n.Y + 3, z)) && !IsFluid(State(n.X, n.Y + 3, n.Z)) && !stair.Any(c => LetsFluidIn(c.Item1, c.Item2, c.Item3) || Falls(State(c.Item1, c.Item2 + 1, c.Item3))))
+                    if (stairOk && stair.Count > 0 && !IsFluid(State(x, n.Y + 3, z)) && !IsFluid(State(n.X, n.Y + 3, n.Z)) && !stair.Any(c => LetsFluidIn(c.Item1, c.Item2, c.Item3) || Falls(State(c.Item1, c.Item2 + 1, c.Item3)) || NoDigAt(c.Item1, c.Item2, c.Item3)))
                         yield return (new Node(x, n.Y + 1, z), 3 + 2 + stairTicks / 10.0, new PathStep(x, n.Y + 1, z, MoveKind.JumpUp, stair.ToArray(), null));
                 }
             }
@@ -421,7 +446,7 @@ public sealed class Pathfinder
         {
             var below = State(n.X, n.Y - 1, n.Z);
             var under = State(n.X, n.Y - 2, n.Z);
-            if (Solid(below) && !Dangerous(below) && o.DigTicks(below) is int t && Solid(under) && Top(under) >= 1.0 && !Dangerous(under)
+            if (Solid(below) && !Dangerous(below) && o.DigTicks(below) is int t && Solid(under) && Top(under) >= 1.0 && !Dangerous(under) && !NoDigAt(n.X, n.Y - 1, n.Z)
                 && !IsFluid(State(n.X + 1, n.Y - 1, n.Z)) && !IsFluid(State(n.X - 1, n.Y - 1, n.Z)) && !IsFluid(State(n.X, n.Y - 1, n.Z + 1)) && !IsFluid(State(n.X, n.Y - 1, n.Z - 1)))
                 yield return (new Node(n.X, n.Y - 1, n.Z), 1.5 + t / 10.0, new PathStep(n.X, n.Y - 1, n.Z, MoveKind.DigDown, [(n.X, n.Y - 1, n.Z)], null));
         }

@@ -220,6 +220,7 @@ public sealed partial class Skills(MinecraftClient client)
         (int X, int Y, int Z)? ground = null;
         var tried = new HashSet<(int, int, int)>();
         var nextToLava = 0;
+        var partOfABuild = 0;
         var legs = 0;
         double walked = 0;
         while (broken < count && failures < 6 && !ct.IsCancellationRequested)
@@ -234,6 +235,11 @@ public sealed partial class Skills(MinecraftClient client)
             // Opening a block with lava beside it (or lava above it, which falls in) lets the lava out onto whoever is digging: leave it (found 2026-10-15: a diamond ringed with lava took 11 of 20 health).
             // From the top of a stack of sand or gravel only: taking one from under the rest brings them down on him (2026-11-04: he dug into a sand bank, went from 7 hearts to nothing "in wall", and died with the job still going).
             found = found.Where(p => !UnderFallingBlock(p.Item1, p.Item2, p.Item3)).ToList();
+            // Not out of someone's building, however good the logs. Nobody's asking him to choose between that and nothing: there is more world (TJ watched him take a village house apart, 2026-11-04).
+            var built = found.Where(p => client.PartOfABuild(p.Item1, p.Item2, p.Item3)).ToList();
+            foreach (var skipped in built) tried.Add(skipped);
+            partOfABuild += built.Count;
+            found = found.Except(built).ToList();
             var targets = found.Where(p => !LavaAround(p.Item1, p.Item2, p.Item3)).ToList();
             nextToLava += found.Count - targets.Count;
             foreach (var skipped in found.Except(targets)) tried.Add(skipped);
@@ -315,6 +321,7 @@ public sealed partial class Skills(MinecraftClient client)
         return broken > 0
             ? (broken >= count, $"I mined {broken} {what}{(broken < count ? $" (wanted {count}, couldn't find more nearby)" : "")}. I have: {have}.{lavaNote}")
             : (false, nextToLava > 0 ? $"I won't mine that {what}: it is next to lava, which would pour out onto me."
+                : partOfABuild > 0 && failures == 0 ? $"The only {what} I could find is part of something someone built, and I won't take it apart."
                 : digFailures >= 3 ? $"I got to {what} but breaking it didn't work ({digFailures} of {failures} tries)."
                 : failures >= 6 ? $"I could see {what} but I couldn't get to any of it ({failures} tries: something is in the way that I can't dig or cross)."
                 : legs > 0 ? $"I looked for {what}: 64 blocks around me at every depth, and I walked about {walked:0} blocks in {legs} different directions to look further, but I haven't found any."

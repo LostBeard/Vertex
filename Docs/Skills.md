@@ -114,6 +114,8 @@ Built in, without being asked:
   as soon as it has it, and fight-or-flight when a mob hurts it (a small trained policy, with a hand-written rule behind it).
 - **A bow and arrows** are on his list after stone tools (string from spiders, arrows made from flint, a stick and a feather). With them, shooting is one of the things he chooses between in danger (from 6 blocks and with 3 hearts or more), and he finds out
   what it is worth the same way as the others: from what comes of it.
+- **Other people's buildings:** he leaves them standing. A block within 3 of anything built that he did not place himself (planks, doors, glass, stairs, torches and the like) is not collected and not dug through on the way anywhere. That holds for villages too. What he placed
+  himself he remembers only until he restarts, so after a restart his own work counts as someone else's.
 - **After a death with tools on him** he goes back for his things first, within the 4.5 minutes they are sure to last, digging down to them if he must.
 - **Heat** (a server temperature plugin shown in the action bar): a high number alone means nothing to him. He believes heat is dangerous from the first time it hurts him, and stops after 20 seconds of high readings with no hurt. While he believes it,
   he learns what each biome reads by being in it (the middle of its last 40 readings), his paths go round biomes he knows to be too hot, at up to five times the distance, and cross when there is no way round; burning, he heads for the nearest place

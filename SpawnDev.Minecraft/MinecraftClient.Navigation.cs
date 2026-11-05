@@ -9,7 +9,7 @@ public sealed partial class MinecraftClient
 {
     private Pathfinder? _pathfinder;
 
-    public Pathfinder Pathfinder => _pathfinder ??= new Pathfinder(World);
+    public Pathfinder Pathfinder => _pathfinder ??= new Pathfinder(World) { MayNotDigAt = PartOfABuild, RefusedDigAt = DigRefused };
 
     /// <summary>Raised with each new plan (for logging/visualising).</summary>
     public event Action<IReadOnlyList<PathStep>>? PathPlanned;
@@ -58,6 +58,34 @@ public sealed partial class MinecraftClient
         "minecraft:iron_block", "minecraft:gold_block", "minecraft:diamond_block", "minecraft:emerald_block", "minecraft:lapis_block",
         "minecraft:netherite_block", "minecraft:redstone_block", "minecraft:coal_block", "minecraft:copper_block",
     ];
+
+    private readonly HashSet<(int X, int Y, int Z)> _placedByMe = [];
+
+    /// <summary>He put a block here himself: nobody else's work.</summary>
+    internal void NotePlacedByMe(int x, int y, int z) { lock (_placedByMe) _placedByMe.Add((x, y, z)); }
+
+    /// <summary>How far from something built a block still counts as part of the building.</summary>
+    public const int BuildReach = 3;
+
+    /// <summary>
+    /// Is this block part of something someone built? A log or cobblestone says nothing by itself: a house's frame is the same oak log as a tree. What says so is what is round it: anything built within <see cref="BuildReach"/> blocks that he did not place
+    /// himself. Live he took a village house apart for its logs and stone, and it would have been the same with a friend's (TJ, 2026-11-04). A tree beside someone's torch is left too; there are other trees.
+    /// </summary>
+    public bool PartOfABuild(int x, int y, int z)
+    {
+        for (var dx = -BuildReach; dx <= BuildReach; dx++)
+        for (var dy = -BuildReach; dy <= BuildReach; dy++)
+        for (var dz = -BuildReach; dz <= BuildReach; dz++)
+            if (IsBuiltHere(x + dx, y + dy, z + dz)) return true;
+        return false;
+    }
+
+    private bool IsBuiltHere(int x, int y, int z)
+    {
+        var s = World.GetState(x, y, z);
+        if (s <= 0 || !IsBuiltBlock(World.Data.BlockOf(s))) return false;
+        lock (_placedByMe) return !_placedByMe.Contains((x, y, z));
+    }
 
     /// <summary>The default IsBuiltBlock. Ores are never "built" (redstone_ore is not a redstone part).</summary>
     public static bool DefaultIsBuiltBlock(BlockType block) =>

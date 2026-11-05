@@ -136,6 +136,8 @@ public class LiveDangerChoiceTests
         await _server.CommandAsync($"effect give {name} minecraft:resistance 30 4 true");
         var ax = 1000 + 200 * _nextStage++;
         const int az = 0;
+        // Only one stage held in memory: from about the 22nd stage on the server stopped loading new ones in time (8 tests in a row "on the floor" timed out).
+        if (_nextStage > 1) await _server.CommandAsync($"forceload remove {ax - 200 - 48} {az - 48} {ax - 200 + 48} {az + 48}");
         await _server.CommandAsync($"forceload add {ax - 48} {az - 48} {ax + 48} {az + 48}");
         await Task.Delay(1500);
         await _server.CommandAsync($"fill {ax - 20} 197 {az - 20} {ax + 20} 199 {az + 20} minecraft:stone");
@@ -591,6 +593,98 @@ public class LiveDangerChoiceTests
         await watch;
         Assert.That(went, Is.False, "the water does nothing about the heat that lit him");
         tasks.Stop();
+    }
+
+    [Test]
+    public async Task HisTunnels_GoRoundGravelOverhead()
+    {
+        // Solid rock with a sheet of gravel right over the straight way: dug under, it comes down on him.
+        var (client, _, _, ax, az) = await JoinAsync("Tunneller",
+            (x, z) => $"fill {x + 2} 183 {z - 12} {x + 19} 199 {z + 12} minecraft:stone",
+            (x, z) => $"fill {x + 4} 187 {z} {x + 5} 188 {z} minecraft:air",
+            (x, z) => $"fill {x + 6} 189 {z - 1} {x + 12} 189 {z + 1} minecraft:gravel");
+        await using var _ = client;
+        var (steps, complete) = client.Pathfinder.FindPath((ax + 4, 187, az), Goal.Block(ax + 14, 187, az), new PathOptions { CanDig = true, MaxNodes = 40_000, DigTicks = client.BestDigTicks });
+        TestContext.Out.WriteLine(string.Join(" ", steps.Select(s => $"{s.Kind}({s.X - ax},{s.Y},{s.Z - az})")));
+        Assert.That(complete, Is.True);
+        var dug = steps.SelectMany(s => s.Dig).ToList();
+        Assert.That(dug, Is.Not.Empty);
+        // Gravel he has already taken away is no danger: going through it on its own level is fine, with rock over it. What may not happen is opening a block under gravel still there.
+        var gone = new HashSet<(int, int, int)>();
+        foreach (var d in dug)
+        {
+            Assert.That(client.World.GetBlock(d.X, d.Y + 1, d.Z)?.Name == "minecraft:gravel" && !gone.Contains((d.X, d.Y + 1, d.Z)), Is.False, $"under gravel at {d.X - ax} {d.Y} {d.Z - az}");
+            gone.Add(d);
+        }
+    }
+
+    [Test]
+    public async Task ABlockThatWillNotComeAway_HeSaysSo_AndPlansRoundIt()
+    {
+        // A wall of dirt across the way, one block in it refused: adventure mode is a server saying no, as a claim or a protected area does.
+        var (client, _, _, ax, az) = await JoinAsync("Refused", (x, z) => $"fill {x + 2} 200 {z - 20} {x + 2} 201 {z + 20} minecraft:dirt");
+        await using var _ = client;
+        var notes = new List<string>();
+        client.DigNote = m => { lock (notes) notes.Add(m); TestContext.Out.WriteLine(m); };
+        await _server.CommandAsync("gamemode adventure Refused");
+        await Wait.UntilAsync(() => client.GameMode == GameMode.Adventure, Timeout, () => $"game mode {client.GameMode}");
+        Assert.That(await client.DigAsync(ax + 2, 200, az), Is.False, "the server keeps it");
+        Assert.That(client.World.GetBlock(ax + 2, 200, az)?.Name, Is.EqualTo("minecraft:dirt"));
+        Assert.That(client.DigRefused(ax + 2, 200, az), Is.True);
+        lock (notes) Assert.That(notes.Single(), Does.Contain("the server did not break it"));
+        await _server.CommandAsync("gamemode survival Refused");
+        await Wait.UntilAsync(() => client.GameMode == GameMode.Survival, Timeout, () => $"game mode {client.GameMode}");
+        // The plan does not count on that block again; the one beside it is as good as ever.
+        var (steps, complete) = client.Pathfinder.FindPath((ax, 200, az), Goal.XZ(ax + 4, az), new PathOptions { CanDig = true, MaxNodes = 20_000, DigTicks = client.BestDigTicks });
+        Assert.That(complete, Is.True);
+        Assert.That(steps.SelectMany(s => s.Dig), Does.Not.Contain((ax + 2, 200, az)));
+        Assert.That(steps.SelectMany(s => s.Dig), Is.Not.Empty, "it still digs, somewhere else");
+    }
+
+    [Test]
+    public async Task HeLeavesAHouseStanding_AndCutsTheTreeBeyondIt()
+    {
+        // A cabin: oak log corners, cobblestone footing, plank walls, a door. Nearer than the tree. All he wants is wood and stone.
+        var (client, skills, _, ax, az) = await JoinAsync("Guest",
+            (x, z) => $"fill {x + 4} 200 {z - 3} {x + 8} 200 {z + 3} minecraft:cobblestone",
+            (x, z) => $"fill {x + 4} 201 {z - 3} {x + 8} 203 {z + 3} minecraft:oak_planks hollow",
+            (x, z) => $"fill {x + 4} 201 {z - 3} {x + 4} 203 {z - 3} minecraft:oak_log",
+            (x, z) => $"fill {x + 8} 201 {z + 3} {x + 8} 203 {z + 3} minecraft:oak_log",
+            (x, z) => $"fill {x + 17} 200 {z} {x + 17} 204 {z} minecraft:birch_log");
+        await using var _ = client;
+        skills.Trace += m => TestContext.Out.WriteLine(m);
+        int Standing(string block) { var n = 0; for (var x = ax + 4; x <= ax + 8; x++) for (var y = 200; y <= 203; y++) for (var z = az - 3; z <= az + 3; z++) if (client.World.GetBlock(x, y, z)?.Name == block) n++; return n; }
+        var logs = Standing("minecraft:oak_log");
+        var stones = Standing("minecraft:cobblestone");
+        var planks = Standing("minecraft:oak_planks");
+        Assert.That(logs, Is.EqualTo(6));
+        using var cts = new CancellationTokenSource(TimeSpan.FromMinutes(2));
+        var (ok, said) = await skills.CollectAsync("wood", 3, cts.Token);
+        TestContext.Out.WriteLine(said);
+        Assert.That(ok, Is.True, said);
+        Assert.That(client.Inventory.Count("birch_log"), Is.GreaterThanOrEqualTo(1), "from the tree");
+        Assert.That(client.Inventory.Count("oak_log"), Is.EqualTo(0), "not from the house");
+        // And walking through to the far side, allowed to dig, he goes round.
+        var there = await client.GoToAsync(Goal.XZ(ax + 12, az), new PathOptions { CanDig = true, MaxNodes = 20_000 }, cts.Token);
+        Assert.That(there, Is.True);
+        Assert.That((Standing("minecraft:oak_log"), Standing("minecraft:cobblestone"), Standing("minecraft:oak_planks")), Is.EqualTo((logs, stones, planks)), "the house is as it was");
+    }
+
+    [Test]
+    public async Task WhatHePlacedHimself_IsHis_AndDoesNotMakeATreeOffLimits()
+    {
+        var (client, skills, _, ax, az) = await JoinAsync("Carpenter", (x, z) => $"fill {x + 4} 200 {z} {x + 4} 203 {z} minecraft:oak_log");
+        await using var _ = client;
+        Assert.That(client.PartOfABuild(ax + 4, 200, az), Is.False, "a tree by itself");
+        await _server.CommandAsync("give Carpenter minecraft:crafting_table");
+        await Wait.UntilAsync(() => client.Inventory.Count("crafting_table") > 0, Timeout, () => skills.InventorySummary());
+        Assert.That(await client.EquipAsync(s => s.Name == "minecraft:crafting_table"), Is.True);
+        Assert.That(await client.PlaceBlockAsync(ax + 2, 200, az), Is.True);
+        Assert.That(client.PartOfABuild(ax + 4, 200, az), Is.False, "his own table beside it");
+        // The same block, put there by someone else.
+        await _server.CommandAsync($"setblock {ax + 5} 200 {az} minecraft:crafting_table");
+        await Wait.UntilAsync(() => client.World.GetBlock(ax + 5, 200, az)?.Name == "minecraft:crafting_table", Timeout, () => "the table");
+        Assert.That(client.PartOfABuild(ax + 4, 200, az), Is.True, "someone else's");
     }
 
     [Test]

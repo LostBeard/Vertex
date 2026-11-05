@@ -326,23 +326,44 @@ public sealed partial class MinecraftClient
         if (DistanceToBlock(x, y, z) > BlockReach) return false;
         var face = FaceToward(x, y, z);
         LookAt(x + 0.5, y + 0.5, z + 0.5);
+        var started = DateTime.UtcNow;
+        var expected = TicksToBreak(state);
+        var tool = Inventory.MainHand.IsEmpty ? "bare hands" : Inventory.MainHand.Name;
+
+        void Note(string outcome)
+        {
+            var took = (DateTime.UtcNow - started).TotalSeconds;
+            if (outcome != "broken" || took > 2)
+                DigNote?.Invoke($"dig: {World.Data.BlockOf(state).Name} at {x} {y} {z} with {tool}: {took:0.0} s, expected {expected} ticks at the start, on the ground {OnGround}, head in water {EyeInWater()}: {outcome}");
+        }
 
         await SendActionAsync(0, x, y, z, face, cancellationToken); // START_DESTROY_BLOCK
         await SwingAsync(Hand.Main, cancellationToken);
         var progress = DestroyProgressPerTick(state);
+        var ticks = 0;
         while (progress < 1.0f)
         {
             await WaitTicksAsync(1, cancellationToken);
             var now = World.GetState(x, y, z);
             if (now != state)
             {
-                if (World.Data.IsAir(Math.Max(0, now))) return true; // broken by something else
+                if (World.Data.IsAir(Math.Max(0, now))) { Note("broken"); return true; } // broken by something else
                 await SendActionAsync(1, x, y, z, face, cancellationToken); // ABORT
+                Note("it changed into something else");
                 return false;
             }
             if (DistanceToBlock(x, y, z) > BlockReach + 0.5)
             {
                 await SendActionAsync(1, x, y, z, face, cancellationToken);
+                Note("out of reach");
+                return false;
+            }
+            // Past any block he should be spending this on: floating in water it is 25 times as slow, and stone by hand 187 seconds. There is always another block or a better place to stand (TJ: "he swings for a LONG time on a block", 2026-11-04).
+            if (++ticks > MaxDigTicks)
+            {
+                await SendActionAsync(1, x, y, z, face, cancellationToken);
+                Note($"gave up at {progress:P0}");
+                NoteRefusedDig(x, y, z);
                 return false;
             }
             LookAt(x + 0.5, y + 0.5, z + 0.5);
@@ -351,7 +372,26 @@ public sealed partial class MinecraftClient
         }
         if (World.Data.Hardness[state] > 0 && DestroyProgressPerTick(state) < 1.0f)
             await SendActionAsync(2, x, y, z, face, cancellationToken); // STOP_DESTROY_BLOCK (finish)
-        return await WaitUntilAsync(() => { var s = World.GetState(x, y, z); return s >= 0 && World.Data.IsAir(s) || s >= 0 && World.Data.BlockOf(s).Name != World.Data.BlockOf(state).Name; }, 20, cancellationToken);
+        var gone = await WaitUntilAsync(() => { var s = World.GetState(x, y, z); return s >= 0 && World.Data.IsAir(s) || s >= 0 && World.Data.BlockOf(s).Name != World.Data.BlockOf(state).Name; }, 20, cancellationToken);
+        Note(gone ? "broken" : "the server did not break it");
+        if (!gone) NoteRefusedDig(x, y, z);
+        return gone;
+    }
+
+    /// <summary>The longest he spends on one block.</summary>
+    public const int MaxDigTicks = 400;
+
+    /// <summary>A dig that went wrong or took over 2 seconds, in words: what it was, with what, how long, and how he stood. So that "he swings for a long time" has an answer in the log.</summary>
+    public Action<string>? DigNote { get; set; }
+
+    private readonly Dictionary<(int X, int Y, int Z), DateTime> _refusedDigs = [];
+
+    private void NoteRefusedDig(int x, int y, int z) { lock (_refusedDigs) _refusedDigs[(x, y, z)] = DateTime.UtcNow; }
+
+    /// <summary>Did this block not come away when he tried, in the last 5 minutes? Then a plan should not count on it: the same path planned again means the same swinging, a dozen times over.</summary>
+    public bool DigRefused(int x, int y, int z)
+    {
+        lock (_refusedDigs) return _refusedDigs.TryGetValue((x, y, z), out var at) && DateTime.UtcNow - at < TimeSpan.FromMinutes(5);
     }
 
     private async Task SendActionAsync(int status, int x, int y, int z, BlockFace face, CancellationToken ct)
@@ -466,6 +506,15 @@ public sealed partial class MinecraftClient
             return false;
         if (!InstaBuild) Inventory.PredictOneUsed(slot, held);
         LearnPlaced(held, tx, ty, tz, aboveBefore);
+        // His own work is his to take down. A bed or a door is two blocks, and he clicked for one.
+        NotePlacedByMe(tx, ty, tz);
+        var placed = World.GetState(tx, ty, tz);
+        foreach (var f in new[] { BlockFace.Down, BlockFace.Up, BlockFace.North, BlockFace.South, BlockFace.West, BlockFace.East })
+        {
+            var other = Offset((tx, ty, tz), f);
+            var s = World.GetState(other.X, other.Y, other.Z);
+            if (s > 0 && placed > 0 && World.Data.StateBlock[s] == World.Data.StateBlock[placed] && World.Data.BlockOf(placed).Name is var name && (name.EndsWith("_bed") || name.EndsWith("_door"))) NotePlacedByMe(other.X, other.Y, other.Z);
+        }
         return true;
     }
 
