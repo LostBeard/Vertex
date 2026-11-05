@@ -237,9 +237,14 @@ public sealed partial class Skills
             if (Find() is not { } animal) return $"I looked for a {kinds[0]} and found none.";
             Trace?.Invoke($"hunting a {kinds[0]} for {Plain(item)}");
             await EquipWeaponAsync(ct);
-            if (await FightAsync(animal.Id, null, ct))
-                await PickUpNearbyAsync((int)Math.Floor(animal.X), (int)Math.Floor(animal.Y), (int)Math.Floor(animal.Z), ct);
-            else if (client.Health < 6) return "I'm too hurt to hunt right now.";
+            var from = animal.DistanceTo(client.Position.X, client.Position.Y, client.Position.Z);
+            var fought = DateTime.UtcNow;
+            var before = client.Inventory.Count(item);
+            var won = await FightAsync(animal.Id, null, ct);
+            if (won) await PickUpNearbyAsync((int)Math.Floor(animal.X), (int)Math.Floor(animal.Y), (int)Math.Floor(animal.Z), ct);
+            // 16 hunts for string and not one string, live: this says whether he caught them and what he got (2026-11-04).
+            Trace?.Invoke($"hunted a {kinds[0]} from {from:0} blocks: {(won ? "killed it" : "did not")}, {(DateTime.UtcNow - fought).TotalSeconds:0} s, {client.Inventory.Count(item) - before} {Plain(item)}");
+            if (!won && client.Health < 6) return "I'm too hurt to hunt right now.";
         }
         return client.Inventory.Count(item) >= target ? null : $"I couldn't get enough {Plain(item)} from {kinds[0]}s.";
     }
