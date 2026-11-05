@@ -596,6 +596,28 @@ public class LiveDangerChoiceTests
     }
 
     [Test]
+    public async Task HuntingForWhatADropGives_HeWalksToItFromFarOff_AndPassesOverOneHeCannotReach()
+    {
+        // One sheep shut in a box of stone, close; one out in the open, a good walk beyond it. All the fight's own short steps did was stand and look at the first.
+        var (client, skills, _, ax, az) = await JoinAsync("Hunter",
+            (x, z) => $"fill {x + 5} 200 {z - 2} {x + 9} 203 {z + 2} minecraft:stone hollow",
+            (x, z) => $"summon minecraft:sheep {x + 7} 201 {z} {{NoAI:1b}}",
+            (x, z) => $"summon minecraft:sheep {x + 3} 200 {z - 18} {{NoAI:1b}}");
+        await using var _ = client;
+        skills.Trace += m => TestContext.Out.WriteLine(m);
+        try
+        {
+            using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(90));
+            var started = DateTime.UtcNow;
+            var (ok, said) = await skills.ObtainAsync("minecraft:mutton", 1, cts.Token);
+            TestContext.Out.WriteLine($"{said} in {(DateTime.UtcNow - started).TotalSeconds:0} s");
+            Assert.That(ok, Is.True, said);
+            Assert.That(client.Inventory.Count("mutton"), Is.GreaterThanOrEqualTo(1));
+        }
+        finally { await _server.CommandAsync("kill @e[type=minecraft:sheep]"); }
+    }
+
+    [Test]
     public async Task AtTheBottomOfAFloodedPit_HeDigsHisWayOut()
     {
         // Sheer rock all round, two blocks of water at the bottom and six of air over it: no swimming out. Every wall he could open has water beside it.

@@ -53,6 +53,7 @@ public sealed partial class Skills
     private async Task<(bool, string)> ObtainBedAsync(CancellationToken ct)
     {
         if (client.Inventory.Find(s => s.Name.EndsWith("_bed")).Any()) return (true, "I have a bed.");
+        var outOfReach = new HashSet<int>();
         for (var round = 0; round < 12; round++)
         {
             ct.ThrowIfCancellationRequested();
@@ -63,13 +64,11 @@ public sealed partial class Skills
                 var why = await ObtainStepAsync(bed, 1, [], ct);
                 return why == null ? (true, $"I made a {Plain(bed)}. I have: {InventorySummary()}.") : (false, $"I couldn't make a bed: {why}");
             }
-            Entity? Find() { var (x, y, z) = client.Position; return client.Entities.Values.Where(e => e.Name == "minecraft:sheep" && !IsBaby(e)).OrderBy(e => e.DistanceTo(x, y, z)).FirstOrDefault(); }
+            Entity? Find() { var (x, y, z) = client.Position; return client.Entities.Values.Where(e => e.Name == "minecraft:sheep" && !IsBaby(e) && !outOfReach.Contains(e.Id)).OrderBy(e => e.DistanceTo(x, y, z)).FirstOrDefault(); }
             var (_, legs, walked) = await LookOverLandAsync(() => Find() != null, 3, ct);
             if (Find() is not { } sheep) return (false, "I looked for sheep for a bed and found none" + Looked(legs, walked) + ".");
             Trace?.Invoke("hunting a sheep for its wool, for a bed");
-            await EquipWeaponAsync(ct);
-            if (await FightAsync(sheep.Id, null, ct))
-                await PickUpNearbyAsync((int)Math.Floor(sheep.X), (int)Math.Floor(sheep.Y), (int)Math.Floor(sheep.Z), ct);
+            await CatchAsync(sheep, outOfReach, ct);
         }
         return (false, "I couldn't get three wool of one colour.");
     }
@@ -225,10 +224,11 @@ public sealed partial class Skills
     private async Task<string?> HuntForAsync(string item, string[] kinds, int target, CancellationToken ct)
     {
         var names = kinds.Select(k => "minecraft:" + k).ToHashSet();
+        var outOfReach = new HashSet<int>();
         Entity? Find()
         {
             var (x, y, z) = client.Position;
-            return client.Entities.Values.Where(e => names.Contains(e.Name) && !IsBaby(e)).OrderBy(e => e.DistanceTo(x, y, z)).FirstOrDefault();
+            return client.Entities.Values.Where(e => names.Contains(e.Name) && !IsBaby(e) && !outOfReach.Contains(e.Id)).OrderBy(e => e.DistanceTo(x, y, z)).FirstOrDefault();
         }
         for (var round = 0; round < 8; round++)
         {
@@ -236,15 +236,7 @@ public sealed partial class Skills
             await LookOverLandAsync(() => Find() != null, 3, ct);
             if (Find() is not { } animal) return $"I looked for a {kinds[0]} and found none.";
             Trace?.Invoke($"hunting a {kinds[0]} for {Plain(item)}");
-            await EquipWeaponAsync(ct);
-            var from = animal.DistanceTo(client.Position.X, client.Position.Y, client.Position.Z);
-            var fought = DateTime.UtcNow;
-            var before = client.Inventory.Count(item);
-            var won = await FightAsync(animal.Id, null, ct);
-            if (won) await PickUpNearbyAsync((int)Math.Floor(animal.X), (int)Math.Floor(animal.Y), (int)Math.Floor(animal.Z), ct);
-            // 16 hunts for string and not one string, live: this says whether he caught them and what he got (2026-11-04).
-            Trace?.Invoke($"hunted a {kinds[0]} from {from:0} blocks: {(won ? "killed it" : "did not")}, {(DateTime.UtcNow - fought).TotalSeconds:0} s, {client.Inventory.Count(item) - before} {Plain(item)}");
-            if (!won && client.Health < 6) return "I'm too hurt to hunt right now.";
+            if (!await CatchAsync(animal, outOfReach, ct) && client.Health < 6) return "I'm too hurt to hunt right now.";
         }
         return client.Inventory.Count(item) >= target ? null : $"I couldn't get enough {Plain(item)} from {kinds[0]}s.";
     }
@@ -369,17 +361,47 @@ public sealed partial class Skills
     {
         // Fish too: he spent 19 minutes hungry at sea looking for cows with cod and salmon all round him (2026-11-04).
         var names = new HashSet<string> { "minecraft:cow", "minecraft:pig", "minecraft:chicken", "minecraft:sheep", "minecraft:rabbit", "minecraft:cod", "minecraft:salmon", "minecraft:tropical_fish" };
+        var out_of_reach = new HashSet<int>();
         for (var round = 0; round < 6 && EdibleStacks.Sum(s => s.Count) < pieces; round++)
         {
-            Entity? Find() { var (x, y, z) = client.Position; return client.Entities.Values.Where(e => names.Contains(e.Name) && !IsBaby(e)).OrderBy(e => e.DistanceTo(x, y, z)).FirstOrDefault(); }
+            Entity? Find() { var (x, y, z) = client.Position; return client.Entities.Values.Where(e => names.Contains(e.Name) && !IsBaby(e) && !out_of_reach.Contains(e.Id)).OrderBy(e => e.DistanceTo(x, y, z)).FirstOrDefault(); }
             var (_, legs, walked) = await LookOverLandAsync(() => Find() != null, 3, ct);
             if (Find() is not { } animal) return (false, "I looked for an animal to eat and found none" + Looked(legs, walked) + ".");
-            await EquipWeaponAsync(ct);
-            var won = await FightAsync(animal.Id, null, ct);
-            if (won) await PickUpNearbyAsync((int)Math.Floor(animal.X), (int)Math.Floor(animal.Y), (int)Math.Floor(animal.Z), ct);
-            else if (client.Health < 6) return (false, "I'm too hurt to hunt right now.");
+            if (!await CatchAsync(animal, out_of_reach, ct) && client.Health < 6) return (false, "I'm too hurt to hunt right now.");
         }
         return (EdibleStacks.Sum(s => s.Count) >= pieces, $"I have: {InventorySummary()}.");
+    }
+
+    /// <summary>
+    /// Goes to a creature and kills it, and picks up what falls. Going there is a walk of its own: he sees spiders 80 blocks off and more, and the fight's own short steps never got there: 16 hunts live, 13 given up after 9 seconds where he stood, 3 "killed" that had only
+    /// gone out of sight, no string, and so no bow (2026-11-04). One he cannot get to goes into `outOfReach`. True only when it died within his reach.
+    /// </summary>
+    private async Task<bool> CatchAsync(Entity target, HashSet<int> outOfReach, CancellationToken ct)
+    {
+        double Away() => target.DistanceTo(client.Position.X, client.Position.Y, client.Position.Z);
+        var from = Away();
+        var started = DateTime.UtcNow;
+        await EquipWeaponAsync(ct);
+        // Within a dozen blocks the fight's own steps do it, and they swim after fish, which a walk to where a fish was does not.
+        for (var hop = 0; hop < 8 && Away() > 12 && client.Entities.ContainsKey(target.Id); hop++)
+        {
+            var before = Away();
+            using var step = CancellationTokenSource.CreateLinkedTokenSource(ct);
+            step.CancelAfter(TimeSpan.FromSeconds(6));
+            try { await client.GoToAsync(Goal.Near(target.X, target.Y, target.Z, 2.5), new PathOptions { MaxNodes = 15_000, Sprint = true }, step.Token); }
+            catch (OperationCanceledException) when (!ct.IsCancellationRequested) { }
+            if (Away() > before - 1) break;      // no nearer
+        }
+        var killed = false;
+        if (!client.Entities.ContainsKey(target.Id) || Away() > 12) outOfReach.Add(target.Id);
+        else
+        {
+            killed = await FightAsync(target.Id, null, ct) && Away() < 6;
+            if (killed) await PickUpNearbyAsync((int)Math.Floor(target.X), (int)Math.Floor(target.Y), (int)Math.Floor(target.Z), ct);
+            else outOfReach.Add(target.Id);
+        }
+        Trace?.Invoke($"hunted a {target.Name.Bare().Replace('_', ' ')} from {from:0} blocks: {(killed ? "killed it" : "did not")}, {(DateTime.UtcNow - started).TotalSeconds:0} s");
+        return killed;
     }
 
     /// <summary>
