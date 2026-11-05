@@ -33,6 +33,8 @@ public class ToolChoiceTests
         _ai = TestAi.Create();
         var models = await _ai.ModelNamesAsync();
         _model = TestModel.Pick(models);
+        // An adapter from the training work, for the strict gate: its folder, or nothing for the base model.
+        if (Environment.GetEnvironmentVariable("VERTEX_ADAPTER") is { Length: > 0 } adapter) await _ai.Registry.SetAdapterAsync(_model, adapter);
         await _ai.EnsureChatReadyAsync(_model);
     }
 
