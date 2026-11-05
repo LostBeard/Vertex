@@ -170,6 +170,17 @@ public sealed partial class MinecraftClient
     {
         var tableBlock = World.Data.Block("crafting_table")!;
         var near = World.FindBlocks(s => s > 0 && World.Data.StateBlock[s] == tableBlock.Id, EyePosition, BlockReach - 0.5, 1);
+        // One in sight: walk over to it, as anyone would. He made a new one every time, with 9 of his own in view (TJ, 2026-11-05).
+        if (near.Count == 0)
+            foreach (var (wx, wy, wz) in World.FindBlocks(s => s > 0 && World.Data.StateBlock[s] == tableBlock.Id, EyePosition, 32, 3))
+            {
+                using var walk = CancellationTokenSource.CreateLinkedTokenSource(ct);
+                walk.CancelAfter(TimeSpan.FromSeconds(10));
+                try { await GoToAsync(new Pathing.GoalReachBlock(wx, wy, wz, BlockReach - 1), new Pathing.PathOptions { MaxNodes = 8_000 }, walk.Token); }
+                catch (OperationCanceledException) when (!ct.IsCancellationRequested) { }
+                near = World.FindBlocks(s => s > 0 && World.Data.StateBlock[s] == tableBlock.Id, EyePosition, BlockReach - 0.5, 1);
+                if (near.Count > 0) break;
+            }
         if (near.Count == 0)
         {
             if (Inventory.Count("crafting_table") == 0)

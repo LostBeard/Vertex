@@ -596,6 +596,24 @@ public class LiveDangerChoiceTests
     }
 
     [Test]
+    public async Task WithACraftingTableInSight_HeWalksToIt_AndMakesNoNewOne()
+    {
+        var (client, skills, _, ax, az) = await JoinAsync("Carpenter2", (x, z) => $"setblock {x + 14} 200 {z + 5} minecraft:crafting_table");
+        await using var _ = client;
+        await _server.CommandAsync("give Carpenter2 minecraft:oak_planks 8");
+        await _server.CommandAsync("give Carpenter2 minecraft:stick 4");
+        await Wait.UntilAsync(() => client.Inventory.Count("stick") >= 4, Timeout, () => skills.InventorySummary());
+        using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(45));
+        var (made, said) = await client.CraftItemAsync("wooden_pickaxe", 1, cts.Token);
+        Assert.That(made, Is.True, said);
+        var tables = 0;
+        for (var x = ax - 20; x <= ax + 20; x++) for (var z = az - 20; z <= az + 20; z++) for (var y = 200; y <= 203; y++) if (client.World.GetBlock(x, y, z)?.Name == "minecraft:crafting_table") tables++;
+        Assert.That(tables, Is.EqualTo(1), "the one that was there");
+        Assert.That(client.Inventory.Count("crafting_table"), Is.EqualTo(0));
+        Assert.That(client.Inventory.Count("oak_planks"), Is.GreaterThanOrEqualTo(5), "no planks spent on a table");
+    }
+
+    [Test]
     public async Task ASpiderComesToHim_ArmedAndWithNoBow_HeFightsItForTheString_WhateverHeThinksOfFighting()
     {
         var (client, skills, tasks, ax, az) = await JoinAsync("Stringer");
