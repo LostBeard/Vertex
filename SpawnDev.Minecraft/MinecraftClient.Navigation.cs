@@ -9,7 +9,7 @@ public sealed partial class MinecraftClient
 {
     private Pathfinder? _pathfinder;
 
-    public Pathfinder Pathfinder => _pathfinder ??= new Pathfinder(World) { MayNotDigAt = PartOfABuild, RefusedDigAt = DigRefused };
+    public Pathfinder Pathfinder => _pathfinder ??= new Pathfinder(World) { MayNotDigAt = PartOfABuild, RefusedDigAt = DigRefused, RefusedMove = MoveFailed };
 
     /// <summary>Raised with each new plan (for logging/visualising).</summary>
     public event Action<IReadOnlyList<PathStep>>? PathPlanned;
@@ -59,6 +59,14 @@ public sealed partial class MinecraftClient
         "minecraft:netherite_block", "minecraft:redstone_block", "minecraft:coal_block", "minecraft:copper_block",
     ];
 
+    private readonly Dictionary<((int X, int Y, int Z) From, (int X, int Y, int Z) To), DateTime> _failedMoves = [];
+
+    /// <summary>Did going from this block to that one get him nowhere, in the last 5 minutes?</summary>
+    public bool MoveFailed(int fx, int fy, int fz, int tx, int ty, int tz)
+    {
+        lock (_failedMoves) return _failedMoves.TryGetValue(((fx, fy, fz), (tx, ty, tz)), out var at) && DateTime.UtcNow - at < TimeSpan.FromMinutes(5);
+    }
+
     private readonly HashSet<(int X, int Y, int Z)> _placedByMe = [];
 
     /// <summary>He put a block here himself: nobody else's work.</summary>
@@ -103,6 +111,7 @@ public sealed partial class MinecraftClient
         // health), then dig. The caller's options are the starting point, never made stricter.
         var escalation = 0;
         var current = options;
+        var nowhere = 0;
         try
         {
             for (var attempt = 0; attempt < 12; attempt++)
@@ -136,9 +145,21 @@ public sealed partial class MinecraftClient
                     Log($"no path from {feet} ({(complete ? "already there" : "nothing reachable closer")})");
                     return goal.IsReached(feet.X, feet.Y, feet.Z);
                 }
+                var from = feet;
                 var followed = await FollowAsync(steps, current.Sprint, cancellationToken);
                 feet = FeetBlock;
                 if (goal.IsReached(feet.X, feet.Y, feet.Z)) return true;
+                // Tried, and not one block further: that move does not work, whatever the plan says, and planning it again is all he would do. TJ watched him jump 4 times, stop for 3 seconds and start over in a tunnel, more than 20 times (2026-11-05). Not again for 5
+                // minutes; three of those from one spot and this way is given up, so whoever asked can try something else.
+                if (!followed && feet == from)
+                {
+                    var step = steps[0];
+                    lock (_failedMoves) _failedMoves[(from, (step.X, step.Y, step.Z))] = DateTime.UtcNow;
+                    string At(int x, int y, int z) => World.GetBlock(x, y, z)?.Name.Replace("minecraft:", "") ?? "?";
+                    DigNote?.Invoke($"move failed: {step.Kind} from {from.X} {from.Y} {from.Z} (at {Position.Y:0.##}) to {step.X} {step.Y} {step.Z}; over me {At(from.X, from.Y + 2, from.Z)}, {At(from.X, from.Y + 3, from.Z)}; there {At(step.X, step.Y - 1, step.Z)} under, {At(step.X, step.Y, step.Z)}, {At(step.X, step.Y + 1, step.Z)}, {At(step.X, step.Y + 2, step.Z)}");
+                    if (++nowhere >= 3) return false;
+                }
+                else nowhere = 0;
                 if (!followed) Log($"path interrupted at {FeetBlock} (at {Position.X:0.##} {Position.Y:0.##} {Position.Z:0.##}, onGround {OnGround}), replanning");
                 else if (!complete) Log("partial path done, replanning");
             }

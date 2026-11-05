@@ -237,6 +237,9 @@ public sealed class Pathfinder
     /// <summary>Blocks that may not be dug on the way, for where they are and not what they are (something someone built round them). Null: nothing of the kind.</summary>
     public Func<int, int, int, bool>? MayNotDigAt { get; set; }
 
+    /// <summary>This move, from a feet block to another, got him nowhere when he tried it just now.</summary>
+    public Func<int, int, int, int, int, int, bool>? RefusedMove { get; set; }
+
     /// <summary>This very block did not come away when he tried it just now.</summary>
     public Func<int, int, int, bool>? RefusedDigAt { get; set; }
 
@@ -278,6 +281,7 @@ public sealed class Pathfinder
             var gn = g[n];
             foreach (var (next, cost, step) in Neighbours(n, options))
             {
+                if (RefusedMove?.Invoke(n.X, n.Y, n.Z, next.X, next.Y, next.Z) == true) continue;
                 var ng = gn + cost + (ExtraCost?.Invoke(next.X, next.Y, next.Z) ?? 0);
                 if (g.TryGetValue(next, out var old) && old <= ng) continue;
                 g[next] = ng;

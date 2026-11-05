@@ -596,6 +596,50 @@ public class LiveDangerChoiceTests
     }
 
     [Test]
+    public async Task AMoveThatGetsHimNowhere_IsNotTriedAgain_AndTheWayIsGivenUpSoon()
+    {
+        // A block the server keeps and he cannot know it: he stands in a one-wide tunnel with a way out ahead of him, and he is put back every time he takes it (a server plugin, a stuck position: what it is does not matter). Teleporting him back is how
+        // this test says no.
+        var (client, _, _, ax, az) = await JoinAsync("Boxed",
+            (x, z) => $"fill {x + 2} 200 {z - 1} {x + 14} 203 {z + 1} minecraft:stone",
+            (x, z) => $"fill {x + 3} 200 {z} {x + 13} 201 {z} minecraft:air");
+        await using var _ = client;
+        var notes = new List<string>();
+        client.DigNote = m => { lock (notes) notes.Add(m); TestContext.Out.WriteLine(m); };
+        await _server.CommandAsync($"tp Boxed {ax + 8.5} 200 {az + 0.5}");
+        await Wait.UntilAsync(() => client.FeetBlock.X == ax + 8 && client.OnGround, Timeout, () => $"at {client.FeetBlock}");
+        using var stop = new CancellationTokenSource();
+        var keeper = Task.Run(async () =>
+        {
+            while (!stop.IsCancellationRequested)
+            {
+                if (client.FeetBlock.X != ax + 8) await _server.CommandAsync($"tp Boxed {ax + 8.5} 200 {az + 0.5}");
+                await Task.Delay(100);
+            }
+        });
+        try
+        {
+            using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(60));
+            var started = DateTime.UtcNow;
+            var there = await client.GoToAsync(Goal.Block(ax + 12, 200, az), new PathOptions { MaxNodes = 5_000 }, cts.Token);
+            var took = DateTime.UtcNow - started;
+            TestContext.Out.WriteLine($"{there} in {took.TotalSeconds:0} s, {notes.Count} notes");
+            Assert.That(there, Is.False);
+            Assert.That(took, Is.LessThan(TimeSpan.FromSeconds(45)), "not a dozen tries of the same thing");
+        }
+        finally
+        {
+            await stop.CancelAsync();
+            await keeper;
+        }
+        // And the move written down as failed is one no plan takes: this tunnel has no other way along it.
+        Assert.That(client.MoveFailed(ax + 8, 200, az, ax + 9, 200, az), Is.True);
+        var (_, complete) = client.Pathfinder.FindPath((ax + 8, 200, az), Goal.Block(ax + 12, 200, az), new PathOptions { MaxNodes = 5_000 });
+        Assert.That(complete, Is.False, "not that way again");
+        lock (notes) Assert.That(notes.Any(n => n.StartsWith("move failed")), Is.True, "and the log says what stopped him");
+    }
+
+    [Test]
     public async Task WithACraftingTableInSight_HeWalksToIt_AndMakesNoNewOne()
     {
         var (client, skills, _, ax, az) = await JoinAsync("Carpenter2", (x, z) => $"setblock {x + 14} 200 {z + 5} minecraft:crafting_table");
