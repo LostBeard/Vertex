@@ -2297,44 +2297,55 @@ public sealed partial class Skills(MinecraftClient client)
     {
         var until = DateTime.UtcNow.AddSeconds(25);
         var swims = 0;
+        var risenAt = (Tick: 0, Y: client.Position.Y);
+        var ticks = 0;
         try
         {
             while (DateTime.UtcNow < until && client.Air < PlayerFullAir - 20)
             {
                 ct.ThrowIfCancellationRequested();
                 var (x, y, z) = client.FeetBlock;
-                if (RoofOver(x, y, z) is not { } roof)
+                // Going up with nothing in the way, as far as he can tell, and not rising: then something is in the way. He jumped under open-looking water at y 53 for 20 seconds and drowned without moving (2026-11-04).
+                if (client.Position.Y > risenAt.Y + 0.3) risenAt = (ticks, client.Position.Y);
+                var stuck = ticks - risenAt.Tick > 20;
+                if (RoofOver(x, y, z) is not { } roof && !stuck)
                 {
                     client.Controls.Forward = false;
                     client.Controls.Jump = true;
                     await client.WaitTicksAsync(1, ct);
+                    ticks++;
                     continue;
                 }
                 client.Controls.Clear();
-                if (swims < 2 && NearestBreath(x, y, z) is { } air)
+                if (swims < 2 && NearestBreath(x, y, z) is { Count: > 0 } way)
                 {
                     swims++;
-                    Trace?.Invoke($"under a roof with {client.Air / 20} seconds of breath: swimming for the air at {air.X} {air.Y} {air.Z}");
-                    using var hop = CancellationTokenSource.CreateLinkedTokenSource(ct);
-                    hop.CancelAfter(TimeSpan.FromSeconds(6));
-                    try { await client.GoToAsync(Goal.Block(air.X, air.Y, air.Z), new PathOptions { MaxNodes = 3_000 }, hop.Token); }
-                    catch (OperationCanceledException) when (!ct.IsCancellationRequested) { }
+                    var air = way[^1];
+                    Trace?.Invoke($"under a roof with {client.Air / 20} seconds of breath: swimming {way.Count} blocks for the air at {air.X} {air.Y} {air.Z}");
+                    await SwimAlongAsync(way, ct);
+                    risenAt = (ticks, client.Position.Y);
                     continue;
                 }
-                // Nothing to swim to. A roof out of reach he goes up to first.
-                if (roof > y + 2 || client.DistanceToBlock(x, roof, z) > client.BlockReach)
+                // Nothing to swim to, or swimming did not do it: through whatever is over his head. A roof out of reach he goes up to first.
+                var solid = SolidAbove(x, y, z);
+                if (solid == null || client.DistanceToBlock(x, solid.Value, z) > client.BlockReach)
                 {
+                    if (stuck) Trace?.Invoke($"not rising, and nothing to break: at {client.Position.X:0.##} {client.Position.Y:0.##} {client.Position.Z:0.##}, over me {string.Join(", ", Enumerable.Range(1, 3).Select(d => client.World.GetBlock(x, y + d, z)?.Name.Bare() ?? "?"))}");
+                    risenAt = (ticks, client.Position.Y);
                     client.Controls.Jump = true;
                     await client.WaitTicksAsync(1, ct);
+                    ticks++;
                     continue;
                 }
-                var state = client.World.GetState(x, roof, z);
-                if (D.Hardness[state] < 0 || LavaAround(x, roof, z)) return (false, "There's no air I can reach, and I can't break through the roof over me.");
-                Trace?.Invoke($"under a roof with no air in reach and {client.Air / 20} seconds of breath: digging up through {x} {roof} {z}");
+                var state = client.World.GetState(x, solid.Value, z);
+                if (D.Hardness[state] < 0 || LavaAround(x, solid.Value, z)) return (false, "There's no air I can reach, and I can't break through the roof over me.");
+                Trace?.Invoke($"under a roof with no air in reach and {client.Air / 20} seconds of breath: digging up through {x} {solid} {z}");
                 await client.EquipBestToolAsync(state, ct);
-                await client.DigAsync(x, roof, z, ct);
+                await client.DigAsync(x, solid.Value, z, ct);
                 client.Controls.Jump = true;
                 await client.WaitTicksAsync(10, ct);
+                ticks += 10;
+                risenAt = (ticks, client.Position.Y);
             }
         }
         finally { client.Controls.Clear(); }
@@ -2342,6 +2353,41 @@ public sealed partial class Skills(MinecraftClient client)
     }
 
     private const int PlayerFullAir = 300;
+
+    /// <summary>The lowest solid block within reach over his feet, whatever is between, or null.</summary>
+    private int? SolidAbove(int x, int y, int z)
+    {
+        for (var by = y + 1; by <= y + 6; by++)
+        {
+            var s = client.World.GetState(x, by, z);
+            if (s > 0 && D.HasCollision(s)) return by;
+        }
+        return null;
+    }
+
+    /// <summary>Follows a way through the water, block by block, steering himself: a path finder that gives up or plans anew costs seconds he has not got. False if a block takes over a second.</summary>
+    private async Task<bool> SwimAlongAsync(List<(int X, int Y, int Z)> way, CancellationToken ct)
+    {
+        try
+        {
+            foreach (var (wx, wy, wz) in way)
+            {
+                for (var tick = 0; client.FeetBlock != (wx, wy, wz); tick++)
+                {
+                    ct.ThrowIfCancellationRequested();
+                    if (tick > 24) return false;
+                    var (fx, fy, fz) = client.FeetBlock;
+                    client.LookAt(wx + 0.5, client.EyePosition.Y, wz + 0.5);
+                    client.Controls.Forward = fx != wx || fz != wz;
+                    client.Controls.Jump = wy >= fy;       // (level too: he sinks otherwise)
+                    client.Controls.Sneak = wy < fy;
+                    await client.WaitTicksAsync(1, ct);
+                }
+            }
+            return true;
+        }
+        finally { client.Controls.Clear(); }
+    }
 
     /// <summary>Is there rock between him and the air, head under water? For the reflex: under a roof half a breath is not enough, and he goes sooner.</summary>
     public bool UnderRoofUnderWater() { var (x, y, z) = client.FeetBlock; return RoofOver(x, y, z) != null; }
@@ -2359,23 +2405,29 @@ public sealed partial class Skills(MinecraftClient client)
         return null;
     }
 
-    /// <summary>Where his feet go to have his head in the air, by the fewest moves through open water, or null if none within what half a breath can swim (about 2 blocks a second).</summary>
-    private (int X, int Y, int Z)? NearestBreath(int x, int y, int z)
+    /// <summary>The blocks his feet go through until his head is in the air, by the fewest moves through open water, or null if none within what half a breath can swim (about 2 blocks a second).</summary>
+    private List<(int X, int Y, int Z)>? NearestBreath(int x, int y, int z)
     {
         bool Open(int ax, int ay, int az) { var s = client.World.GetState(ax, ay, az); return s >= 0 && !D.HasCollision(s) && (D.StateFlags[s] & GameData.FlagLava) == 0; }
         bool Air(int ax, int ay, int az) => Open(ax, ay, az) && (D.StateFlags[client.World.GetState(ax, ay, az)] & GameData.FlagWater) == 0;
-        var seen = new HashSet<(int, int, int)> { (x, y, z) };
+        var from = new Dictionary<(int X, int Y, int Z), (int X, int Y, int Z)> { [(x, y, z)] = (x, y, z) };
         var queue = new Queue<(int X, int Y, int Z, int Moves)>();
         queue.Enqueue((x, y, z, 0));
         while (queue.Count > 0)
         {
             var c = queue.Dequeue();
-            if (Air(c.X, c.Y + 1, c.Z)) return (c.X, c.Y, c.Z);
+            if (Air(c.X, c.Y + 1, c.Z))
+            {
+                var way = new List<(int X, int Y, int Z)>();
+                for (var at = (c.X, c.Y, c.Z); at != (x, y, z); at = from[at]) way.Add(at);
+                way.Reverse();
+                return way;
+            }
             if (c.Moves >= 16) continue;
             foreach (var (dx, dy, dz) in new[] { (1, 0, 0), (-1, 0, 0), (0, 0, 1), (0, 0, -1), (0, 1, 0), (0, -1, 0) })
             {
-                var n = (c.X + dx, c.Y + dy, c.Z + dz);
-                if (Open(n.Item1, n.Item2, n.Item3) && Open(n.Item1, n.Item2 + 1, n.Item3) && seen.Add(n)) queue.Enqueue((n.Item1, n.Item2, n.Item3, c.Moves + 1));
+                var n = (X: c.X + dx, Y: c.Y + dy, Z: c.Z + dz);
+                if (Open(n.X, n.Y, n.Z) && Open(n.X, n.Y + 1, n.Z) && from.TryAdd(n, (c.X, c.Y, c.Z))) queue.Enqueue((n.X, n.Y, n.Z, c.Moves + 1));
             }
         }
         return null;

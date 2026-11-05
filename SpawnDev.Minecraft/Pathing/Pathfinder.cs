@@ -155,6 +155,16 @@ public sealed class Pathfinder
     private bool OverClimbable(int x, int y, int z) => Clear(x, y, z) && IsClimbable(State(x, y - 1, z));
     private bool IsFluid(int state) => state > 0 && (_data.StateFlags[state] & (GameData.FlagWater | GameData.FlagLava)) != 0;
     private bool IsWater(int state) => state > 0 && (_data.StateFlags[state] & GameData.FlagWater) != 0;
+    private bool Falls(int state) => state > 0 && (_data.BlockOf(state).Name is "minecraft:sand" or "minecraft:red_sand" or "minecraft:gravel" or "minecraft:suspicious_sand" or "minecraft:suspicious_gravel" || _data.BlockOf(state).Name.EndsWith("_concrete_powder"));
+
+    /// <summary>Would breaking this block let water or lava in: beside it, over it, or over a stack of sand or gravel that comes down when it goes (the sea bed)?</summary>
+    private bool LetsFluidIn(int x, int y, int z)
+    {
+        if (IsFluid(State(x + 1, y, z)) || IsFluid(State(x - 1, y, z)) || IsFluid(State(x, y, z + 1)) || IsFluid(State(x, y, z - 1))) return true;
+        var up = y + 1;
+        while (Falls(State(x, up, z))) up++;
+        return IsFluid(State(x, up, z));
+    }
     /// <summary>
     /// A wooden door or fence gate, or a modded block learned to be one (MinecraftClient.LearnUseAsync): walked
     /// through (opened first when closed), straight along its axis.
@@ -359,7 +369,7 @@ public sealed class Pathfinder
                     dig.Add((x, n.Y + dy, z));
                 }
                 // Never dig into fluid (a lava/water flood) and need a floor on the other side.
-                if (ok && dig.Count > 0 && !IsFluid(State(x, n.Y + 2, z)) && Solid(State(x, n.Y - 1, z)) && Top(State(x, n.Y - 1, z)) >= 1.0)
+                if (ok && dig.Count > 0 && !IsFluid(State(x, n.Y + 2, z)) && !dig.Any(c => LetsFluidIn(c.Item1, c.Item2, c.Item3)) && Solid(State(x, n.Y - 1, z)) && Top(State(x, n.Y - 1, z)) >= 1.0)
                     yield return (new Node(x, n.Y, z), 1 + 2 + ticks / 10.0, new PathStep(x, n.Y, z, MoveKind.DigThrough, dig.ToArray(), null));
 
                 // A stair up: the block ahead at foot level stays as the step; clear the two above it, and the one over his head to jump. Without this nothing dug can be climbed out of: he mined stone at his
@@ -378,8 +388,8 @@ public sealed class Pathfinder
                         stairTicks += t;
                         stair.Add((sx, sy, sz));
                     }
-                    // Nothing that would pour in from above what he opens.
-                    if (stairOk && stair.Count > 0 && !IsFluid(State(x, n.Y + 3, z)) && !IsFluid(State(n.X, n.Y + 3, n.Z)))
+                    // Nothing that would pour in from above what he opens, or come down on his head: going up from a mine he opened the sand of the sea bed and died under it (TJ watched, 2026-11-04).
+                    if (stairOk && stair.Count > 0 && !IsFluid(State(x, n.Y + 3, z)) && !IsFluid(State(n.X, n.Y + 3, n.Z)) && !stair.Any(c => LetsFluidIn(c.Item1, c.Item2, c.Item3) || Falls(State(c.Item1, c.Item2 + 1, c.Item3))))
                         yield return (new Node(x, n.Y + 1, z), 3 + 2 + stairTicks / 10.0, new PathStep(x, n.Y + 1, z, MoveKind.JumpUp, stair.ToArray(), null));
                 }
             }

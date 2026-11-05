@@ -594,6 +594,51 @@ public class LiveDangerChoiceTests
     }
 
     [Test]
+    public async Task UnderSandUnderTheSea_HeDigsUpThroughIt_AndComesUp()
+    {
+        // What he did live, and drowned in: a flooded pocket under the sand of the sea bed, with the sea over that.
+        var (client, skills, tasks, ax, az) = await JoinAsync("Seafloor",
+            (x, z) => $"fill {x + 4} 183 {z - 6} {x + 16} 199 {z + 6} minecraft:stone",
+            (x, z) => $"fill {x + 9} 187 {z - 1} {x + 11} 188 {z + 1} minecraft:water",
+            (x, z) => $"fill {x + 9} 189 {z - 1} {x + 11} 191 {z + 1} minecraft:sand",
+            (x, z) => $"fill {x + 9} 192 {z - 1} {x + 11} 199 {z + 1} minecraft:water");
+        await using var _ = client;
+        await _server.CommandAsync("give Seafloor minecraft:iron_pickaxe");
+        await Wait.UntilAsync(() => skills.InventorySummary().Contains("iron pickaxe"), Timeout, () => skills.InventorySummary());
+        var hurts = new List<string>();
+        client.Damaged += d => { lock (hurts) hurts.Add(d.Type); };
+        using var reflexes = new Reflexes(client, skills, tasks, () => Character.BuiltIn[0].Style);
+        skills.Trace += m => TestContext.Out.WriteLine(m);
+        await _server.CommandAsync($"tp Seafloor {ax + 10.5} 187 {az + 0.5}");
+        await Wait.UntilAsync(() => client.FeetBlock.Y <= 188 && client.Air < 280, Timeout, () => $"going under, at {client.FeetBlock}, air {client.Air}");
+        await Wait.UntilAsync(() => client.Air >= 280, TimeSpan.FromSeconds(45), () => $"breath back (air {client.Air}, at {client.FeetBlock}, doing {tasks.Current}, hurt by {string.Join(",", hurts.Distinct())})");
+        TestContext.Out.WriteLine($"came up at {client.FeetBlock}, health {client.Health}, hurt by {string.Join(",", hurts)}");
+        Assert.That(client.Health, Is.GreaterThan(0f));
+        tasks.Stop();
+    }
+
+    [Test]
+    public async Task HisPaths_DoNotDigUpIntoTheSeaBed_NorBesideWater()
+    {
+        // A room with its ceiling of sand under the sea, water behind one wall, and plain rock the other way. Going where he must dig, he goes through the rock.
+        var (client, _, _, ax, az) = await JoinAsync("Seabed",
+            (x, z) => $"fill {x + 2} 183 {z - 12} {x + 19} 199 {z + 14} minecraft:stone",
+            (x, z) => $"fill {x + 8} 187 {z - 2} {x + 12} 189 {z + 2} minecraft:air",
+            (x, z) => $"fill {x + 8} 190 {z - 2} {x + 12} 191 {z + 2} minecraft:sand",
+            (x, z) => $"fill {x + 8} 192 {z - 2} {x + 12} 199 {z + 2} minecraft:water",
+            (x, z) => $"fill {x + 14} 187 {z - 4} {x + 16} 192 {z + 4} minecraft:water");
+        await using var _ = client;
+        int cx = ax + 10;
+        var (steps, complete) = client.Pathfinder.FindPath((cx, 187, az), Goal.XZ(cx, az + 12), new PathOptions { CanDig = true, MaxNodes = 40_000, DigTicks = client.BestDigTicks });
+        TestContext.Out.WriteLine(string.Join(" ", steps.Select(s => $"{s.Kind}({s.X - cx},{s.Y},{s.Z - az})")));
+        Assert.That(complete, Is.True, "there is a way through the rock");
+        var dug = steps.SelectMany(s => s.Dig).ToList();
+        Assert.That(dug, Is.Not.Empty);
+        Assert.That(dug.Any(d => d.Y >= 190 && Math.Abs(d.X - cx) <= 2 && Math.Abs(d.Z - az) <= 2), Is.False, "not up into the sand");
+        Assert.That(dug.Any(d => d.X == cx + 3), Is.False, "not the wall with water behind it");
+    }
+
+    [Test]
     public async Task UnderARoofInAFloodedCave_HeSwimsToTheAirThereIs()
     {
         // Two-high flooded tunnel in solid rock, open water nowhere over him; a pocket of air six or so blocks along. Straight up is all he used to know: he drowned like this in iron tools, live.
