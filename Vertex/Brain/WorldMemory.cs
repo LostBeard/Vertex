@@ -49,6 +49,9 @@ public sealed class WorldMemory
     public Dictionary<Guid, PlayerMemory> People { get; set; } = [];
     /// <summary>Long-running goals, finished ones included (Done set).</summary>
     public List<Objective> Goals { get; set; } = [];
+    /// <summary>What he has found about beds on this server: how many in a row did not bring him back, and when the last one failed.</summary>
+    public int BedsThatDidNotHold { get; set; }
+    public DateTime? LastBedFailed { get; set; }
 
     private string? _path;
 

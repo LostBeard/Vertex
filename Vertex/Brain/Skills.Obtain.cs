@@ -291,7 +291,7 @@ public sealed partial class Skills
         yield return new("minecraft:wooden_sword", 1, "a wooden sword", () => BestWeaponName != null);
         // Before anything else that a death would cost him: a bed is the one thing that stays, and without one every death puts him back where he started, however far that is.
         // His own, set as where he comes back to: a bed standing within 96 blocks counted as done, and at 11:47 on 2026-11-04 he went on to iron with his respawn still on the burning island, and lost it all at nightfall.
-        yield return new("bed", 1, "a bed of my own", () => HomeBed != null);
+        yield return new("bed", 1, "a bed of my own", () => HomeBed != null || BedsDoNotHold);
         yield return new("food", 3, "some food", () => EdibleStacks.Sum(s => s.Count) >= 3);
         yield return new("minecraft:stone_pickaxe", 1, "a stone pickaxe", () => HasPickaxe(2));
         yield return new("minecraft:stone_sword", 1, "a stone sword", () => HasAny("stone_sword", "iron_sword", "diamond_sword", "netherite_sword"));
@@ -518,15 +518,28 @@ public sealed partial class Skills
     /// <summary>Where he last made his bed the place he comes back to, or null. Kept by the brain across restarts.</summary>
     public (int X, int Y, int Z)? HomeBed { get; set; }
 
-    /// <summary>He came back after a death: if not at his bed, the bed is gone or blocked (the game says so by putting him elsewhere), and getting one is on the list again.</summary>
+    /// <summary>How many beds in a row he set and did not come back to, on this server, and when the last one failed. Kept by the brain across restarts.</summary>
+    public int BedsThatDidNotHold { get; set; }
+    public DateTime? LastBedFailed { get; set; }
+
+    /// <summary>
+    /// Have beds shown they do not work here? Two in a row is enough to stop looking for sheep. He is told none of a server's rules: a plugin may send everyone to spawn, or a bed may just have been broken, and all he can know is what happens to him, as on a friend's server that knows him
+    /// from no other player (TJ, 2026-11-05: "Vertex should play by the same rules as everyone else"). Rules change, so after a day he gives it another try.
+    /// </summary>
+    public bool BedsDoNotHold => BedsThatDidNotHold >= 2 && LastBedFailed is { } failed && DateTime.UtcNow - failed < TimeSpan.FromDays(1);
+
+    /// <summary>He came back after a death: at his bed, beds work here. If not, the bed is gone, blocked or does nothing on this server (the game says which only by where it puts him), and getting one is on the list again unless that is twice now.</summary>
     public void NoteRespawned()
     {
         if (HomeBed is not { } bed) return;
         var (x, _, z) = client.FeetBlock;
         if (Math.Abs(x - bed.X) > 16 || Math.Abs(z - bed.Z) > 16)
         {
-            Trace?.Invoke($"I came back at {x} {z}, not at my bed at {bed.X} {bed.Z}: it must be gone");
+            BedsThatDidNotHold++;
+            LastBedFailed = DateTime.UtcNow;
+            Trace?.Invoke(BedsDoNotHold ? $"I came back at {x} {z}, not at my bed at {bed.X} {bed.Z}: that is {BedsThatDidNotHold} beds now, so I will not count on beds on this server for a while" : $"I came back at {x} {z}, not at my bed at {bed.X} {bed.Z}: it must be gone");
             HomeBed = null;
         }
+        else BedsThatDidNotHold = 0;
     }
 }

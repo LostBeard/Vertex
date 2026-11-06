@@ -596,6 +596,39 @@ public class LiveDangerChoiceTests
     }
 
     [Test]
+    public async Task BedsThatDoNotBringHimBack_TwiceOverHeStopsWorkingTowardOne_AndABedThatDoesClearsIt()
+    {
+        var (client, skills, _, ax, az) = await JoinAsync("Sleeper");
+        await using var _ = client;
+        var bedStep = skills.Milestones().First(m => m.Item == "bed");
+        Assert.That(bedStep.Done(), Is.False, "a bed is on his list");
+
+        // He "comes back" far from a bed he set.
+        skills.HomeBed = (ax + 500, 200, az);
+        skills.NoteRespawned();
+        Assert.That(skills.HomeBed, Is.Null);
+        Assert.That(skills.BedsDoNotHold, Is.False, "one could just have been broken");
+        Assert.That(bedStep.Done(), Is.False);
+
+        skills.HomeBed = (ax + 500, 200, az);
+        skills.NoteRespawned();
+        Assert.That(skills.BedsDoNotHold, Is.True, "twice in a row: not on this server");
+        Assert.That(bedStep.Done(), Is.True, "so he goes on to what can help him");
+
+        // Rules change: after a day he tries again.
+        skills.LastBedFailed = DateTime.UtcNow.AddDays(-2);
+        Assert.That(skills.BedsDoNotHold, Is.False);
+        Assert.That(bedStep.Done(), Is.False);
+
+        // And coming back at one says they work.
+        skills.LastBedFailed = DateTime.UtcNow;
+        skills.HomeBed = (ax, 200, az);
+        skills.NoteRespawned();
+        Assert.That(skills.HomeBed, Is.Not.Null);
+        Assert.That(skills.BedsThatDidNotHold, Is.EqualTo(0));
+    }
+
+    [Test]
     public async Task AMoveThatGetsHimNowhere_IsNotTriedAgain_AndTheWayIsGivenUpSoon()
     {
         // A block the server keeps and he cannot know it: he stands in a one-wide tunnel with a way out ahead of him, and he is put back every time he takes it (a server plugin, a stuck position: what it is does not matter). Teleporting him back is how

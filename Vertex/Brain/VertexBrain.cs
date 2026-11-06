@@ -473,12 +473,17 @@ public sealed class VertexBrain : IBody
         if (Skills.Home is { } home) Memory.SetPlace(HomePlace, Client.World.Dimension, home.X, y, home.Z, null);
         if (Skills.HomeBed is { } bed) Memory.SetPlace(BedPlace, Client.World.Dimension, bed.X, bed.Y, bed.Z, null);
         else Memory.ForgetPlace(BedPlace);
+        Memory.BedsThatDidNotHold = Skills.BedsThatDidNotHold;
+        Memory.LastBedFailed = Skills.LastBedFailed;
+        Memory.Save();
     }
 
     private void LoadHome()
     {
         if (Memory.FindPlace(HomePlace) is { } home && home.Dimension == Client.World.Dimension) Skills.Home = (home.X, home.Z);
         if (Memory.FindPlace(BedPlace) is { } bed && bed.Dimension == Client.World.Dimension) Skills.HomeBed = (bed.X, bed.Y, bed.Z);
+        Skills.BedsThatDidNotHold = Memory.BedsThatDidNotHold;
+        Skills.LastBedFailed = Memory.LastBedFailed;
     }
 
     private DamageInfo? _lastDamage;
