@@ -2336,6 +2336,15 @@ public sealed partial class Skills(MinecraftClient client)
                     continue;
                 }
                 client.Controls.Clear();
+                // Off centre he is as wide as the rock beside a one-block hole: head against it, under his own way out, he jumped until he drowned (seen on Paper, 2026-11-05).
+                var (px, _, pz) = client.Position;
+                if (stuck && (Math.Abs(px - x - 0.5) > 0.2 || Math.Abs(pz - z - 0.5) > 0.2))
+                {
+                    await CentreInBlockAsync(x, z, ct);
+                    ticks += 10;
+                    risenAt = (ticks, client.Position.Y);
+                    continue;
+                }
                 if (swims < 2 && NearestBreath(x, y, z) is { Count: > 0 } way)
                 {
                     swims++;
@@ -2361,6 +2370,7 @@ public sealed partial class Skills(MinecraftClient client)
                 Trace?.Invoke($"under a roof with no air in reach and {client.Air / 20} seconds of breath: digging up through {x} {solid} {z}");
                 await client.EquipBestToolAsync(state, ct);
                 await client.DigAsync(x, solid.Value, z, ct);
+                await CentreInBlockAsync(x, z, ct);
                 client.Controls.Jump = true;
                 await client.WaitTicksAsync(10, ct);
                 ticks += 10;
@@ -2382,6 +2392,24 @@ public sealed partial class Skills(MinecraftClient client)
             if (s > 0 && D.HasCollision(s)) return by;
         }
         return null;
+    }
+
+    /// <summary>Steers to the middle of the block he is in, close enough that his body fits a one-block hole (he is 0.6 wide), for up to a second, still swimming up.</summary>
+    private async Task CentreInBlockAsync(int x, int z, CancellationToken ct)
+    {
+        try
+        {
+            for (var tick = 0; tick < 20; tick++)
+            {
+                var (px, _, pz) = client.Position;
+                if (Math.Abs(px - x - 0.5) <= 0.15 && Math.Abs(pz - z - 0.5) <= 0.15) return;
+                client.LookAt(x + 0.5, client.EyePosition.Y, z + 0.5);
+                client.Controls.Forward = true;
+                client.Controls.Jump = true;
+                await client.WaitTicksAsync(1, ct);
+            }
+        }
+        finally { client.Controls.Forward = false; }
     }
 
     /// <summary>Follows a way through the water, block by block, steering himself: a path finder that gives up or plans anew costs seconds he has not got. False if a block takes over a second.</summary>

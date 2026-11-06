@@ -374,7 +374,12 @@ public sealed class Reflexes : IDisposable
         // With something to shoot with and room to draw (under 5 blocks ShootAsync fights by hand instead, and at low health it stops at once).
         if (_skills.CanShoot && foe.DistanceTo(x, y, z) >= 6 && c.Health >= 6) legal.Add(DangerAction.Shoot);
         legal.RemoveAll(a => _armBlockedUntil.GetValueOrDefault(a) > _tick);
-        if (legal.Count == 0) legal.Add(DangerAction.Flee);
+        if (legal.Count == 0)
+        {
+            // Everything has just been tried and changed nothing, and nothing is hitting him: back to work. Being held to this, by a skeleton in view that never hit him, stopped all his work (live 2026-11-05).
+            if (!hitByMonster) return false;
+            legal.Add(DangerAction.Flee);
+        }
 
         var action = learner.Choose(situation, legal);
         // Armed and well, a spider that comes to him is what he has been looking for. What comes of it is written down like any other choice.
@@ -402,11 +407,17 @@ public sealed class Reflexes : IDisposable
             {
                 var result = await work(ct);
                 episode.JobWorked = result.Item1;
-                // Failed straight away: it never had a chance, so it teaches nothing about the action. Not on offer for half a minute; he decides again at once.
-                if (!result.Item1 && DateTime.UtcNow - started < TimeSpan.FromSeconds(2))
+                // Failed straight away, or left him where he stood with his health as it was: it never had a chance, so it teaches nothing about the action, and is not on offer for half a minute. Running from an archer 16 blocks
+                // off "worked" without a step, because 12 is as far as running looks, and scored a perfect 1 every second; a fight he could not get to failed in 8 seconds, too slow to count as at once (live 2026-11-05).
+                var (ex, ey, ez) = _client.Position;
+                var stayed = Math.Sqrt((ex - x) * (ex - x) + (ey - y) * (ey - y) + (ez - z) * (ez - z)) < 2;
+                var unhurt = _client.Health >= episode.HealthBefore;
+                // (A fight or a shot that came to nothing, however far he walked for it, says nothing about fighting. Running that failed does say something when he did run: they kept up.)
+                var taughtNothing = unhurt && (stayed ? !result.Item1 || action == DangerAction.Flee : !result.Item1 && action is DangerAction.Fight or DangerAction.Shoot);
+                if ((!result.Item1 && DateTime.UtcNow - started < TimeSpan.FromSeconds(2)) || taughtNothing)
                 {
                     _armBlockedUntil[action] = _tick + 600;
-                    _nextDangerTick = _tick;
+                    _nextDangerTick = _tick + 20;
                     lock (_episodeLock) if (_episode == episode) _episode = null;
                 }
                 return result;

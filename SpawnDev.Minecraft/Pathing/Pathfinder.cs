@@ -84,6 +84,8 @@ public sealed class PathOptions
 {
     /// <summary>Allow breaking blocks in the way (cost grows with break time).</summary>
     public bool CanDig { get; set; }
+    /// <summary>Allow digging natural blocks close to something built: the last resort when he is stuck.</summary>
+    public bool DigNearBuilds { get; set; }
     /// <summary>Allow placing blocks (pillar up). Needs a placeable block in the inventory to follow.</summary>
     public bool CanPlace { get; set; }
     /// <summary>Highest drop taken without hesitation (3 = no fall damage).</summary>
@@ -244,12 +246,13 @@ public sealed class Pathfinder
     public Func<int, int, int, bool>? RefusedDigAt { get; set; }
 
     private readonly Dictionary<(int X, int Y, int Z), bool> _noDig = [];
+    private bool _digNearBuilds;
 
     /// <summary>Asked for every block a plan might dig, so kept for the plan, by cells of 4: a little more cautious at the edge, and thousands of nodes do not each search 343 blocks.</summary>
     private bool NoDigAt(int x, int y, int z)
     {
         if (RefusedDigAt?.Invoke(x, y, z) == true) return true;
-        if (MayNotDigAt == null) return false;
+        if (MayNotDigAt == null || _digNearBuilds) return false;
         var cell = (x >> 2, y >> 2, z >> 2);
         if (_noDig.TryGetValue(cell, out var no)) return no;
         no = false;
@@ -264,6 +267,7 @@ public sealed class Pathfinder
     public (List<PathStep> Steps, bool Complete) FindPath((int X, int Y, int Z) start, Goal goal, PathOptions options)
     {
         _noDig.Clear();
+        _digNearBuilds = options.DigNearBuilds;
         var open = new PriorityQueue<Node, double>();
         var g = new Dictionary<Node, double>();
         var came = new Dictionary<Node, (Node From, PathStep Step)>();

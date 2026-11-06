@@ -120,7 +120,9 @@ public sealed partial class MinecraftClient
                 var feet = FeetBlock;
                 if (goal.IsReached(feet.X, feet.Y, feet.Z)) return true;
                 var (steps, complete) = Pathfinder.FindPath(feet, goal, current);
-                if (steps.Count == 0 && escalation < 2)
+                // (Each in turn in one go: with one step per attempt, no path at the first meant giving up before digging was ever tried.) Last of all, natural blocks near someone's building: stuck is worse than that. He stood in the
+                // leaves of a tree for 50 minutes, a crafting table 3 blocks off making every block round him off limits (live 2026-11-05). The built blocks themselves stay out of it.
+                while (steps.Count == 0 && escalation < 3)
                 {
                     escalation++;
                     current = new PathOptions
@@ -133,8 +135,10 @@ public sealed partial class MinecraftClient
                         MaxNodes = current.MaxNodes,
                         DigTicks = current.DigTicks,
                         Sprint = current.Sprint,
+                        DigNearBuilds = current.DigNearBuilds || escalation >= 3,
                     };
-                    Log($"no path with the current rules: escalating to max drop {current.MaxDrop}{(current.CanDig ? ", digging" : "")}");
+                    Log($"no path with the current rules: escalating to max drop {current.MaxDrop}{(current.CanDig ? ", digging" : "")}{(current.DigNearBuilds ? ", near buildings too" : "")}");
+                    if (current.DigNearBuilds) DigNote?.Invoke($"stuck at {feet.X} {feet.Y} {feet.Z}: digging near a building to get out");
                     (steps, complete) = Pathfinder.FindPath(feet, goal, current);
                 }
                 PathPlanned?.Invoke(steps);

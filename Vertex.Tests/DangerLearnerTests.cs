@@ -596,6 +596,71 @@ public class LiveDangerChoiceTests
     }
 
     [Test]
+    public async Task ShutInLeavesWithABuiltBlockNearby_HeDigsOut_AndLeavesTheBuiltBlock()
+    {
+        // As live: in a tree's crown, every block round him within 3 of a crafting table that is not (as far as he knows) his. Tables on all sides, because the rule looks at places a few blocks apart and one table left him a way through.
+        var (client, _, _, ax, az) = await JoinAsync("Canopy",
+            (x, z) => $"fill {x + 2} 200 {z - 4} {x + 10} 204 {z + 4} minecraft:oak_leaves[persistent=true]",
+            (x, z) => $"fill {x + 6} 200 {z} {x + 6} 201 {z} minecraft:air",
+            (x, z) => $"setblock {x + 6} 200 {z + 3} minecraft:crafting_table",
+            (x, z) => $"setblock {x + 6} 200 {z - 3} minecraft:crafting_table",
+            (x, z) => $"setblock {x + 3} 200 {z} minecraft:crafting_table",
+            (x, z) => $"setblock {x + 9} 200 {z} minecraft:crafting_table",
+            (x, z) => $"setblock {x + 3} 200 {z + 3} minecraft:crafting_table",
+            (x, z) => $"setblock {x + 9} 200 {z + 3} minecraft:crafting_table",
+            (x, z) => $"setblock {x + 3} 200 {z - 3} minecraft:crafting_table",
+            (x, z) => $"setblock {x + 9} 200 {z - 3} minecraft:crafting_table");
+        await using var _ = client;
+        var notes = new List<string>();
+        client.DigNote = m => { lock (notes) notes.Add(m); TestContext.Out.WriteLine(m); };
+        await _server.CommandAsync($"tp Canopy {ax + 6.5} 200 {az + 0.5}");
+        await Wait.UntilAsync(() => client.FeetBlock.X == ax + 6 && client.OnGround, Timeout, () => $"at {client.FeetBlock}");
+        Assert.That(client.PartOfABuild(ax + 7, 200, az), Is.True, "the rule that held him");
+        using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(60));
+        var there = await client.GoToAsync(Goal.XZ(ax + 14, az), new PathOptions { MaxNodes = 20_000 }, cts.Token);
+        Assert.That(there, Is.True, $"out, but he is at {client.FeetBlock}");
+        Assert.That(client.World.GetBlock(ax + 6, 200, az + 3)?.Name, Is.EqualTo("minecraft:crafting_table"));
+        lock (notes) Assert.That(notes.Any(n => n.StartsWith("stuck at")), Is.True, "the log says so");
+    }
+
+    [Test]
+    public async Task AnArcherInViewThatHeCannotReach_DoesNotHoldHim_AndTeachesHimNothing()
+    {
+        // As live: a skeleton in view past the 12 blocks running looks at, out of his reach, never hitting him.
+        var (client, skills, tasks, ax, az) = await JoinAsync("Watched",
+            (x, z) => $"fill {x + 16} 200 {z} {x + 16} 206 {z} minecraft:stone",
+            (x, z) => $"summon minecraft:skeleton {x + 16.5} 207 {z + 0.5} {{NoAI:1b,PersistenceRequired:1b}}");
+        await using var _ = client;
+        var file = Path.Combine(TestContext.CurrentContext.WorkDirectory, $"danger-{Guid.NewGuid():N}.jsonl");
+        try
+        {
+            await Wait.UntilAsync(() => skills.NearestRanged(26) != null, Timeout, () => "the skeleton in his view");
+            using var reflexes = new Reflexes(client, skills, tasks, () => Character.BuiltIn[0].Style) { Learner = new DangerLearner(file, new Random(8)) };
+            var decisions = new List<string>();
+            reflexes.Decided += m => { if (!m.StartsWith("result")) lock (decisions) decisions.Add(m); TestContext.Out.WriteLine(m); };
+
+            // Free for 5 seconds together: long enough that work would start. Before this he never was, choosing again every second.
+            var freeSince = DateTime.UtcNow;
+            var started = DateTime.UtcNow;
+            await Wait.UntilAsync(() =>
+            {
+                if (tasks.IsBusy) freeSince = DateTime.UtcNow;
+                return DateTime.UtcNow - freeSince > TimeSpan.FromSeconds(5);
+            }, TimeSpan.FromSeconds(120), () => $"free for a while (doing {tasks.Current})");
+            lock (decisions) Assert.That(decisions, Is.Not.Empty, "he did think about it first");
+            TestContext.Out.WriteLine($"free after {(DateTime.UtcNow - started).TotalSeconds:0} s");
+
+            var rows = File.Exists(file) ? File.ReadAllLines(file) : [];
+            Assert.That(rows.Where(r => r.Contains("\"Flee\"") || r.Contains("\"Fight\"")), Is.Empty, "standing still is no outcome");
+        }
+        finally
+        {
+            await _server.CommandAsync("kill @e[type=minecraft:skeleton]");
+            File.Delete(file);
+        }
+    }
+
+    [Test]
     public async Task AMonsterHeCannotReach_EndsTheFight_RatherThanHolding_HimThereForEver()
     {
         var (client, skills, _, ax, az) = await JoinAsync("Walled",
@@ -654,7 +719,8 @@ public class LiveDangerChoiceTests
         // A block the server keeps and he cannot know it: he stands in a one-wide tunnel with a way out ahead of him, and he is put back every time he takes it (a server plugin, a stuck position: what it is does not matter). Teleporting him back is how
         // this test says no.
         var (client, _, _, ax, az) = await JoinAsync("Boxed",
-            (x, z) => $"fill {x + 2} 200 {z - 1} {x + 14} 203 {z + 1} minecraft:stone",
+            // (Bedrock: with no way left he digs one in anything else, and that is right; this is about the move.)
+            (x, z) => $"fill {x + 2} 199 {z - 1} {x + 14} 203 {z + 1} minecraft:bedrock",
             (x, z) => $"fill {x + 3} 200 {z} {x + 13} 201 {z} minecraft:air");
         await using var _ = client;
         var notes = new List<string>();
@@ -960,7 +1026,9 @@ public class LiveDangerChoiceTests
         await _server.CommandAsync($"tp Roofed {ax + 6.5} 187 {az + 0.5}");
         await Wait.UntilAsync(() => client.FeetBlock.Y == 187 && client.Air < 280, Timeout, () => $"going under, at {client.FeetBlock}, air {client.Air}");
         await Wait.UntilAsync(() => client.Air >= 280, TimeSpan.FromSeconds(30), () => $"breath back (air {client.Air}, at {client.FeetBlock}, doing {tasks.Current})");
-        Assert.That(client.World.GetState(ax + 6, 189, az), Is.EqualTo(client.World.GetState(ax + 6, 190, az)), "the roof over him is gone");
+        // (Over wherever he had drifted to, so anywhere over the pool.)
+        var holes = Enumerable.Range(ax + 4, 5).SelectMany(hx => Enumerable.Range(az - 2, 5).Select(hz => (hx, hz))).Count(h => client.World.GetState(h.hx, 189, h.hz) == client.World.GetState(h.hx, 190, h.hz));
+        Assert.That(holes, Is.GreaterThan(0), "a way through the roof");
         lock (hurts) Assert.That(hurts, Does.Not.Contain("drown"));
         tasks.Stop();
     }
