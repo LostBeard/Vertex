@@ -596,6 +596,26 @@ public class LiveDangerChoiceTests
     }
 
     [Test]
+    public async Task AMonsterHeCannotReach_EndsTheFight_RatherThanHolding_HimThereForEver()
+    {
+        var (client, skills, _, ax, az) = await JoinAsync("Walled",
+            (x, z) => $"fill {x + 4} 200 {z - 2} {x + 8} 203 {z + 2} minecraft:stone hollow",
+            (x, z) => $"summon minecraft:zombie {x + 6} 201 {z} {{NoAI:1b,PersistenceRequired:1b}}");
+        await using var _ = client;
+        try
+        {
+            await Wait.UntilAsync(() => client.Entities.Values.Any(e => e.Name == "minecraft:zombie"), Timeout, () => "the zombie in his view");
+            using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(60));
+            var started = DateTime.UtcNow;
+            var (ok, said) = await skills.AttackAsync("zombie", cts.Token);
+            TestContext.Out.WriteLine($"{ok}: {said} in {(DateTime.UtcNow - started).TotalSeconds:0} s");
+            Assert.That(ok, Is.False, said);
+            Assert.That(said, Does.Contain("couldn't get to"));
+        }
+        finally { await _server.CommandAsync("kill @e[type=minecraft:zombie]"); }
+    }
+
+    [Test]
     public async Task BedsThatDoNotBringHimBack_TwiceOverHeStopsWorkingTowardOne_AndABedThatDoesClearsIt()
     {
         var (client, skills, _, ax, az) = await JoinAsync("Sleeper");

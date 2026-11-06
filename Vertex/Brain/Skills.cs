@@ -418,13 +418,15 @@ public sealed partial class Skills(MinecraftClient client)
             ? Hostile.Contains(e.Name)
             : e.Name.Bare() == w.TrimEnd('s') || e.Name.Bare() == w;
         var kills = 0;
+        // One he could not get at is passed over. Without this he stood for 14 minutes "fighting" a skeleton he could not reach, going back to it the moment each try failed (live 2026-11-05).
+        var outOfReach = new HashSet<int>();
         await EquipWeaponAsync(ct);
         await EquipShieldAsync(ct);       // a shield, when we carry one, goes to the off hand for any fight
         while (!ct.IsCancellationRequested)
         {
             if (client.Health < 6) return (false, $"I had to back off, I'm hurt (health {client.Health / 2:0} hearts).");
             var (x, y, z) = client.Position;
-            var target = client.Entities.Values.Where(e => !e.IsPlayer && Matches(e) && e.DistanceTo(x, y, z) < 24).OrderBy(e => e.DistanceTo(x, y, z)).FirstOrDefault();
+            var target = client.Entities.Values.Where(e => !e.IsPlayer && Matches(e) && !outOfReach.Contains(e.Id) && e.DistanceTo(x, y, z) < 24).OrderBy(e => e.DistanceTo(x, y, z)).FirstOrDefault();
             if (target == null) break;
             if (await FightAsync(target.Id, null, ct))
             {
@@ -432,7 +434,9 @@ public sealed partial class Skills(MinecraftClient client)
                 // What it dropped, with nothing else on top of him: he has been leaving string on the ground.
                 if (NearestHostile(6) == null) await PickUpNearbyAsync((int)Math.Floor(target.X), (int)Math.Floor(target.Y), (int)Math.Floor(target.Z), ct);
             }
+            else outOfReach.Add(target.Id);
         }
+        if (kills == 0 && outOfReach.Count > 0) return (false, $"I couldn't get to the {what}.");
         return (true, kills > 0 ? $"I defeated {kills} {what}." : $"I don't see any {what} around.");
     }
 
