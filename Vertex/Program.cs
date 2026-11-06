@@ -251,6 +251,16 @@ static async Task<int> RunTrayAsync(string[] args)
     var app = BuildControlPanel(args);
     await app.StartAsync();
     var host = app.Services.GetRequiredService<Vertex.Host.VertexHost>();
+    // What he did, for looking at later; how he is, every 10 minutes, in the game or not (a gap in these is the app not running).
+    var playLog = new Vertex.Host.PlayLog(Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData), "Vertex", "logs" + Instance()));
+    host.PlayLog = playLog;
+    using var statusTimer = new System.Threading.Timer(_ =>
+    {
+        object? state = null;
+        try { if (host.Brain is { } brain) state = StateDump.Snapshot(brain); }
+        catch (Exception e) when (e is InvalidOperationException or NullReferenceException or KeyNotFoundException) { state = new { snapshotFailed = e.Message }; }
+        playLog.Status(DateTime.Now, state);
+    }, null, TimeSpan.FromSeconds(15), TimeSpan.FromMinutes(10));
     Vertex.Host.VertexTray? trayContext = null;
     var tray = new Thread(() =>
     {

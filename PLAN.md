@@ -5,7 +5,15 @@ those servers through the ViaVersion plugins on the proxy; Vertex itself speaks 
 
 Every milestone is tested against REAL servers started locally (Paper 1.21.5 build 114, Velocity), never mocks.
 
-## START HERE: 2026-11-05 (newest; read first)
+## SUNDAY 2026-11-08: start here
+
+TJ paused work near the weekly quota limit on 2026-11-06 and left Vertex running to review together on Sunday. Do not start new work before that review. C: had 32 GB free; keep it from filling.
+
+**First, read what happened** (`%APPDATA%\Vertex`): `logs\status-*.jsonl` is how he was every 10 minutes (`inGame`, `state.deathsThisRun`, `state.next`, position, health, inventory; `deathsThisRun` starts again at each app start, and a gap means the app was not running). `logs\play-*.log` is the panel's lines kept on disk: `task ended`, `hurt:`, `danger:`, `learned (death`, `dig:`, `move failed:`, `stuck at`, `disconnected`, `not rejoining`. `worlds\mc.spawndev.com_25565.danger.jsonl` is what he learned, `training\turns-*.jsonl` the training lines. Questions: time in the game against offline; deaths an hour and from what; how far up `Milestones` he gets and how often; did he ever keep a bow and shoot; any loop (the same line many times), any `job crashed`; did he rejoin after a real server restart (not yet seen live); what the shooting outcomes say.
+
+**Open from the last session:** 11 deaths in about 2 hours on 08e83f2 (cause not looked at beyond one zombie and one creeper in the panel); skeletons were what killed him the night before. `I need a crafting table (and could not make or reach one)` while holding 2 acacia logs at 01:16 on 11-06 looks wrong: check whether it repeats. The whole `LiveDangerChoiceTests|LiveObtainTests|LiveMiningTests|LiveActionTests` set was 59 of 62 before the fixes; the 3 and the new tests then passed alone, and the whole set has not been rerun. Next work as planned: skeletons and a bow to keep, then the nightly learning loop, then people and directed speech in RAG.
+
+## START HERE: 2026-11-05 (read after the above)
 
 **TJ's goal:** "make Vertex a learning AI companion that can game. Vertex is our test bed to see how advanced we can get a local AI and being able to learn is important." This PC is dedicated to Vertex until further notice: stop him for any work that needs the GPU, without asking, and restart him. LoRA training runs here now.
 

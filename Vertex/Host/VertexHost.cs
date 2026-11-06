@@ -469,8 +469,12 @@ public sealed class VertexHost : IAsyncDisposable
             if (_lines.Count > 500) _lines.RemoveRange(0, _lines.Count - 500);
         }
         Console.WriteLine($"[{DateTime.Now:HH:mm:ss}] {kind}: {text}");
+        PlayLog?.Line(DateTime.Now, kind, text);
         Changed?.Invoke();
     }
+
+    /// <summary>The log kept on disk: set by the app, not in tests.</summary>
+    public PlayLog? PlayLog { get; set; }
 
     /// <summary>The companion's and the bodies' log lines, sorted for the panel.</summary>
     private void AddLog(string m)
