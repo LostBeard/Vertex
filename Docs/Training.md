@@ -15,7 +15,7 @@ The adapter changes the model itself, on your own GPU, with [SpawnDev.ILGPU.ML](
 
 With an adapter in `adapters\current` and `LanguageAdapter` on in `settings.json` (the default), the host loads it and gives the model tool names only: what each tool is for and how to call it are in the adapter. With no adapter, or the setting off, he uses the plain model with the full tool list. An installer does not include an adapter.
 
-Measured 2026-11-05, RTX 2060 12 GB, llama3.1:8b, v2.2 (SpawnDev.AI.Server 1.4.1-local.3; the last column's first word is the plain model on the same card, 2026-11-04):
+Measured on an RTX 2060 12 GB, llama3.1:8b: v2.2 on 2026-11-05 (SpawnDev.AI.Server 1.4.1-local.3), the plain model on 2026-11-04 (1.4.1-local.2):
 
 | | Plain, names only | Plain, full list | **v2.2, names only** |
 |---|---|---|---|

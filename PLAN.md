@@ -11,7 +11,7 @@ Every milestone is tested against REAL servers started locally (Paper 1.21.5 bui
 
 **Running:** ebb9128 in `mc.spawndev.com`, SpawnDev.AI.Server 1.4.2 from nuget.org (only `SpawnDev.Reachy` still needs the local feed), **with his trained adapter v2.2**: `%APPDATA%\Vertex\adapters\current`, tool names only in the prompt, `LanguageAdapter` turns it off. All of it, with the numbers: [Docs/Training.md](Docs/Training.md).
 
-**Measured live, deaths in 30 minutes:** 33 at the worst on 2026-11-04, then 8, 6, 3, 1 (542ef35, the best), 3, 3, 3, 4, and 2 with the adapter (90b700f). Results still vary a lot from run to run. What kills him now is monsters: heat damage is off (TJ, `extremeHeatThreshold` 100, 2026-11-04; the number still shows, and `HeatBelief` means a number alone scares nobody). The rules of the plugin are in `reference-realisticseasons-rules`.
+**Measured live, deaths in 30 minutes:** 33 at the worst on 2026-11-04; then, in order from b784e3d on, 8, 2, 6, 6, 3, 1 (542ef35, the best), 3, 3, 3, 4, and 2 with the adapter (90b700f). Results still vary a lot from run to run. What kills him now is monsters: heat damage is off (TJ, `extremeHeatThreshold` 100, 2026-11-04; the number still shows, and `HeatBelief` means a number alone scares nobody). The rules of the plugin are in `reference-realisticseasons-rules`.
 
 **Seen working live:** from nothing to an iron pickaxe and sword in about 15 minutes, things fetched back after a death (not always), air under a roof, spiders fought for string, a bed set from a village's, arrows made, shooting once (05:55: one outcome, reward 0.07).
 
