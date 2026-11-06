@@ -51,8 +51,10 @@ public class TrainingLogTests
         var folder = NewFolder();
         try
         {
-            new TrainingLog(folder, "session-c").Record(GameTurn(), null, "ok then", "x", false, [7, 8, 9], [10, 11], [99]);
+            new TrainingLog(folder, "session-c").Record(GameTurn(), null, "ok then", "x", false, [7, 8, 9], [10, 11], [99], "v2.2", 128009);
             using var doc = JsonDocument.Parse(File.ReadAllLines(Directory.GetFiles(folder).Single()).Single());
+            Assert.That(doc.RootElement.GetProperty("adapter").GetString(), Is.EqualTo("v2.2"), "a later training run must know this is the adapter's own output");
+            Assert.That(doc.RootElement.GetProperty("end_token_id").GetInt32(), Is.EqualTo(128009));
             Assert.That(doc.RootElement.GetProperty("prompt_ids").GetArrayLength(), Is.EqualTo(3));
             Assert.That(doc.RootElement.GetProperty("target_ids").GetArrayLength(), Is.EqualTo(2));
             Assert.That(doc.RootElement.GetProperty("end_of_turn_ids")[0].GetInt32(), Is.EqualTo(99));

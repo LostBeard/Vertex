@@ -55,9 +55,9 @@ Speed, `tools/TrainLoraProbe` at 1,600 tokens, RTX 2060 12 GB, 2026-11-05, every
 | 39d5fc8 | 10.45 | 10.9 GB |
 | 37aa625 | 5.6 | 11.0 GB |
 | 490e839 | 4.65 | 11.0 GB |
-| 6826312, with the long-reduction V7 path now the default | 4.53 | 11.1 GB |
+| a18c2fa, with the long-reduction V7 path the default | 4.47 | 11.1 GB |
 
-v2.2 took 15,899 s (4.4 hours) on 39d5fc8, 10.6 s a line. At 4.53 s a v2.2-sized run should take about 1.9 hours; that is an estimate, no such run has been made. This PC has 16 GB of slow system memory, too little for activation offloading.
+v2.2 took 15,899 s (4.4 hours) on 39d5fc8, 10.6 s a line. At 4.47 s a v2.2-sized run should take about 1.9 hours; that is an estimate, no such run has been made. This PC has 16 GB of slow system memory, too little for activation offloading.
 
 ## Before an adapter goes live
 
@@ -94,4 +94,4 @@ What was published on this (read 2026-11-05, the first three from their abstract
 
 So: **the game judges, never he himself.** A claim the log does not support does not become a training line. Keep everything from before in the mix. No published standard for the gate before the swap was found; ours is new ground.
 
-To do first: the training log has to say which lines came from the adapter, so he cannot learn from his own output by accident. Long-term memory holds no people or conversations yet, only game experience, and directed speech belongs there. Chat has no log entry to judge it by, so game events come first, then corrections directed at him.
+The training log says which adapter produced each line (`adapter`), so he cannot learn from his own output by accident; a nightly run has to use it. Long-term memory holds no people or conversations yet, only game experience, and directed speech belongs there. Chat has no log entry to judge it by, so game events come first, then corrections directed at him.

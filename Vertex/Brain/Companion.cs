@@ -168,7 +168,7 @@ public sealed class Companion : IAsyncDisposable
         set
         {
             field = value;
-            Ai.Chat.PassObserver = value == null ? null : pass => value.Record(pass.Messages, pass.ToolsJson, pass.RawOutput, pass.RenderedPrompt, pass.PromptTokens < pass.PromptTokenIds.Length, TrainingLog.KeptIds(pass.PromptTokenIds, pass.PromptTokens), pass.GeneratedTokenIds, pass.EndOfTurnTokenIds);
+            Ai.Chat.PassObserver = value == null ? null : pass => value.Record(pass.Messages, pass.ToolsJson, pass.RawOutput, pass.RenderedPrompt, pass.PromptTokens < pass.PromptTokenIds.Length, TrainingLog.KeptIds(pass.PromptTokenIds, pass.PromptTokens), pass.GeneratedTokenIds, pass.EndOfTurnTokenIds, pass.AdapterLabel, pass.EndTokenId);
         }
     }
 

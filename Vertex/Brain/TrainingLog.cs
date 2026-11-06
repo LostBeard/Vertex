@@ -56,7 +56,9 @@ public sealed class TrainingLog(string folder, string? source = null)
     /// <param name="promptIds">The token ids the model was given.</param>
     /// <param name="targetIds">The token ids the model generated.</param>
     /// <param name="endOfTurnIds">The ids that end a turn.</param>
-    public bool Record(IReadOnlyList<AiChatMessage> messages, IReadOnlyList<string>? toolsJson, string rawOutput, string renderedPrompt, bool promptCut = false, int[]? promptIds = null, IReadOnlyList<int>? targetIds = null, IReadOnlyList<int>? endOfTurnIds = null)
+    /// <param name="adapter">The adapter that produced this reply, or null for the plain model. Replies from an adapter are its own output: a later training run must not take them for a teacher's, or it would only be learning from itself.</param>
+    /// <param name="endToken">The token that ended the reply.</param>
+    public bool Record(IReadOnlyList<AiChatMessage> messages, IReadOnlyList<string>? toolsJson, string rawOutput, string renderedPrompt, bool promptCut = false, int[]? promptIds = null, IReadOnlyList<int>? targetIds = null, IReadOnlyList<int>? endOfTurnIds = null, string? adapter = null, int? endToken = null)
     {
         if (!Allowed(messages)) return false;
         var sent = messages.Select(m => new { role = m.Role, content = m.Content }).ToList();
@@ -75,6 +77,8 @@ public sealed class TrainingLog(string folder, string? source = null)
             prompt_ids = promptIds,
             target_ids = targetIds,
             end_of_turn_ids = endOfTurnIds,
+            end_token_id = endToken,
+            adapter,
             prompt_cut = promptCut,
         });
         try
