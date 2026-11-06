@@ -138,8 +138,9 @@ public sealed partial class MinecraftClient
                         DigNearBuilds = current.DigNearBuilds || escalation >= 3,
                     };
                     Log($"no path with the current rules: escalating to max drop {current.MaxDrop}{(current.CanDig ? ", digging" : "")}{(current.DigNearBuilds ? ", near buildings too" : "")}");
-                    if (current.DigNearBuilds) DigNote?.Invoke($"stuck at {feet.X} {feet.Y} {feet.Z}: digging near a building to get out");
                     (steps, complete) = Pathfinder.FindPath(feet, goal, current);
+                    // (Only when this is what found the way: said on every search with no way, it said "stuck" 104 times in 19 minutes, many of them along a river, while he was getting on with things.)
+                    if (escalation == 3 && steps.Count > 0) DigNote?.Invoke($"stuck at {feet.X} {feet.Y} {feet.Z}: digging near a building to get out");
                 }
                 PathPlanned?.Invoke(steps);
                 Log($"path attempt {attempt}: from {feet} (at {Position.X:0.##} {Position.Y:0.##} {Position.Z:0.##}), {steps.Count} steps, {(complete ? "complete" : "partial")}"
