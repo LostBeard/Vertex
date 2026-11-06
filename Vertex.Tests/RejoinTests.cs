@@ -23,6 +23,10 @@ public class RejoinPolicyTests
     [TestCase("Outdated client! Please use 1.21.5", false)]
     [TestCase("This server requires Fabric to join", false)]
     [TestCase("disconnected by client", false)]
+    [TestCase("You were kicked from aubscraft: Server closed", true)]
+    [TestCase("Server closed", true)]
+    [TestCase("The server is restarting", true)]
+    [TestCase("You were kicked from aubscraft: Griefing", false)]
     public void WhichDisconnectsAreWorthGoingBackAfter(string? reason, bool expected)
         => Assert.That(VertexHost.ShouldRejoin(reason), Is.EqualTo(expected), reason);
 }

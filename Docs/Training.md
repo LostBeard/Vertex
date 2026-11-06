@@ -21,7 +21,7 @@ Measured on an RTX 2060 12 GB, llama3.1:8b: v2.2 on 2026-11-05 (SpawnDev.AI.Serv
 |---|---|---|---|
 | `ToolChoiceTests`, strict, 5 runs of 20 | 59/100 | 93/100 | **100/100** |
 | Prompt size | 2,097 tokens | 3,771 tokens | about 1,900 to 2,100 tokens |
-| First word, median | 682 ms | 1,175 ms | 778 ms (Vertex was sharing the card); 722 ms on AI.Server 1.4.2, one run |
+| First word, median | 682 ms | 1,175 ms | 778 ms (Vertex was sharing the card); 722 ms on AI.Server 1.4.2, one run; on 1.4.3, RTX 2060, 2026-11-06, two runs of 20 requests, strict 40 of 40: about 700 ms, 29.5 tok/s (was 26.3). The turn mix differs between runs, so compare by new tokens in the prompt: under 100, 395 to about 370 ms; 100 to 300, 553 to about 407; 300 to 800, 744 to 709 |
 | Decode, median | 26.7 tok/s | 24.4 tok/s | 25.2 tok/s |
 | Honesty, 20 events it has never seen | 17/20 | | **20/20** |
 | Honesty, 58 heldout lines, sentences not in training, exact | 0/58 | | **58/58** (only 5 distinct sentences) |

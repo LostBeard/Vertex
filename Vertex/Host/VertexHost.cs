@@ -790,6 +790,9 @@ public sealed class VertexHost : IAsyncDisposable
         var r = reason.ToLowerInvariant();
         // Kicked for a fault in how the client signed its chat: that is our bug, not the server's answer, and a new connection starts it clean. He sat out 3.6 hours after one (2026-11-04).
         if (r.Contains("chat message validation") || r.Contains("out-of-order chat")) return true;
+        // A server going down, however it is worded: a proxy says "You were kicked from aubscraft: Server closed" when the server behind it stops. He sat out five hours after one (2026-11-06). The retries go on until it is back.
+        string[] goingDown = ["server closed", "server is restarting", "server restarting", "server is stopping", "server stopped", "shutting down"];
+        if (goingDown.Any(r.Contains)) return true;
         string[] answers = ["banned", "ban ", "white-list", "whitelist", "sign in", "online mode", "invalid session", "outdated", "incompatible", "requires", "kicked", "not authorized", "disconnected by client"];
         return !answers.Any(r.Contains);
     }

@@ -9,7 +9,7 @@ Every milestone is tested against REAL servers started locally (Paper 1.21.5 bui
 
 **TJ's goal:** "make Vertex a learning AI companion that can game. Vertex is our test bed to see how advanced we can get a local AI and being able to learn is important." This PC is dedicated to Vertex until further notice: stop him for any work that needs the GPU, without asking, and restart him. LoRA training runs here now.
 
-**Running:** ebb9128 in `mc.spawndev.com`, SpawnDev.AI.Server 1.4.2 from nuget.org (only `SpawnDev.Reachy` still needs the local feed), **with his trained adapter v2.2**: `%APPDATA%\Vertex\adapters\current`, tool names only in the prompt, `LanguageAdapter` turns it off. All of it, with the numbers: [Docs/Training.md](Docs/Training.md).
+**Running:** in `mc.spawndev.com`, SpawnDev.AI.Server 1.4.3 from nuget.org (only `SpawnDev.Reachy` still needs the local feed), **with his trained adapter v2.2**: `%APPDATA%\Vertex\adapters\current`, tool names only in the prompt, `LanguageAdapter` turns it off. All of it, with the numbers: [Docs/Training.md](Docs/Training.md).
 
 **Measured live, deaths in 30 minutes:** 33 at the worst on 2026-11-04; then, in order from b784e3d on, 8, 2, 6, 6, 3, 1 (542ef35, the best), 3, 3, 3, 4, and 2 with the adapter (90b700f); then 4 in the first 24 minutes on fab3c18, the first run after he stood still in a tree for at least an hour (a run cut short, not a 30-minute figure). Results still vary a lot from run to run. What kills him now is monsters: heat damage is off (TJ, `extremeHeatThreshold` 100, 2026-11-04; the number still shows, and `HeatBelief` means a number alone scares nobody). The rules of the plugin are in `reference-realisticseasons-rules`.
 
