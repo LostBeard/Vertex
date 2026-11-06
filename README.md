@@ -14,7 +14,7 @@ All Rights Reserved. Use of the model must follow Meta's [Acceptable Use Policy]
 > **Status: early, playable.** Vertex joins servers (Microsoft accounts, signed chat), moves with vanilla physics, pathfinds, digs,
 > builds, crafts, farms, trades, fights, hears and speaks in proximity voice, lives in a Reachy Mini (hearing, speaking, seeing,
 > body language) and takes requests through a language model that runs on your own GPU. It makes the ground fit a job (levels a building site, digs down to ore, walks to find animals and water), takes
-> cover from archers and swarms, and starts to learn from what happens to it: deaths and big losses become lessons it remembers and acts on. It is still learning to survive a night alone.
+> cover from archers and swarms, and learns from what happens to it: what works against each monster is scored from real outcomes, deaths and big losses become lessons, and it goes back for its things after a death. From nothing it can reach an iron pickaxe and sword in about 15 minutes on a live server, usually dying a few times in half an hour; a bed that holds is still ahead. The language model itself is trained for it, on your own GPU ([Docs/Training.md](Docs/Training.md)).
 > [PLAN.md](PLAN.md) starts with where it stands and what is next.
 
 ## Goals
@@ -33,11 +33,12 @@ All Rights Reserved. Use of the model must follow Meta's [Acceptable Use Policy]
   wrong (no griefing, no lava, no building on top of someone's build). The same things that make it good for a family (local, private,
   no plugins, teachable) make it a candidate for clubs and classrooms.
 - **Characters.** A character is a name, a personality, a voice and a play style. Make your own, switch in game.
+- **A companion that learns.** Vertex is a test bed for how advanced a local AI can get, and being able to learn is part of that: from what happens in the game, in a memory it searches, and in the model's own weights, trained locally. Daily training at night is the next step.
 
 ## Running it
 
 Vertex runs on Windows with an NVIDIA GPU (CUDA; it falls back to OpenCL/CPU, slowly). A 12 GB card carries the whole stack
-(language model, speech, voices and faces together); the measurements in [Docs/Architecture.md](Docs/Architecture.md) are from an RTX 4070.
+(language model, speech, voices and faces together); it runs live on an RTX 2060 12 GB, and [Docs/Architecture.md](Docs/Architecture.md) says which card each measurement is from.
 
 **Installer (the easy way, for another PC).** `installer\build-installer.bat` publishes a self-contained build (no .NET needed on the target) and
 makes `installer\Output\VertexSetup-<version>.exe` with [Inno Setup](https://jrsoftware.org/isinfo.php) 6.1+. Setup installs for the current user
@@ -96,7 +97,7 @@ Urgent, simple commands ("stop!", "follow me", "come here", "protect me") are ma
 embedding model (all-MiniLM-L6-v2) so Vertex acts at once; the language model then only words its reply.
 
 Walking somewhere never breaks player builds (planks, glass, doors, bricks...): it only digs natural blocks, and only when there is no
-other way.
+other way. Nor does it take logs or stone out of a building for materials: a block within 3 of anything someone built is left alone.
 
 ## The robot
 
@@ -110,7 +111,7 @@ Setup, settings and limits: [Docs/Reachy.md](Docs/Reachy.md).
 | Library | Used for |
 |---|---|
 | [SpawnDev.ILGPU](https://github.com/LostBeard/SpawnDev.ILGPU) | GPU compute (CUDA, OpenCL, CPU) |
-| [SpawnDev.ILGPU.ML](https://github.com/LostBeard/SpawnDev.ILGPU.ML) | GGUF language model inference, Parakeet speech recognition, speaker, face and end-of-turn models, Kokoro voices |
+| [SpawnDev.ILGPU.ML](https://github.com/LostBeard/SpawnDev.ILGPU.ML) | GGUF language model inference and LoRA training, Parakeet speech recognition, speaker, face and end-of-turn models, Kokoro voices |
 | [SpawnDev.AI](https://github.com/LostBeard/SpawnDev.AI) | The chat engine, tool calling, and the speech/speaker/turn engines |
 | [SpawnDev.Reachy](https://github.com/LostBeard/SpawnDev.Reachy) | The Reachy Mini: robot control, WebRTC audio and camera |
 | **SpawnDev.Minecraft** (this repo) | Minecraft Java protocol client: connection, login, world, physics, crafting, trading |
@@ -124,6 +125,7 @@ Vertex is also how those libraries get tested and improved: speed and correctnes
 |---|---|
 | [Docs/Skills.md](Docs/Skills.md) | Every Minecraft skill: wording, requirements, safety, limits, the build-script language |
 | [Docs/Architecture.md](Docs/Architecture.md) | Companion core, bodies and voice channels; how a request becomes an action; speed, with numbers |
+| [Docs/Training.md](Docs/Training.md) | How it learns: the trained adapter, making the data, the gate before it goes live, nightly learning |
 | [Docs/Reachy.md](Docs/Reachy.md) | The Reachy Mini: setup, what it does, settings, limits |
 | [Docs/Privacy-and-Safety.md](Docs/Privacy-and-Safety.md) | What is kept, where, for how long; what Vertex will and will not do in a world |
 | [Docs/Testing.md](Docs/Testing.md) | How the tests work (real servers, GPU tests, benchmarks) and the switches for A/B runs |

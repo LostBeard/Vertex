@@ -102,7 +102,7 @@ the cast if the bobber lands on land), waits up to about 90 seconds for the bite
 | "shoot that zombie" | `shoot` | Needs a bow and arrows. It draws, aims with the arrow's real flight and leads a moving target; closer than five blocks it uses melee. |
 | "put torches around", "it is too dark" | `light_up` | Torches on a grid. |
 | "eat something" | `eat` | Also automatic when hungry. |
-| "smelt the iron", "make a pickaxe" | `smelt`, `craft` | Real furnace and crafting-table clicks. `craft` gets anything from nothing (`ObtainAsync`): it reads the game's recipes and gathers, digs with the pickaxe it takes, hunts, smelts and makes the tools on the way, and says what stopped it. |
+| "smelt the iron", "make a pickaxe" | `smelt`, `craft` | Real furnace and crafting-table clicks. `craft` gets anything from nothing (`ObtainAsync`): it reads the game's recipes and gathers, digs with the pickaxe it takes, hunts, smelts and makes the tools on the way, and says what stopped it. A crafting table within 32 blocks is walked to before he makes another. |
 | "go to bed" | `sleep` | Sleeps in the nearest bed. |
 
 Built in, without being asked:
@@ -114,6 +114,8 @@ Built in, without being asked:
   as soon as it has it, and fight-or-flight when a mob hurts it (a small trained policy, with a hand-written rule behind it).
 - **A bow and arrows** are on his list after stone tools (string from spiders, arrows made from flint, a stick and a feather). With them, shooting is one of the things he chooses between in danger (from 6 blocks and with 3 hearts or more), and he finds out
   what it is worth the same way as the others: from what comes of it.
+- **Hunting** for what a creature drops (food, wool, string): he walks to it first, and one he cannot reach he passes over for another. Monsters only within 32 blocks and near his own level: going down caves after spiders got him shot. Fish only within 16 blocks, and anything on land comes first.
+- **Spiders for string:** armed, with 6 hearts or more and fewer than 3 monsters close, he fights a spider that comes to him until he has string for a bow, whatever `DangerLearner` would choose; the outcome is written down like any other. A fight he picks ends with picking up what fell, when nothing else is on him.
 - **Other people's buildings:** he leaves them standing. A block within 3 of anything built that he did not place himself (planks, doors, glass, stairs, torches and the like) is not collected and not dug through on the way anywhere. That holds for villages too. What he placed
   himself he remembers only until he restarts, so after a restart his own work counts as someone else's.
 - **After a death with tools on him** he goes back for his things first, within the 4.5 minutes they are sure to last, digging down to them if he must.
@@ -137,10 +139,12 @@ Built in, without being asked:
 ## What he feels and learns
 
 - **Pain.** The server's damage event and death packet say what hurt him and who did it; every hurt is a `hurt:` line in the log, and a death lesson lists them. `generic` damage with no source and a bare "died" are not vanilla: on a server with plugins, look there first.
-- **Monsters, by what has worked** (`DangerLearner`, on in the app, off in tests that want the fixed rules): he picks fight, run, dig in or swim out from a belief per situation (foe, weapon, health) that every outcome moves, and the outcomes are kept in `worlds/<world>.danger.jsonl`. Never hitting a creeper, and not offering what would fail at once, stay outside the learning.
-- **Getting on in the world** (`Milestones`): with nothing else to do he works up from what he has now: wooden tools, stone tools, food, a bed (it moves where he comes back to), iron tools and armor, shield, diamond pickaxe. A failed step waits while he goes on to the next.
-- **Heat** (a server with RealisticSeasons): he reads his temperature off the action bar and keeps a map of his readings. He keeps working while his health holds, retreats at 5 hearts to somewhere cool, heals, and goes back.
-- **Fire:** into the water, unless it keeps coming back within 20 seconds, when he leaves it for a minute.
+- **Monsters, by what has worked** (`DangerLearner`, on in the app, off in tests that want the fixed rules): he picks fight, run, dig in, swim out or shoot from a belief per situation (foe, weapon, health) that every outcome moves, and the outcomes are kept in `worlds/<world>.danger.jsonl`. Never hitting a creeper, not swimming out from what lives in the water, and not offering what would fail at once, stay outside the learning.
+- **Getting on in the world** (`Milestones`): with nothing else to do he works up from what he has now: a wooden pickaxe and sword, a bed (it moves where he comes back to), food, stone tools, a bow and arrows, iron tools and armor, shield, diamond pickaxe. A failed step waits while he goes on to the next.
+- **What failed just now:** a block the server did not break (a claim, say) is not planned through for 5 minutes, and no dig goes past 20 seconds. A move that leaves him on the same block is not planned again for 5 minutes, and three from one spot give that way up. The log says what it was (`dig:`, `move failed:`).
+- **Heat:** see "Heat" above: only what hurts counts, not the number.
+- **Fire:** into the water, unless it keeps coming back within 20 seconds, when he leaves it for a minute; not at all while heat is what lights him.
+- **The language model itself:** a trained adapter, tested before it goes live. See [Training.md](Training.md).
 
 ## Looking around and trying things
 
@@ -169,7 +173,7 @@ on a one-block island with water on three sides and a three-high dirt wall on th
   across 12 blocks of water to the S shore. It worked, in 24 seconds, and it cost me no health.") is stored with the tags `experiment`, `exp:swim-across` and `worked` or `failed`. He looks
   for that tag (an exact lookup, not a guess from similar words) before an experiment and does not repeat one he has a lesson for, on this server, across restarts.
 - **Learning from what happens to him** (`ExperienceLog`, from 2026-11-03, after phantoms killed him 70 seconds after god mode went off). Once a second he records where he is, what is near, what he is doing,
-  the time, the weather and his health. A **death** becomes a lesson in his own words, from facts he saw only ("I died: HereticSpawn was slain by Phantom. It was night, at x y z. In the last 14 seconds my
+  the time, the weather and his health. (The first-step note at the end of this item is from then: choosing from logged outcomes is now `DangerLearner`.) A **death** becomes a lesson in his own words, from facts he saw only ("I died: HereticSpawn was slain by Phantom. It was night, at x y z. In the last 14 seconds my
   health went from 10 hearts to none. Near me: 3 phantoms. I was doing: stepping away from monsters. I had not taken cover. I had a weapon. I had food."); a **big loss he got through** (4 hearts or more
   in a few seconds, then 5 seconds with no further drop) becomes one too. They are stored with tags (`death`, `night`, `no-cover`, `death:phantom`...). They are used in two ways: the last three go into
   the prompt when he chooses a project of his own ("What has hurt you before... plan so it does not happen again"), and **how early he takes cover is learned**: he digs in at 5 hearts, and 1 heart higher

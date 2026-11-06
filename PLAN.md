@@ -5,19 +5,33 @@ those servers through the ViaVersion plugins on the proxy; Vertex itself speaks 
 
 Every milestone is tested against REAL servers started locally (Paper 1.21.5 build 114, Velocity), never mocks.
 
-## START HERE: 2026-11-04 evening (newest; read first)
+## START HERE: 2026-11-05 (newest; read first)
 
-**Running:** 542ef35 or later, in `mc.spawndev.com`. **Best run yet, measured live on 542ef35, 23:08 to 23:38:** 1 death in 30 minutes, iron sword again, no failed digs. Earlier the same day: 33 in 30 minutes at the worst, 2 in 31 on be0427c, 3 in 30 on 984e50d. Things fetched back after a death live at 17:43, 18:00, 19:58, 21:15, 22:55, though not every time (20:14, 23:32: gone). First live bed at 20:59, a village's; it did not hold at the next death, cause unknown. The server runs GriefPrevention, CoreProtect and Timber among 24 plugins: a claim is the likely reason for "the server did not break it", not confirmed.
+**TJ's goal:** "make Vertex a learning AI companion that can game. Vertex is our test bed to see how advanced we can get a local AI and being able to learn is important." This PC is dedicated to Vertex until further notice: stop him for any work that needs the GPU, without asking, and restart him. LoRA training runs here now.
 
-**The rules of the heat are known now:** Geordi read RealisticSeasons 1.0.18 from the jar: temperature = season + biome + time + altitude + shelter; water, sprinting and fire play no part. **TJ then turned heat damage off** for everyone (`extremeHeatThreshold` 100, about 21:33 UTC) with the number still shown. 22 hits in 17 minutes in savanna at 46 to 56: none `generic`, none fire. All his heat behaviour goes through `HeatBelief`: a number alone means nothing, only being hurt does. Ask Geordi about odd game mechanics.
+**Running:** ebb9128 in `mc.spawndev.com`, SpawnDev.AI.Server 1.4.2 from nuget.org (only `SpawnDev.Reachy` still needs the local feed), **with his trained adapter v2.2**: `%APPDATA%\Vertex\adapters\current`, tool names only in the prompt, `LanguageAdapter` turns it off. All of it, with the numbers: [Docs/Training.md](Docs/Training.md).
 
-**Added:** air under a roof (swim to it, or dig up), fetching his things after a death, bow and arrows on the list, shooting as a fifth DangerLearner choice (0 outcomes so far: no bow yet, he finds no string), `SyntheticToolRequests` scoring `material`.
+**Measured live, deaths in 30 minutes:** 33 at the worst on 2026-11-04, then 8, 6, 3, 1 (542ef35, the best), 3, 3, 3, 4, and 2 with the adapter (90b700f). Results still vary a lot from run to run. What kills him now is monsters: heat damage is off (TJ, `extremeHeatThreshold` 100, 2026-11-04; the number still shows, and `HeatBelief` means a number alone scares nobody). The rules of the plugin are in `reference-realisticseasons-rules`.
 
-**Adapter, LIVE:** v2.2 (`_Training\vertex-lora-v2.2-turing`, trained on this PC's RTX 2060 in 4.4 hours, 1,499 lines) copied to `%APPDATA%\Vertex\adapters\current`, names-only prompt; `LanguageAdapter` in settings turns it off. Gate 2026-11-05: strict tool choice 100/100 on the names-only prompt (target 93; base names-only 59, base full 93), first word 778 ms (full prompt 1,175; Vertex was on the card too during this), 25.2 tok/s; honesty 20/20 on events never seen (base 17/20), heldout 58/58 exact with sentences not in training (base 0/58). Earlier: v1 94/100 with no honesty lines; v2.1 92/100 with garbled targets from my bug. The training log does not yet say which lines came from the adapter: fix before any nightly training.
+**Seen working live:** from nothing to an iron pickaxe and sword in about 15 minutes, things fetched back after a death (not always), air under a roof, spiders fought for string, a bed set from a village's, arrows made, shooting once (05:55: one outcome, reward 0.07).
 
-**Next:** (1) TJ's nightly learning, memory `project-vertex-sleep-training`: game as the judge, gate before the swap. Family chat directed at him may train locally, never in anything shipped, and speech not to him is used for nothing (`feedback-family-chat-in-training`): check memory for overheard speech. Watch him live on the adapter first. (2) Still not seen live: a bow, so no shooting. He has now killed spiders for string live, kept 2 at best, and needs 3 at once; deaths cost it. A bed that holds: "Respawn point set" twice and he still came back at 240 64 -256 both times (21:14, 03:47); EssentialsSpawn is the suspect, unconfirmed, Geordi's session had ended: ask TJ. (3) Deployed, not yet seen live: treading water from a zombie, a drowned killed him without his moving (18:18); he now stops and chooses again, and swimming out is not on offer against what lives in the water. (4) `AnIronPickaxe_FromEmptyPockets` is flaky: 1 failure in 3 on one build, a mined log not reaching his pockets.
+**Next:**
+1. Nightly learning, TJ's idea, memory `project-vertex-sleep-training`: the game judges and never he himself, a gate before the swap, old data kept in the mix. A run should take about 1.9 hours. First: the training log has to say which lines came from the adapter.
+2. Memory (RAG): 1,248 entries, all his own jobs and lessons, none overheard. People and directed speech are not in it, and belong there. What "remember that..." stores is kept apart, where has not been checked. Family chat directed at him may train locally, never in anything shipped, and speech not to him is used for nothing (`feedback-family-chat-in-training`).
+3. A bow to keep: he needs 3 string at once and deaths cost it. Shooting needs outcomes before it can be judged.
+4. A bed that holds: "Respawn point set" twice and he still came back at 240 64 -256 both times (21:14, 03:47). EssentialsSpawn is the suspect, unconfirmed: asked TJ, no answer yet; Geordi's session has ended. If death always goes to spawn here, stop spending time on beds.
+5. Why a jump in a tunnel fails, and why the server keeps some blocks (GriefPrevention is on the server: unconfirmed). The fixes mean he no longer repeats either; the log now says what they are (`move failed:`, `dig:`).
+6. Move `SpawnDev.Reachy` to `[0.1.0-preview.5]`, with a robot test (the robot is parked). Docs/Training.md's speed table: Tuvok goes on with this.
 
-## START HERE: 2026-11-04 update (read this before the older handoff below)
+**Peers:** Tuvok owns SpawnDev.ILGPU.ML and sends speed tests to run on this card; Data owns SpawnDev.AI. Do not code in their repos. Clone ML to the scratch folder for runs, not in the shared tree.
+
+## 2026-11-04 evening
+
+**The rules of the heat are known now:** Geordi read RealisticSeasons 1.0.18 from the jar: temperature = season + biome + time + altitude + shelter; water, sprinting and fire play no part. **TJ then turned heat damage off** for everyone (`extremeHeatThreshold` 100, about 21:33 UTC) with the number still shown. 22 hits in 17 minutes in savanna at 46 to 56: none `generic`, none fire.
+
+**Added:** air under a roof (swim to it, or dig up), fetching his things after a death, bow and arrows on the list, shooting as a fifth DangerLearner choice, `SyntheticToolRequests` scoring `material`.
+
+## 2026-11-04 update (history: heat was then still on, and much of this is settled)
 
 **What really kills him on mc.spawndev.com is not monsters.** With real pain sense, 121 of 140 hurts in 5 minutes were `generic` or `on_fire`, 16 from monsters. The server runs RealisticSeasons; his temperature is on the action bar (`Temperature: 56.6 C`). `generic` (1 HP per 3 s) goes with high readings (46.6 and up) and none was seen in 80 s at 25. What moves the reading is NOT worked out: it ramps up from 25 after a respawn, read 46.6 in water by the island and 25 in open sea, and also 25 on land near trees with 46.6 a few blocks away. Its `temperature.yml` on the server would answer this; it has not been read. **TJ's open decision:** temperature on for him, or `/toggletemperature` (per player). No server setting was changed.
 

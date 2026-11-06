@@ -49,6 +49,7 @@ each measured on the 18-sentence test (`ToolChoiceTests`) with the real model:
 - **Short prompts.** Tool definitions are shown in a compact form (the first sentence of each description, each argument's description cut to
   60 characters; `GameTool.Compact`). The prompt went from about 4,500 to 3,200 tokens. Removing the argument descriptions entirely cost
   accuracy (the model called `trade` with empty arguments), so they are cut, not removed.
+- **Or a trained adapter.** With his adapter loaded, tool definitions are gone from the prompt altogether, only the names stay, and the adapter carries the rest: about 1,900 tokens live, strict tool choice 100/100 against 93/100 for the plain model on the full list (2026-11-05, RTX 2060 12 GB). See [Training.md](Training.md).
 
 ## Speed
 
@@ -150,7 +151,7 @@ are comparable between the two columns. One run each.
 
 ## Libraries and their versions
 
-Vertex is built on the released `SpawnDev.AI.Server` 1.4.0 (nuget.org, 2026-11-03, which brings `SpawnDev.AI` 1.3.0, `SpawnDev.ILGPU.ML` 5.8.1 and `SpawnDev.ILGPU` 5.4.15) and on `SpawnDev.Reachy`
+Vertex is built on the released `SpawnDev.AI.Server` 1.4.2 (nuget.org, 2026-11-05, which brings `SpawnDev.AI` 1.3.0, `SpawnDev.ILGPU.ML` 5.8.3 and `SpawnDev.ILGPU` 5.4.16; the measurements above name the packages they were made on) and on `SpawnDev.Reachy`
 0.1.0-local.24 from the local feed, pinned exactly (`[0.1.0-local.24]`): nuget.org has only `SpawnDev.Reachy` 0.1.0-preview.1 to preview.4, all OLDER than local.24, and with a plain version number
 (only a minimum) a restore without the local feed quietly took preview.1; now it fails with NU1102 instead (checked with an empty package folder). A preview.5 published from the local.24 source would end
 that dependency on the local feed. Until 2026-11-03 the AI chain also ran on local-feed builds (1.4.0-local.15 to local.18) while it was verified. A new package is
