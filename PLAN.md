@@ -5,13 +5,31 @@ those servers through the ViaVersion plugins on the proxy; Vertex itself speaks 
 
 Every milestone is tested against REAL servers started locally (Paper 1.21.5 build 114, Velocity), never mocks.
 
-## SUNDAY 2026-11-08: start here
+## START HERE: 2026-11-16 (the long run reviewed, and what came of it)
 
-TJ paused work near the weekly quota limit on 2026-11-06 and left Vertex running to review together on Sunday. Do not start new work before that review. C: had 32 GB free; keep it from filling.
+**The run:** 3db3c81, alone in `mc.spawndev.com` from 08:20 on 2026-11-06 to 03:29 on 11-07 (19 h 9 min in the game), counted from `%APPDATA%\Vertex\logs\play-*.log` and `status-*.jsonl`. He then stayed out until the app was stopped (last status row 08:30), was offline from 11-12 at TJ's word, and came back by the autostart at a Windows sign-in on 11-16.
 
-**First, read what happened** (`%APPDATA%\Vertex`): `logs\status-*.jsonl` is how he was every 10 minutes (`inGame`, `state.deathsThisRun`, `state.next`, position, health, inventory; `deathsThisRun` starts again at each app start, and a gap means the app was not running). `logs\play-*.log` is the panel's lines kept on disk: `task ended`, `hurt:`, `danger:`, `learned (death`, `dig:`, `move failed:`, `stuck at`, `disconnected`, `not rejoining`. `worlds\mc.spawndev.com_25565.danger.jsonl` is what he learned, `training\turns-*.jsonl` the training lines. Questions: time in the game against offline; deaths an hour and from what; how far up `Milestones` he gets and how often; did he ever keep a bow and shoot; any loop (the same line many times), any `job crashed`; did he rejoin after a real server restart (not yet seen live); what the shooting outcomes say.
+- **151 deaths, 7.9 an hour.** By the lessons' own words: 106 at night, 34 by day, 10 at sunrise, 1 at sunset. The server's words: no reason 51 (by what hurt him: spider 15, skeleton's arrow 11, zombie 10, drowned's trident 9, drowning 4, zombie villager 1, nothing 1), shot by Skeleton 33, slain by Zombie 23, drowned 17, slain by Spider 15, blown up by Creeper 6, Zombie Villager 3, Drowned 2, Witch 1.
+- **Lives:** 28 under a minute, 56 of 1 to 3 minutes, 23 of 3 to 10, 39 of 10 to 30, 5 longer. 142 deaths with no food, 91 with no weapon. Doing when he died: the way to a wooden pickaxe 38, taking cover 17, going back for his things 16, stepping away 13.
+- **Digging in:** 115 times; 60 of them the full two minutes and back up into the same night, 47 under 30 seconds.
+- **How far up:** started toward food 93 times, a wooden pickaxe 92, a bed 63, a wooden sword 56, a bow 54, arrows 45, a stone pickaxe 43, an iron pickaxe 39, a stone sword 30, an iron chestplate 26, an iron sword 24, helmet 14, leggings 11, boots 8, a diamond pickaxe 6, a shield 6. No bed in 19 hours ("looked for sheep and found none" 53 times, no "Respawn point set"). One line about shooting.
+- **Out of the game:** one drop at 14:53 (connection closed by the server), rejoined. At 03:29 "You were kicked from aubscraft: An internal server connection error occurred.": not rejoined. Both `job crashed` lines are those two disconnects.
+- **"I need a crafting table (and could not make or reach one)":** 12 jobs ended on it, with a table of his own close and under 4 planks.
+- Logs: 2.1 MB in all, C: 33.9 GB free on 11-16.
 
-**Open from the last session:** 11 deaths in about 2 hours on 08e83f2 (cause not looked at beyond one zombie and one creeper in the panel); skeletons were what killed him the night before. `I need a crafting table (and could not make or reach one)` while holding 2 acacia logs at 01:16 on 11-06 looks wrong: check whether it repeats. The whole `LiveDangerChoiceTests|LiveObtainTests|LiveMiningTests|LiveActionTests` set was 59 of 62 before the fixes; the 3 and the new tests then passed alone, and the whole set has not been rerun. Next work as planned: skeletons and a bow to keep, then the nightly learning loop, then people and directed speech in RAG.
+**Done from it (2026-11-16, each with a test that fails without it):**
+1. **Nights underground, learned.** From the third death at night within 14 days (death lessons tagged `night`, in his memory and this run) he believes nights kill him and says so. Then, alone in survival with no goal, no friend within 24 blocks and no bed he can sleep in: at night he leaves off his own surface jobs, goes to diggable ground if he stands on sand or by water, digs in, seals the hole and stays until the sun is up. Under the ground already he goes on working. `ExperienceLog.NightsKill`, `VertexBrain.NightShelterDue`, `Skills.ShelterForTheNightAsync`. See Docs/Skills.md.
+2. **The proxy's "internal server connection error" kick** is the server going away: he goes back (`VertexHost.ShouldRejoin`).
+3. **One meaning of "within reach".** The walk to a table stops where the table's nearest point is 3.5 from his eyes; the check after it measured to the table's centre (4.0), so a table up or down and across was reached and out of reach at once. `MinecraftClient.BlocksInReach` measures as the walk and the server do; tables, furnaces and `GoToStationAsync` use it. And a craft that still ends "I need a crafting table" fetches one more log and tries again.
+4. `VertexBrain.WorkUpWhenIdle` (on, as in the game): off in the tests of choosing a project, which the way up kept from ever choosing (3 of them failed on 2026-11-16 with him busy on the way up the whole time).
+
+**Not done, in order:** the night underground is spent waiting, and a player mines; a bow to keep and shooting outcomes; why he drowns (17, 15 of them "coming up for air" on the way to a wooden pickaxe); sheep for a bed are never found near where he lives; then nightly learning and people in RAG as below.
+
+## 2026-11-08 (history: the handoff before the review above)
+
+TJ paused work near the weekly quota limit on 2026-11-06 and left Vertex running. Where the logs are (`%APPDATA%\Vertex`): `logs\status-*.jsonl` is how he was every 10 minutes (`inGame`, `state.deathsThisRun`, `state.next`, position, health, inventory; `deathsThisRun` starts again at each app start, and a gap means the app was not running). `logs\play-*.log` is the panel's lines kept on disk: `task ended`, `hurt:`, `danger:`, `learned (death`, `dig:`, `move failed:`, `stuck at`, `disconnected`, `not rejoining`. `worlds\mc.spawndev.com_25565.danger.jsonl` is what he learned, `training\turns-*.jsonl` the training lines.
+
+**Still open from then:** the whole `LiveDangerChoiceTests|LiveObtainTests|LiveMiningTests|LiveActionTests` set was 59 of 62 before the fixes of 11-05; the 3 and the new tests then passed alone, and the whole set has not been rerun.
 
 ## START HERE: 2026-11-05 (read after the above)
 

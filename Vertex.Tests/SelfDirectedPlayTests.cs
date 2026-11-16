@@ -82,7 +82,8 @@ public class SelfDirectedPlayTests
         foreach (var f in _folders) { try { if (Directory.Exists(f)) Directory.Delete(f, true); } catch (IOException) { } }
     }
 
-    private async Task<(MinecraftClient Client, VertexBrain Brain, ConcurrentQueue<string> Log)> JoinAsync(string name, bool selfDirected)
+    /// <param name="workUp">Whether he works his way up (tools, food, a bed...) when idle, as in the game. Off for the tests of choosing a project: the way up comes first and would keep him busy throughout.</param>
+    private async Task<(MinecraftClient Client, VertexBrain Brain, ConcurrentQueue<string> Log)> JoinAsync(string name, bool selfDirected, bool workUp = false)
     {
         var log = new ConcurrentQueue<string>();
         var client = new MinecraftClient(GameProfile.Offline(name));
@@ -98,6 +99,7 @@ public class SelfDirectedPlayTests
             IdleBeforeGoals = TimeSpan.FromSeconds(5),
             IdleCheckEvery = TimeSpan.FromSeconds(1),
             StudyWhenIdle = false,
+            WorkUpWhenIdle = workUp,
         };
         brain.Log += m => { log.Enqueue(m); TestContext.Out.WriteLine(m); };
         brain.Start();
@@ -183,9 +185,87 @@ public class SelfDirectedPlayTests
         await _server.CommandAsync($"setblock {ax + 4} 200 {az} minecraft:white_bed[facing=east,part=head]");
         await _server.CommandAsync($"tp VertexSleepy {ax + 0.5} 200 {az + 0.5}");
         await Wait.UntilAsync(() => client.OnGround && client.FindBeds(48, 1).Count > 0, TimeSpan.FromSeconds(30), () => $"at {client.Position}");
-        await _server.CommandAsync("time set 13500");
-        await Wait.UntilAsync(() => log.Any(l => l.Contains("going to sleep")), TimeSpan.FromSeconds(90), () => "never went to bed; log: " + string.Join(" | ", log.TakeLast(6)));
-        await Wait.UntilAsync(() => client.Sleeping, TimeSpan.FromSeconds(30), () => "not in bed; log: " + string.Join(" | ", log.TakeLast(6)));
+        try
+        {
+            await _server.CommandAsync("time set 13500");
+            await Wait.UntilAsync(() => log.Any(l => l.Contains("going to sleep")), TimeSpan.FromSeconds(90), () => "never went to bed; log: " + string.Join(" | ", log.TakeLast(6)));
+            await Wait.UntilAsync(() => client.Sleeping, TimeSpan.FromSeconds(30), () => "not in bed; log: " + string.Join(" | ", log.TakeLast(6)));
+        }
+        finally
+        {
+            // Day again and the bed gone: the clock stands still on this server and every test stands at the same spot, so the next one (in the water, by day) found night and a bed, and went to bed.
+            brain.SelfDirectedPlay = false;
+            brain.Tasks.Stop();
+            await _server.CommandAsync("time set day");
+            await _server.CommandAsync($"fill {ax + 3} 200 {az} {ax + 4} 200 {az} minecraft:air");
+        }
+    }
+
+    /// <summary>
+    /// Live 2026-11-06 and 07: 106 of 151 deaths in 19 hours were at night, 38 of them on the way to a wooden pickaxe. Nothing tells him nights are dangerous: he finds out. Two deaths at night change
+    /// nothing; from the third he leaves off what he was doing up there, digs in, and is still under the ground half a minute later; when day comes he is back up.
+    /// </summary>
+    [Test]
+    public async Task AfterThreeDeathsAtNight_HeSpendsTheNightUnderground_ByHimself_AndComesUpByDay()
+    {
+        const string name = "VertexDark";
+        var (client, brain, log) = await JoinAsync(name, selfDirected: true, workUp: true);
+        await using var _c = client;
+        await using var _b = brain;
+        brain.SelfDirectedIdle = TimeSpan.FromMinutes(5);       // as in the game: no project of his own for 5 minutes; getting on in the world starts at once
+        var (px, _, pz) = client.Position;
+        int ax = (int)Math.Floor(px), az = (int)Math.Floor(pz);
+        await _server.CommandAsync($"fill {ax - 8} 190 {az - 8} {ax + 8} 199 {az + 8} minecraft:dirt");
+        await _server.CommandAsync($"fill {ax - 8} 200 {az - 8} {ax + 8} 206 {az + 8} minecraft:air");
+        var spawns = 0;
+        client.Spawned += () => Interlocked.Increment(ref spawns);
+        async Task ToTheStageAsync(int spawnsBefore)
+        {
+            // Back to life first: a teleport or a kill sent to someone still dead does nothing, and the test then waited on a death that never came.
+            await Wait.UntilAsync(() => Volatile.Read(ref spawns) > spawnsBefore && client.IsSpawned && client.Health > 0, TimeSpan.FromSeconds(30), () => $"not back to life: health {client.Health} at {client.Position}");
+            await _server.CommandAsync($"tp {name} {ax + 0.5} 200 {az + 0.5}");
+            await Wait.UntilAsync(() => client.OnGround && client.Health > 0 && client.FeetBlock.Y == 200 && Math.Abs(client.Position.X - ax - 0.5) < 3, TimeSpan.FromSeconds(30), () => $"at {client.Position}");
+        }
+        try
+        {
+            await _server.CommandAsync("time set 14000");
+            await ToTheStageAsync(-1);
+            for (var death = 1; death <= 3; death++)
+            {
+                if (death == 3)
+                {
+                    // Two deaths at night are not yet a rule: he is out working, and has not gone under.
+                    await Task.Delay(TimeSpan.FromSeconds(10));
+                    Assert.That(brain.NightsKill, Is.False, "two deaths: not believed yet");
+                    Assert.That(log.Any(l => l.Contains("going underground")), Is.False, "and he has not hidden: " + string.Join(" | ", log.TakeLast(6)));
+                }
+                var before = brain.DeathsThisRun;
+                var spawnsBefore = Volatile.Read(ref spawns);
+                await _server.CommandAsync($"kill {name}");
+                await Wait.UntilAsync(() => brain.DeathsThisRun > before, TimeSpan.FromSeconds(30), () => $"death {death} was not noticed; log: " + string.Join(" | ", log.TakeLast(4)));
+                await ToTheStageAsync(spawnsBefore);
+            }
+            Assert.That(brain.NightsKill, Is.True, "three deaths at night: " + string.Join(" | ", log.Where(l => l.Contains("learned")).TakeLast(4)));
+            Assert.That(log.Any(l => l.Contains("learned from 3 deaths at night")), Is.True, "and he says what he learned");
+            await Wait.UntilAsync(() => log.Any(l => l.Contains("going underground until morning")), TimeSpan.FromSeconds(60), () => "never went under; log: " + string.Join(" | ", log.TakeLast(8)));
+            await Wait.UntilAsync(() => client.FeetBlock.Y <= 197, TimeSpan.FromSeconds(60), () => $"not down: at {client.Position}, doing {brain.Tasks.Current}; log: " + string.Join(" | ", log.TakeLast(8)));
+            await Task.Delay(TimeSpan.FromSeconds(30));
+            Assert.That(client.FeetBlock.Y, Is.LessThanOrEqualTo(197), $"still under the ground half a minute later (doing {brain.Tasks.Current}): " + string.Join(" | ", log.TakeLast(6)));
+            Assert.That(brain.Tasks.Current, Is.EqualTo("spending the night underground"));
+            Assert.That(client.Health, Is.GreaterThan(0));
+            // Day: he comes up.
+            await _server.CommandAsync("time set 500");
+            await Wait.UntilAsync(() => client.FeetBlock.Y >= 200, TimeSpan.FromSeconds(90), () => $"not up: at {client.Position}, doing {brain.Tasks.Current}; log: " + string.Join(" | ", log.TakeLast(8)));
+            Assert.That(log.Any(l => l.Contains("until morning")), Is.True, "and the job's ending says so: " + string.Join(" | ", log.TakeLast(8)));
+        }
+        finally
+        {
+            await _server.CommandAsync("time set day");
+            // The earth goes again: every test here stands at the same spot, and left in place it gave the next one ground to dig down through for ten minutes (the bed test, which then never got to bed).
+            brain.SelfDirectedPlay = false;
+            brain.Tasks.Stop();
+            await _server.CommandAsync($"fill {ax - 8} 190 {az - 8} {ax + 8} 199 {az + 8} minecraft:air");
+        }
     }
 
     [Test]

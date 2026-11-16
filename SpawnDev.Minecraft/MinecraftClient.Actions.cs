@@ -26,6 +26,23 @@ public sealed partial class MinecraftClient
     public double BlockReach => Attribute("block_interaction_range") ?? 4.5;
     public double EntityReach => Attribute("entity_interaction_range") ?? 3.0;
 
+    /// <summary>Is the block within <paramref name="reach"/> of the eyes, measured to its nearest point, as the server's reach check and <see cref="Pathing.GoalReachBlock"/> measure it?</summary>
+    public static bool WithinReach((double X, double Y, double Z) eye, int x, int y, int z, double reach)
+    {
+        double cx = Math.Clamp(eye.X, x, x + 1), cy = Math.Clamp(eye.Y, y, y + 1), cz = Math.Clamp(eye.Z, z, z + 1);
+        return (eye.X - cx) * (eye.X - cx) + (eye.Y - cy) * (eye.Y - cy) + (eye.Z - cz) * (eye.Z - cz) <= reach * reach;
+    }
+
+    /// <summary>
+    /// The blocks of a kind that he can reach from where he stands, nearest first. To the nearest point, not the centre (which is up to 0.87 further): a walk "to within reach of the table" ended where its
+    /// centre was 4.07 away, the table then counted as out of reach, and with 3 planks he could not make another: "I need a crafting table (and could not make or reach one)", 12 jobs in 19 hours (2026-11-06).
+    /// </summary>
+    public List<(int X, int Y, int Z)> BlocksInReach(Func<int, bool> stateMatches, double reach, int maxCount = 1)
+    {
+        var eye = EyePosition;
+        return World.FindBlocks(stateMatches, eye, reach + 0.9, 64).Where(b => WithinReach(eye, b.X, b.Y, b.Z, reach)).Take(maxCount).ToList();
+    }
+
     public (double X, double Y, double Z) EyePosition
     {
         get

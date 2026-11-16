@@ -2256,8 +2256,13 @@ public sealed partial class Skills(MinecraftClient client)
     public string? DigInProblem()
     {
         var (px, py, pz) = client.Position;
-        int x = (int)Math.Floor(px), y0 = (int)Math.Floor(py + 1e-6), z = (int)Math.Floor(pz);
         if (InWaterNow()) return "I can't dig in while I'm in the water.";
+        return DigInProblemAt((int)Math.Floor(px), (int)Math.Floor(py + 1e-6), (int)Math.Floor(pz));
+    }
+
+    /// <summary>The same question about ground he is not standing on: feet at x, y0, z.</summary>
+    private string? DigInProblemAt(int x, int y0, int z)
+    {
         for (var d = 1; d <= 4; d++)
         {
             var s = client.World.GetState(x, y0 - d, z);
@@ -2269,6 +2274,64 @@ public sealed partial class Skills(MinecraftClient client)
                 if (client.World.GetState(x + dx, y0 - d, z + dz) is var n && n > 0 && (D.StateFlags[n] & GameData.FlagWater) != 0) return "There is water beside the ground here: it would flood the hole.";
         }
         return null;
+    }
+
+    /// <summary>Night in the game, to the moment the sun is up (tick 0): the undead burn from a little before that, and what is left of them is no longer waiting at the hole.</summary>
+    public bool NightNow => ((client.World.DayTime % 24000) + 24000) % 24000 >= 12600;
+
+    /// <summary>Is he under the ground (rock or earth over his head, three blocks of it within 24), not under the sky or a tree? What walks the surface at night does not come down a tunnel he dug.</summary>
+    public bool UnderGround()
+    {
+        var (x, y, z) = client.FeetBlock;
+        var solid = 0;
+        for (var by = y + 2; by <= y + 25 && solid < 3; by++)
+            if (client.World.GetState(x, by, z) is var s && Standable(s) && D.BlockOf(s).Name is var n && !n.EndsWith("_leaves") && !n.EndsWith("_log") && !n.EndsWith("_wood")) solid++;
+        return solid >= 3;
+    }
+
+    /// <summary>Ground within `reach` blocks that he could dig into, nearest first (feet positions): for when he stands on sand, by water, or on someone's floor.</summary>
+    internal List<(int X, int Y, int Z)> FindDigInSpots(int reach)
+    {
+        var (bx, by, bz) = client.FeetBlock;
+        var spots = new List<(int X, int Y, int Z, int D2)>();
+        for (var dx = -reach; dx <= reach; dx++)
+        for (var dz = -reach; dz <= reach; dz++)
+        {
+            var d2 = dx * dx + dz * dz;
+            if (d2 > reach * reach || !client.World.IsLoaded(bx + dx, bz + dz)) continue;
+            if (GroundLevel(bx + dx, bz + dz, by) is not int gy || !Open(client.World.GetState(bx + dx, gy + 1, bz + dz))) continue;
+            if (DigInProblemAt(bx + dx, gy, bz + dz) == null) spots.Add((bx + dx, gy, bz + dz, d2));
+        }
+        return spots.OrderBy(s => s.D2).Select(s => (s.X, s.Y, s.Z)).ToList();
+    }
+
+    /// <summary>
+    /// The night underground, as a player without a bed spends it: where he stands if the ground allows, else the nearest ground that does (his respawn island is mostly sand), dug in and sealed
+    /// until the sun is up. 106 of his 151 deaths in 19 hours were at night, and digging in for two minutes at most sent him back up into the same night (2026-11-06 and 07).
+    /// </summary>
+    public async Task<(bool, string)> ShelterForTheNightAsync(CancellationToken ct)
+    {
+        if (DigInProblem() is { } problem)
+        {
+            var spots = FindDigInSpots(24);
+            // The nearest few, a few blocks apart: one spot he cannot reach says little about the next.
+            var tried = new List<(int X, int Y, int Z)>();
+            foreach (var spot in spots)
+            {
+                if (tried.Count >= 3) break;
+                if (tried.Any(t => Math.Abs(t.X - spot.X) + Math.Abs(t.Z - spot.Z) < 4)) continue;
+                tried.Add(spot);
+                Trace?.Invoke($"night: the ground here will not do ({problem}), going to dig in at {spot.X} {spot.Y} {spot.Z}");
+                using var leg = CancellationTokenSource.CreateLinkedTokenSource(ct);
+                leg.CancelAfter(TimeSpan.FromSeconds(30));
+                try { await client.GoToAsync(Goal.Block(spot.X, spot.Y, spot.Z), new PathOptions { MaxNodes = 12_000, Sprint = true }, leg.Token); }
+                catch (OperationCanceledException) when (!ct.IsCancellationRequested) { }
+                if (DigInProblem() == null) break;
+            }
+            if (DigInProblem() is { } still)
+                return (false, $"{still} I looked for ground to dig into within 24 blocks and {(spots.Count == 0 ? "found none" : "could not get to any")}.");
+        }
+        return await TakeCoverAsync(ct, untilMorning: true);
     }
 
     /// <summary>The nearest surface water within `reach` blocks, as a block to stand (swim) in, or null: for getting into it when he is on fire.</summary>
@@ -2650,7 +2713,8 @@ public sealed partial class Skills(MinecraftClient client)
     /// into solid ground, seals the top with a block of what he dug, and waits below until nothing hostile is near and his health is back, then digs out and builds himself up to the surface.
     /// Nothing flies or walks into a sealed hole. Refuses (honestly) only where it would be wrong: water or lava round the shaft, no solid ground, no block to seal with.
     /// </summary>
-    public async Task<(bool, string)> TakeCoverAsync(CancellationToken ct)
+    /// <param name="untilMorning">Stay below, sealed in, for as long as it is night (see <see cref="ShelterForTheNightAsync"/>); only with the hole sealed, and not while something down there is hurting him.</param>
+    public async Task<(bool, string)> TakeCoverAsync(CancellationToken ct, bool untilMorning = false)
     {
         var (px, py, pz) = client.Position;
         int x = (int)Math.Floor(px), y0 = (int)Math.Floor(py + 1e-6), z = (int)Math.Floor(pz);
@@ -2664,8 +2728,20 @@ public sealed partial class Skills(MinecraftClient client)
         var (placed, _, _) = await client.BuildAsync([new Placement(x, y0 - 1, z, IsFiller, "something to seal the hole with")], ct);
         var sealed_ = client.World.GetState(x, y0 - 1, z) is var top && top > 0 && Standable(top);
         // Wait below: until nothing hostile is within 12 blocks (the walkers; fliers cannot get in) and health is back to 8 hearts, at most two minutes.
+        // The night through, when that is what he came down for: a sealed hole is the one place nothing reaches him, and two minutes later it is the same night up there.
         var waited = 0;
-        while (waited < 120 && !ct.IsCancellationRequested && (NearestHostile(12) != null || NearestFlier(16) != null || client.Health < 16))
+        var forTheNight = untilMorning && sealed_ && NightNow;
+        if (forTheNight) Trace?.Invoke($"night: sealed in at {x} {y0 - 3} {z} until morning");
+        var best = client.Health;
+        while (forTheNight && NightNow && !ct.IsCancellationRequested)
+        {
+            // Losing health in a sealed hole (a heart or more below his best down here) means the hole is not the shelter he took it for: out, and choose again.
+            best = Math.Max(best, client.Health);
+            if (client.Health <= best - 2) { Trace?.Invoke($"night: something is hurting me down here ({client.Health / 2:0.#} hearts), coming up"); forTheNight = false; break; }
+            await client.WaitTicksAsync(20, ct);
+            waited++;
+        }
+        for (var more = 0; more < 120 && !ct.IsCancellationRequested && (NearestHostile(12) != null || NearestFlier(16) != null || client.Health < 16); more++)
         {
             await client.WaitTicksAsync(20, ct);
             waited++;
@@ -2674,7 +2750,7 @@ public sealed partial class Skills(MinecraftClient client)
         if (sealed_) { await client.EquipBestToolAsync(client.World.GetState(x, y0 - 1, z), ct); await client.DigAsync(x, y0 - 1, z, ct); }
         await client.GoToAsync(Goal.Block(x, y0, z), new PathOptions { CanDig = true, CanPlace = true, MaxNodes = 6_000 }, ct);
         var out_ = client.FeetBlock.Y >= y0;
-        return (out_, $"I dug in {(sealed_ ? "and sealed the hole" : "(I had nothing to seal it with)")}, waited {waited} seconds below, and {(out_ ? "came back up" : "am still down there")}.");
+        return (out_, $"I dug in {(sealed_ ? "and sealed the hole" : "(I had nothing to seal it with)")}, waited {waited} seconds below{(forTheNight ? " until morning" : "")}, and {(out_ ? "came back up" : "am still down there")}.");
     }
 
     /// <summary>

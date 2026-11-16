@@ -179,6 +179,12 @@ on a one-block island with water on three sides and a three-high dirt wall on th
   the prompt when he chooses a project of his own ("What has hurt you before... plan so it does not happen again"), and **how early he takes cover is learned**: he digs in at 5 hearts, and 1 heart higher
   for each death in the last day in which he had not dug in, up to 8 hearts (the log says "learned from 1 death today without digging in: I now take cover at 6 hearts"). This is a first step, not
   machine learning yet: the next ones are choosing between fight, flight, eating and digging in from the logged outcomes, and training the fight-or-flight network on real episodes.
+- **Nights underground, once nights have killed him** (2026-11-16). In 19 hours alone on AubsCraft (2026-11-06 and 07) he died 151 times, 106 of them at night, and his dig-in came back up after two
+  minutes at most into the same night. Nothing tells him nights are dangerous: from the third death lesson tagged `night` within 14 days (his memory and this run) he believes it, and says so in the log
+  ("learned from 3 deaths at night in the last 14 days: nights kill me here..."). While he believes it, playing alone in survival with no goal, no friend within 24 blocks and no bed he can sleep in, at
+  night he leaves off what he started for himself on the surface (the way up, finding food, going back for his things), goes to ground he can dig into if he stands on sand or by water (within 24 blocks),
+  digs in, seals the hole and stays until the sun is up (`ShelterForTheNightAsync`). Under the ground already (three blocks of rock or earth over his head) he goes on working. He comes up early if he
+  loses a heart down there. With no death at night for 14 days the belief lapses and he finds out again.
 - **Using what he learned.** Stranded on a tiny patch, he asks his memory BEFORE trying: the lessons for that situation (tag `exp:tiny-patch`) carry the ways that worked or failed (`worked:swim`,
   `failed:dig`; ways are swim, dig, climb). Each candidate shore is planned without moving, and the order of tries moves toward a way that worked and away from one that failed; with no earlier
   lessons it stays nearest first. It is only the ORDER: nothing is ruled out, a way that failed is still tried if the others do not work. When the order changed he says why in the lesson

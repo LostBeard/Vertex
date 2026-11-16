@@ -26,6 +26,7 @@ public class RejoinPolicyTests
     [TestCase("You were kicked from aubscraft: Server closed", true)]
     [TestCase("Server closed", true)]
     [TestCase("The server is restarting", true)]
+    [TestCase("You were kicked from aubscraft: An internal server connection error occurred.", true)]      // live 2026-11-07 03:29: he stayed out
     [TestCase("You were kicked from aubscraft: Griefing", false)]
     public void WhichDisconnectsAreWorthGoingBackAfter(string? reason, bool expected)
         => Assert.That(VertexHost.ShouldRejoin(reason), Is.EqualTo(expected), reason);

@@ -99,13 +99,13 @@ public sealed partial class MinecraftClient
     public async Task<bool> OpenFurnaceAsync(CancellationToken ct = default)
     {
         var furnace = World.Data.Block("furnace")!;
-        var near = World.FindBlocks(s => s > 0 && World.Data.StateBlock[s] == furnace.Id, EyePosition, BlockReach - 0.5, 1);
+        var near = BlocksInReach(s => s > 0 && World.Data.StateBlock[s] == furnace.Id, BlockReach - 0.5);
         if (near.Count == 0)
         {
             if (Inventory.Count("furnace") == 0 && !(await CraftItemAsync("furnace", 1, ct)).Success) return false;
             if (!await EquipAsync("furnace", ct)) return false;
             if (!await PlaceBesideUsAsync(ct)) return false;
-            near = World.FindBlocks(s => s > 0 && World.Data.StateBlock[s] == furnace.Id, EyePosition, BlockReach, 1);
+            near = BlocksInReach(s => s > 0 && World.Data.StateBlock[s] == furnace.Id, BlockReach);
             if (near.Count == 0) return false;
         }
         var (fx, fy, fz) = near[0];

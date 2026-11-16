@@ -65,6 +65,12 @@ public sealed class VertexBrain : IBody
     public bool StudyWhenIdle { get; set; } = true;
 
     /// <summary>
+    /// When playing alone in survival, work his way up (tools, food, a bed, iron...: <see cref="Skills.Milestones"/>) before any project of his own. On, as in the game. Off, he goes straight to choosing a
+    /// project: what the tests of that choosing need, since the way up now keeps him busy for hours (the tests written before it timed out waiting for a choice, 2026-11-16).
+    /// </summary>
+    public bool WorkUpWhenIdle { get; set; } = true;
+
+    /// <summary>
     /// Self-directed play: with no goal and nobody needing it for <see cref="SelfDirectedIdle"/>, Vertex chooses ONE small project of its own (build something little, explore a direction, gather,
     /// fish, farm) and does it with the same skills and rules as any request. Off by default: letting Vertex play on its own is the household's choice. Only in survival, by day, healthy and fed;
     /// anyone talking to it, any job running, "stay" or a goal it already has outrank it, and it waits <see cref="ProjectCooldown"/> between projects and does not repeat its last few.
@@ -624,6 +630,34 @@ public sealed class VertexBrain : IBody
         var threshold = ExperienceLog.CoverBelow(deaths);
         if (threshold != Reflexes.CoverBelow) Log?.Invoke($"learned from {deaths} death{(deaths == 1 ? "" : "s")} today without digging in: I now take cover at {threshold / 2.0:0.#} hearts (it was {Reflexes.CoverBelow / 2.0:0.#})");
         Reflexes.CoverBelow = threshold;
+        RefreshNightBelief();
+    }
+
+    /// <summary>Does he believe nights kill him here (<see cref="ExperienceLog.NightsKill"/>)? Then, playing alone with no bed to sleep in, he spends them underground.</summary>
+    public bool NightsKill { get; private set; }
+
+    /// <summary>How many of his deaths in the last two weeks were at night (this run's, and those in his memory from before).</summary>
+    private int NightDeathsLately()
+    {
+        List<Skills.Lesson> mine; lock (_sessionLessons) mine = _sessionLessons.Where(l => l.Key == "death" && l.Has("night")).ToList();
+        var n = mine.Count;
+        if (LongTerm is { } memory)
+        {
+            var cutoff = (DateTime.UtcNow - ExperienceLog.NightBeliefWindow).Ticks;
+            foreach (var e in memory.Store.List(new SpawnDev.AI.AiMemoryFilter { Scope = MemoryScope, Kinds = [SpawnDev.AI.AiMemoryKind.Lesson] }))
+                if (e.TimeTicks >= cutoff && e.Tags.Contains(ExperimentTag("death")) && e.Tags.Contains("night") && !mine.Any(l => e.Text.StartsWith(l.Text, StringComparison.Ordinal))) n++;
+        }
+        return n;
+    }
+
+    private void RefreshNightBelief()
+    {
+        var deaths = NightDeathsLately();
+        var believed = ExperienceLog.NightsKill(deaths);
+        if (believed != NightsKill)
+            Log?.Invoke(believed ? $"learned from {deaths} deaths at night in the last {ExperienceLog.NightBeliefWindow.TotalDays:0} days: nights kill me here, so with no bed to sleep in I spend them underground"
+                : $"only {deaths} death{(deaths == 1 ? "" : "s")} at night in the last {ExperienceLog.NightBeliefWindow.TotalDays:0} days: I no longer hide from the night");
+        NightsKill = believed;
     }
 
     /// <summary>The last few things that hurt him badly, from his own log, in his words: for the prompt when he decides what to do. Empty when nothing has.</summary>
@@ -714,6 +748,22 @@ public sealed class VertexBrain : IBody
 
     /// <summary>Is it night in the game (when a bed can be slept in: from sunset to just before sunrise)?</summary>
     private bool IsNight() => Client.World.DayTime % 24000 is >= 12600 and < 23400;
+
+    private DateTime _nextNightShelterTry = DateTime.MinValue, _nextNightBeliefCheck = DateTime.MinValue;
+
+    /// <summary>
+    /// Is this a night to spend underground? He believes nights kill him (<see cref="NightsKill"/>), it is night, he is playing alone in survival with no goal and nobody within 24 blocks (with a friend
+    /// beside him he stays with the friend), and the last try is not a minute old.
+    /// </summary>
+    private bool NightShelterDue(DateTime now, Objective? goal)
+    {
+        if (!SelfDirectedPlay || !NightsKill || goal != null || Staying || !Client.IsSpawned || Client.GameMode != GameMode.Survival || !IsNight() || now < _nextNightShelterTry) return false;
+        var (x, y, z) = Client.Position;
+        return !Client.Entities.Values.Any(e => e.IsPlayer && e.Uuid != Client.Profile.Id && e.DistanceTo(x, y, z) < 24);
+    }
+
+    /// <summary>The jobs the idle loop starts for him alone, by what they are called: the ones a night ends. What a friend asked for, a goal's step, and a reflex in the middle of saving him are not among them.</summary>
+    internal static bool OwnSurfaceJob(string job) => job.StartsWith("working toward ") || job is "finding food" or "going back for my things" or "looking for somewhere I can live";
 
     /// <summary>How close a monster may be for him to start a project of his own (blocks).</summary>
     internal const double ProjectHostileRadius = 16;
@@ -861,8 +911,17 @@ public sealed class VertexBrain : IBody
                     if (status != _lastStatus) { _lastStatus = status; Log?.Invoke($"status: {status}; health {Client.Health / 2:0.#} of 10 hearts"); }
                 }
                 Skills.NoteKit();
-                if (Tasks.IsBusy) { _lastActivity = now; continue; }
                 var goal = Memory.ActiveGoals.FirstOrDefault();
+                // A belief that came from deaths lapses with time and not with an event, so it is looked at again every hour.
+                if (now >= _nextNightBeliefCheck) { _nextNightBeliefCheck = now + TimeSpan.FromHours(1); RefreshNightBelief(); }
+                // Night has come while he was out working for himself, and nights have killed him: that job stops here, and the night goes as below. Not a job under the ground (a tunnel is shelter enough to go on
+                // mining in), and never one a friend or a goal gave him: 38 of 151 deaths were on the way to a wooden pickaxe and 16 going back for his things, most of them in the dark (2026-11-06 and 07).
+                if (NightShelterDue(now, goal) && Tasks.Current is { } own && OwnSurfaceJob(own) && !Skills.UnderGround())
+                {
+                    Log?.Invoke($"night, and nights have killed me: leaving off {own}");
+                    Tasks.Abort("Night came: I am going underground until morning.");
+                }
+                if (Tasks.IsBusy) { _lastActivity = now; continue; }
                 var unstudied = goal == null && !Staying && StudyWhenIdle && Skills.UnstudiedBlocks(16).Count > 0;     // the scan only when it could matter
                 // Idle long enough to choose a project and not choosing one: say why, at most every 5 minutes, so that "he is idle" has an answer in the log.
                 if (SelfDirectedPlay && goal == null && !Staying && Client.IsSpawned && !_projectQueued && now - _lastActivity >= SelfDirectedIdle && now - _lastBlockerLog >= TimeSpan.FromMinutes(5)
@@ -879,6 +938,16 @@ public sealed class VertexBrain : IBody
                     _lastActivity = now;
                     Log?.Invoke("night, nothing to do and a bed close by: going to sleep");
                     Tasks.Start("sleeping until morning", Skills.SleepAsync);
+                    continue;
+                }
+                // Night, no bed to sleep in (or the bed would not have him), nobody to keep company, and nights have killed him: underground until morning, before anything that would take him across open ground
+                // in the dark. A try that fails (no ground to dig into within reach) waits a minute, and he goes on with what he can do meanwhile.
+                if (NightShelterDue(now, goal) && !_projectQueued && Skills.NearestHostile(5) == null && (now < _nextSleepTry || Client.FindBeds(48, 1).Count == 0) && !Skills.UnderGround())
+                {
+                    _nextNightShelterTry = now + TimeSpan.FromMinutes(1);
+                    _lastActivity = now;
+                    Log?.Invoke("night, no bed, and nights have killed me: going underground until morning");
+                    Tasks.StartReflex("spending the night underground", Skills.ShelterForTheNightAsync);
                     continue;
                 }
                 // Hungry with nothing to eat: food comes first (2026-11-03: he gave up on a kit that needed wood and, TJ thinks, starved). Half a bar or less, every 45 seconds until he has some.
@@ -928,7 +997,7 @@ public sealed class VertexBrain : IBody
                 if (tooHot && SelfDirectedPlay && goal == null && !Staying && Client.IsSpawned && !_projectQueued && Client.GameMode == GameMode.Survival) continue;
                 // Getting on in the world: tools, food, a bed, iron... whatever comes next from what he has right now. Never a fixed script: after a death he is back at the top, and nothing else needs to know.
                 // Quiet (the job's start and end are not news); reaching a step is, and is said once. A friend's request or a goal replaces it at once.
-                if (SelfDirectedPlay && goal == null && !Staying && Client.IsSpawned && !_projectQueued && Client.GameMode == GameMode.Survival && now - _lastActivity >= TimeSpan.FromSeconds(3)
+                if (SelfDirectedPlay && WorkUpWhenIdle && goal == null && !Staying && Client.IsSpawned && !_projectQueued && Client.GameMode == GameMode.Survival && now - _lastActivity >= TimeSpan.FromSeconds(3)
                     && now >= _nextKitTry && Skills.NearestHostile(10) == null && Skills.NextMilestone() is { } step)
                 {
                     _nextKitTry = now + TimeSpan.FromSeconds(5);

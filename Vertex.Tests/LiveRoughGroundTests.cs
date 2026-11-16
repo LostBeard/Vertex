@@ -203,6 +203,83 @@ public class LiveRoughGroundTests
     }
 
     /// <summary>
+    /// Live 2026-11-06, 12 jobs: "I need a crafting table (and could not make or reach one)", with a table of his own close by and too few planks for another. A table three across, two along and three up
+    /// is within reach (3.2 blocks to its nearest point) while its centre is 4.07 away: the old check called it out of reach. Here he makes a stone pickaxe at that table, with 3 planks in his pockets.
+    /// </summary>
+    [Test]
+    public async Task ATableUpAndAcross_InReachButWithItsCentreFurther_IsUsed_NotCalledOutOfReach()
+    {
+        const string name = "VertexTable";
+        var (client, ax, az) = await JoinOnRoughGroundAsync(name);
+        await using var _ = client;
+        await _server.CommandAsync($"fill {ax - 2} 200 {az - 2} {ax + 5} 207 {az + 4} minecraft:air");
+        await _server.CommandAsync($"setblock {ax + 3} 203 {az + 2} minecraft:crafting_table");
+        await _server.CommandAsync($"tp {name} {ax + 0.5} 200 {az + 0.5}");
+        await _server.CommandAsync($"give {name} minecraft:cobblestone 3");
+        await _server.CommandAsync($"give {name} minecraft:stick 2");
+        await _server.CommandAsync($"give {name} minecraft:oak_planks 3");
+        await Wait.UntilAsync(() => client.OnGround && client.FeetBlock == (ax, 200, az) && client.Inventory.Count("cobblestone") >= 3 && client.Inventory.Count("stick") >= 2 && client.Inventory.Count("oak_planks") >= 3
+            && client.World.GetBlock(ax + 3, 203, az + 2)?.Name == "minecraft:crafting_table", Timeout, () => $"at {client.Position}; {client.Inventory}");
+        var eye = client.EyePosition;
+        var toCentre = Math.Sqrt(Math.Pow(ax + 3.5 - eye.X, 2) + Math.Pow(203.5 - eye.Y, 2) + Math.Pow(az + 2.5 - eye.Z, 2));
+        Assert.That(toCentre, Is.GreaterThan(4.0), "the setup: its centre is further than the old check allowed");
+        Assert.That(MinecraftClient.WithinReach(eye, ax + 3, 203, az + 2, 3.5), Is.True, "the setup: and it is where a walk to it would stop");
+        using var c = new CancellationTokenSource(TimeSpan.FromSeconds(60));
+        var (ok, why) = await client.CraftItemAsync("minecraft:stone_pickaxe", 1, c.Token);
+        TestContext.Out.WriteLine($"{ok}: {why}; {client.Inventory}");
+        Assert.That(ok, Is.True, why);
+        Assert.That(client.Inventory.Count("stone_pickaxe"), Is.EqualTo(1));
+        Assert.That(client.Inventory.Count("oak_planks"), Is.EqualTo(3), "at the table that was there: no planks went into another");
+    }
+
+    /// <summary>
+    /// Live 2026-11-06 and 07: 106 of 151 deaths in 19 hours were at night; he dug in 115 times, waited two minutes at most and came back up into the same night. And the island he comes back to life on is
+    /// mostly sand, which cannot be dug into at all. Here: night, standing on sand, earth four blocks away. He goes to the earth, digs in, seals the hole, is still down there while it is night, and comes
+    /// up when the sun does.
+    /// </summary>
+    [Test]
+    public async Task AtNight_OnSand_HeGoesToGroundHeCanDigInto_AndStaysBelowUntilMorning()
+    {
+        const string name = "VertexNight";
+        var (client, ax, az) = await JoinOnRoughGroundAsync(name);
+        await using var _ = client;
+        // A level stage: sand four deep where he stands, earth four deep along its east side, stone under both.
+        await _server.CommandAsync($"fill {ax - 8} 200 {az - 8} {ax + 8} 215 {az + 8} minecraft:air");
+        await _server.CommandAsync($"fill {ax - 8} 190 {az - 8} {ax + 8} 195 {az + 8} minecraft:stone");
+        await _server.CommandAsync($"fill {ax - 8} 196 {az - 8} {ax + 3} 199 {az + 8} minecraft:sand");
+        await _server.CommandAsync($"fill {ax + 4} 196 {az - 8} {ax + 8} 199 {az + 8} minecraft:dirt");
+        await _server.CommandAsync($"tp {name} {ax + 0.5} 200 {az + 0.5}");
+        await Wait.UntilAsync(() => client.OnGround && client.FeetBlock.Y == 200 && client.World.GetBlock(ax + 5, 199, az)?.Name == "minecraft:dirt" && client.World.GetBlock(ax, 199, az)?.Name == "minecraft:sand", Timeout, () => $"at {client.Position}");
+        var skills = new Skills(client);
+        var trace = new System.Collections.Concurrent.ConcurrentQueue<string>();
+        skills.Trace += m => { trace.Enqueue(m); TestContext.Out.WriteLine("trace: " + m); };
+        Assert.That(skills.DigInProblem(), Does.Contain("Sand"), "the setup: he stands on sand");
+        await _server.CommandAsync("time set 22400");       // 1,600 ticks of night left: 80 seconds
+        await Wait.UntilAsync(() => skills.NightNow, Timeout, () => $"day time {client.World.DayTime}");
+        try
+        {
+            using var c = new CancellationTokenSource(TimeSpan.FromMinutes(5));
+            var night = skills.ShelterForTheNightAsync(c.Token);
+            await Wait.UntilAsync(() => client.FeetBlock.Y <= 197 || night.IsCompleted, TimeSpan.FromSeconds(60), () => $"at {client.Position}; {string.Join(" | ", trace)}");
+            Assert.That(night.IsCompleted, Is.False, "he is down, not done: " + (night.IsCompleted ? night.Result.Item2 : ""));
+            Assert.That(client.FeetBlock.X, Is.GreaterThanOrEqualTo(ax + 4), "in the earth, not the sand");
+            // Nothing hostile anywhere and full health: the old dig-in came straight back up. He stays, because it is night.
+            await Task.Delay(TimeSpan.FromSeconds(20));
+            Assert.That(skills.NightNow, Is.True, "the setup: still night 20 seconds on");
+            Assert.That(night.IsCompleted, Is.False, "still down there while it is night");
+            Assert.That(client.FeetBlock.Y, Is.LessThanOrEqualTo(197), "and under the ground");
+            var (ok, text) = await night.WaitAsync(TimeSpan.FromMinutes(3));
+            TestContext.Out.WriteLine($"{ok}: {text}; at {client.Position}, day time {client.World.DayTime % 24000}");
+            Assert.That(ok, Is.True, text);
+            Assert.That(text, Does.Contain("until morning").And.Contain("came back up"));
+            Assert.That(skills.NightNow, Is.False, "he came up by day");
+            Assert.That(client.FeetBlock.Y, Is.GreaterThanOrEqualTo(200), "and is on the surface again");
+            Assert.That(client.Health, Is.EqualTo(20), "unhurt");
+        }
+        finally { await _server.CommandAsync("time set day"); }
+    }
+
+    /// <summary>
     /// Live 2026-11-03 18:38 and 18:39: killed twice in two minutes, both lessons saying "I had no weapon. I had no food." After a death nothing is left; he went out into the night with his hands. From
     /// empty pockets on rough ground with three trees and a cow: he punches logs, makes a table, a sword, a pickaxe and an axe, and kills the cow for food.
     /// </summary>

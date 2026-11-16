@@ -117,4 +117,31 @@ public class ExperienceLogTests
     [TestCase(9, 16)]
     [TestCase(-1, 10)]
     public void TheHealthHeTakesCoverAt_RisesWithEachDeathWithoutCover_UpToEightHearts(int deaths, int expected) => Assert.That(ExperienceLog.CoverBelow(deaths), Is.EqualTo(expected));
+
+    /// <summary>Live 2026-11-06 and 07: 106 of his 151 deaths in 19 hours were at night. He believes it from the third, and not before: one bad night is not a rule.</summary>
+    [TestCase(0, false)]
+    [TestCase(2, false)]
+    [TestCase(3, true)]
+    [TestCase(106, true)]
+    public void NightsKillHim_IsBelievedFromTheThirdDeathAtNight(int nightDeaths, bool believed) => Assert.That(ExperienceLog.NightsKill(nightDeaths), Is.EqualTo(believed));
+
+    [Test]
+    public void ADeathInTheDark_IsTaggedNight_WhichIsWhatTheBeliefCounts()
+    {
+        var log = new ExperienceLog();
+        for (var s = 0; s < 5; s++) log.Observe(At(s, 20, null, [], dayTime: 18000, weapon: false, food: false));
+        Assert.That(log.Died(At(5, 0, null, [], dayTime: 18000, weapon: false, food: false), "HereticSpawn was shot by Skeleton").Tags, Does.Contain("night").And.Not.Contain("day"));
+    }
+
+    /// <summary>A night ends only what he started for himself up there: a friend's request, a goal's step and a reflex that is saving him go on.</summary>
+    [TestCase("working toward a wooden pickaxe", true)]
+    [TestCase("going back for my things", true)]
+    [TestCase("finding food", true)]
+    [TestCase("looking for somewhere I can live", true)]
+    [TestCase("following Aubri", false)]
+    [TestCase("building a house", false)]
+    [TestCase("taking cover underground", false)]
+    [TestCase("spending the night underground", false)]
+    [TestCase("sleeping until morning", false)]
+    public void WhichJobsANightEnds(string job, bool ends) => Assert.That(VertexBrain.OwnSurfaceJob(job), Is.EqualTo(ends));
 }

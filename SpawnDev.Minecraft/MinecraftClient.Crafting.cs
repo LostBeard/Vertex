@@ -169,7 +169,7 @@ public sealed partial class MinecraftClient
     public async Task<bool> OpenCraftingTableAsync(CancellationToken ct = default)
     {
         var tableBlock = World.Data.Block("crafting_table")!;
-        var near = World.FindBlocks(s => s > 0 && World.Data.StateBlock[s] == tableBlock.Id, EyePosition, BlockReach - 0.5, 1);
+        var near = BlocksInReach(s => s > 0 && World.Data.StateBlock[s] == tableBlock.Id, BlockReach - 0.5);
         // One in sight: walk over to it, as anyone would. He made a new one every time, with 9 of his own in view (TJ, 2026-11-05).
         if (near.Count == 0)
             foreach (var (wx, wy, wz) in World.FindBlocks(s => s > 0 && World.Data.StateBlock[s] == tableBlock.Id, EyePosition, 32, 3))
@@ -178,7 +178,7 @@ public sealed partial class MinecraftClient
                 walk.CancelAfter(TimeSpan.FromSeconds(10));
                 try { await GoToAsync(new Pathing.GoalReachBlock(wx, wy, wz, BlockReach - 1), new Pathing.PathOptions { MaxNodes = 8_000 }, walk.Token); }
                 catch (OperationCanceledException) when (!ct.IsCancellationRequested) { }
-                near = World.FindBlocks(s => s > 0 && World.Data.StateBlock[s] == tableBlock.Id, EyePosition, BlockReach - 0.5, 1);
+                near = BlocksInReach(s => s > 0 && World.Data.StateBlock[s] == tableBlock.Id, BlockReach - 0.5);
                 if (near.Count > 0) break;
             }
         if (near.Count == 0)
@@ -190,7 +190,7 @@ public sealed partial class MinecraftClient
             }
             if (!await EquipAsync("crafting_table", ct)) return false;
             if (!await PlaceBesideUsAsync(ct)) return false;
-            near = World.FindBlocks(st => st > 0 && World.Data.StateBlock[st] == tableBlock.Id, EyePosition, BlockReach, 1);
+            near = BlocksInReach(st => st > 0 && World.Data.StateBlock[st] == tableBlock.Id, BlockReach);
             if (near.Count == 0) return false;
         }
         var (tx, ty, tz) = near[0];

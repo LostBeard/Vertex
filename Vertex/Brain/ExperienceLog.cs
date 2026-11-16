@@ -35,6 +35,15 @@ public sealed class ExperienceLog
     /// </summary>
     public static int CoverBelow(int deathsWithoutCoverToday) => Math.Min(16, 10 + 2 * Math.Max(0, deathsWithoutCoverToday));
 
+    /// <summary>How far back his deaths count toward what he believes about the night.</summary>
+    public static readonly TimeSpan NightBeliefWindow = TimeSpan.FromDays(14);
+
+    /// <summary>
+    /// Do nights kill him here? Believed from the third death at night within <see cref="NightBeliefWindow"/>, from his own death lessons and nothing else: on a peaceful server he never comes to
+    /// believe it, and once his nights underground have kept him alive for that long the belief lapses and he finds out again, with whatever he has by then. Live, 106 of 151 deaths in 19 hours were at night.
+    /// </summary>
+    public static bool NightsKill(int nightDeathsLately) => nightDeathsLately >= 3;
+
     private readonly List<Pain> _pains = [];
 
     /// <summary>The hurts felt in the last minute, oldest first.</summary>

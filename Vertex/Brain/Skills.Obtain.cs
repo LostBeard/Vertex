@@ -106,8 +106,8 @@ public sealed partial class Skills
                 if (materials != null) { why ??= materials; continue; }
                 var (made, message) = await client.CraftItemAsync(item, missing, ct);
                 if (made) return null;
-                // Short of a stick or a plank after all (a sub-craft ate what another part needed): one more log and once more.
-                if (message.Contains("stick") || message.Contains("planks") || message.Contains("materials"))
+                // Short of a stick or a plank after all (a sub-craft ate what another part needed), or the table he counted on could not be got to and he has no planks for another: one more log and once more.
+                if (message.Contains("stick") || message.Contains("planks") || message.Contains("materials") || message.Contains("crafting table"))
                 {
                     var logsBefore = Have(s => s.Name.EndsWith("_log"));
                     await CollectAsync("wood", 1, ct);
@@ -172,7 +172,7 @@ public sealed partial class Skills
     {
         var id = D.Block(block)!.Id;
         bool Is(int s) => s > 0 && D.StateBlock[s] == id;
-        if (client.World.FindBlocks(Is, client.EyePosition, 4, 1).Count > 0) return true;
+        if (client.BlocksInReach(Is, 4).Count > 0) return true;
         var near = client.World.FindBlocks(Is, client.EyePosition, 24, 1);
         if (near.Count == 0) return false;
         var (x, y, z) = near[0];
