@@ -189,6 +189,9 @@ on a one-block island with water on three sides and a three-high dirt wall on th
 - **Where he may dig in** (`Skills.DigInProblem`, 2026-11-16). Solid ground four deep, no sand or gravel, no water or lava beside it (as before), and now: the three blocks diggable in 5 seconds with
   the best tool he carries when something is on him (12 seconds at nightfall), and rock or earth on all four sides of the two cells he will be in. Stone with bare hands is 22 seconds under fire; a
   hole on a slope or beside a cave is open at the side. Where the ground will not do, digging in is not among the choices `DangerLearner` is given, and for the night he walks to ground that will.
+  For a night the hole must also close: a block in his pockets to seal it with, or ground that gives him one (earth by hand, stone to a pickaxe).
+- **Out of water under the ground, upward** (`LeaveWaterAsync`, 2026-11-16). In a flooded cave, or a shaft of his own that filled, he cuts a stair up from where he has air to the open sky (or to
+  the surface of the sea over him). Swimming for a shore from there was a dive each time, ended by the need for air: 208 times in 78 minutes, live.
 - **Starving, he eats rotten flesh** (food bar 6 of 20 or less and nothing better; `Skills.HasSomethingToEat`). It is still not "food" for the food step of his way up.
 - **Wood far below him is not a tree.** `CollectAsync` leaves logs more than 16 blocks under his feet (a mine's timber, a wreck's) and looks over the land for a tree: he drowned diving for one.
 - **Looking for what lives on the surface, from the surface** (2026-11-16). Under the ground, a search for animals, sheep, spiders or trees first takes him up (`ComeUpToLookAsync`: a stair to the first

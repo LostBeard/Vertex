@@ -2288,11 +2288,11 @@ public sealed partial class Skills(MinecraftClient client)
 
     /// <summary>Why he cannot dig in right here, in words, or null when he can: checked without moving, so a choice is not spent on something that would fail at once (the island he respawns on is mostly sand).</summary>
     /// <param name="withinTicks">How long the three blocks may take him with the best tool he carries: 5 seconds with something after him, longer when it is only getting dark.</param>
-    public string? DigInProblem(int withinTicks = DigInUnderFireTicks)
+    public string? DigInProblem(int withinTicks = DigInUnderFireTicks, bool toSeal = false)
     {
         var (px, py, pz) = client.Position;
         if (InWaterNow()) return "I can't dig in while I'm in the water.";
-        return DigInProblemAt((int)Math.Floor(px), (int)Math.Floor(py + 1e-6), (int)Math.Floor(pz), withinTicks);
+        return DigInProblemAt((int)Math.Floor(px), (int)Math.Floor(py + 1e-6), (int)Math.Floor(pz), withinTicks, toSeal);
     }
 
     /// <summary>
@@ -2305,7 +2305,7 @@ public sealed partial class Skills(MinecraftClient client)
     public const int DigInAtNightfallTicks = 240;
 
     /// <summary>The same question about ground he is not standing on: feet at x, y0, z.</summary>
-    private string? DigInProblemAt(int x, int y0, int z, int withinTicks)
+    private string? DigInProblemAt(int x, int y0, int z, int withinTicks, bool toSeal = false)
     {
         var ticks = 0;
         for (var d = 1; d <= 3; d++)
@@ -2329,6 +2329,15 @@ public sealed partial class Skills(MinecraftClient client)
             foreach (var (dx, dz) in new[] { (1, 0), (-1, 0), (0, 1), (0, -1) })
                 if (!Standable(client.World.GetState(x + dx, y0 - d, z + dz))) return "The ground here is open at the side (a slope, or a cave beside it): a hole here would not close.";
         if (ticks > withinTicks) return $"The ground here is too hard to dig into in time with what I carry (about {ticks / 20.0:0} seconds for three blocks).";
+        // For a night the hole has to close: a block in his pockets to close it with, or ground that gives him one (earth by hand; stone only to a pickaxe). Back to life with empty pockets he dug into ground that gave
+        // him nothing, "had nothing to seal it with", and came straight back up into the night (19:47 on 2026-11-16).
+        if (toSeal && Have(IsFiller) == 0)
+        {
+            var gives = false;
+            for (var d = 1; d <= 3 && !gives; d++)
+                gives = client.World.GetState(x, y0 - d, z) is var s && s > 0 && ((D.StateFlags[s] & GameData.FlagNeedsTool) == 0 || HasPickaxe(1));
+            if (!gives) return "I have nothing to close a hole with, and this ground gives me nothing by hand.";
+        }
         return null;
     }
 
@@ -2356,7 +2365,7 @@ public sealed partial class Skills(MinecraftClient client)
             var d2 = dx * dx + dz * dz;
             if (d2 > reach * reach || !client.World.IsLoaded(bx + dx, bz + dz)) continue;
             if (GroundLevel(bx + dx, bz + dz, by) is not int gy || !Open(client.World.GetState(bx + dx, gy + 1, bz + dz))) continue;
-            if (DigInProblemAt(bx + dx, gy, bz + dz, DigInAtNightfallTicks) == null) spots.Add((bx + dx, gy, bz + dz, d2));
+            if (DigInProblemAt(bx + dx, gy, bz + dz, DigInAtNightfallTicks, toSeal: true) == null) spots.Add((bx + dx, gy, bz + dz, d2));
         }
         return spots.OrderBy(s => s.D2).Select(s => (s.X, s.Y, s.Z)).ToList();
     }
@@ -2367,7 +2376,7 @@ public sealed partial class Skills(MinecraftClient client)
     /// </summary>
     public async Task<(bool, string)> ShelterForTheNightAsync(CancellationToken ct)
     {
-        if (DigInProblem(DigInAtNightfallTicks) is { } problem)
+        if (DigInProblem(DigInAtNightfallTicks, toSeal: true) is { } problem)
         {
             var spots = FindDigInSpots(24);
             // The nearest few, a few blocks apart: one spot he cannot reach says little about the next.
@@ -2382,9 +2391,9 @@ public sealed partial class Skills(MinecraftClient client)
                 leg.CancelAfter(TimeSpan.FromSeconds(30));
                 try { await client.GoToAsync(Goal.Block(spot.X, spot.Y, spot.Z), new PathOptions { MaxNodes = 12_000, Sprint = true }, leg.Token); }
                 catch (OperationCanceledException) when (!ct.IsCancellationRequested) { }
-                if (DigInProblem(DigInAtNightfallTicks) == null) break;
+                if (DigInProblem(DigInAtNightfallTicks, toSeal: true) == null) break;
             }
-            if (DigInProblem(DigInAtNightfallTicks) is { } still)
+            if (DigInProblem(DigInAtNightfallTicks, toSeal: true) is { } still)
                 return (false, $"{still} I looked for ground to dig into within 24 blocks and {(spots.Count == 0 ? "found none" : "could not get to any")}.");
         }
         return await TakeCoverAsync(ct, untilMorning: true);
@@ -2774,7 +2783,7 @@ public sealed partial class Skills(MinecraftClient client)
     {
         var (px, py, pz) = client.Position;
         int x = (int)Math.Floor(px), y0 = (int)Math.Floor(py + 1e-6), z = (int)Math.Floor(pz);
-        if (DigInProblem(untilMorning ? DigInAtNightfallTicks : DigInUnderFireTicks) is { } problem) return (false, problem);
+        if (DigInProblem(untilMorning ? DigInAtNightfallTicks : DigInUnderFireTicks, toSeal: untilMorning) is { } problem) return (false, problem);
         // Down three blocks: the path finder digs straight down (the cheapest way to a goal below).
         await client.EquipBestToolAsync(client.World.GetState(x, y0 - 1, z), ct);
         var down = await client.GoToAsync(Goal.Block(x, y0 - 3, z), new PathOptions { CanDig = true, MaxNodes = 4_000 }, ct);
@@ -3003,6 +3012,24 @@ public sealed partial class Skills(MinecraftClient client)
         if (!InWaterNow()) return (true, "I'm not in the water.");
         var (px, py, pz) = client.Position;
         int bx = (int)Math.Floor(px), bz = (int)Math.Floor(pz), by = (int)Math.Floor(py + 1e-6);
+        // In water under the ground (a flooded cave, a shaft of his own that filled): there is no shore to swim to, and every try at one is a dive that the need for air cuts short. He went between an air pocket and
+        // a way out he could not swim for 78 minutes, "coming up for air" 208 times (17:54 to 19:12 on 2026-11-16), and was still at it after a restart. The way out is up: a stair cut from where he has air to the
+        // open sky, and a swim from where it breaks into water.
+        if (UnderGround() && OpenSkyOver(bx, by, bz, 96, overWater: true) is int top)
+        {
+            Trace?.Invoke($"in the water under the ground at {bx} {by} {bz}: cutting my way up to the open at y {top}");
+            for (var round = 0; round < 3 && UnderGround() && !ct.IsCancellationRequested; round++)
+            {
+                using var climb = CancellationTokenSource.CreateLinkedTokenSource(ct);
+                climb.CancelAfter(TimeSpan.FromSeconds(60));
+                try { if (await client.GoToAsync(Goal.Near(bx + 0.5, top, bz + 0.5, 2.5), new PathOptions { CanDig = true, CanPlace = Have(s => client.ThrowawayBlocks.Contains(s.Name)) > 0, MaxNodes = 40_000 }, climb.Token)) break; }
+                catch (OperationCanceledException) when (!ct.IsCancellationRequested) { }
+            }
+            if (!InWaterNow()) return (true, "I cut my way up out of the water.");
+            if (UnderGround()) return (false, "I'm in the water under the ground and I couldn't cut my way up.");
+            (px, py, pz) = client.Position;
+            (bx, bz, by) = ((int)Math.Floor(px), (int)Math.Floor(pz), (int)Math.Floor(py + 1e-6));
+        }
         (int X, int Y, int Z)? best = null;
         // Within 40 blocks (it was 16: out in a lake he said "I can't see dry land close by", the shore being behind him at a distance nobody measured). The nearest dry spot first, but the
         // nearest one he can actually GET to: a bank a whole block above the water is dry and close and no way out of it (live 2026-11-02: he jumped at it forever instead of going around).

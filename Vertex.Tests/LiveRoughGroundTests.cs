@@ -91,13 +91,18 @@ public class LiveRoughGroundTests
         var skills = new Skills(client);
         Assert.That(skills.DigInProblem(), Does.Contain("too hard"), "stone, bare hands, something on him");
         Assert.That(skills.DigInProblem(Skills.DigInAtNightfallTicks), Does.Contain("too hard"), "nor at nightfall");
+        // For a night the hole must close: with all the time in the world, bare hands get no block out of stone (live 2026-11-16, 19:47: "I had nothing to seal it with", and back up into the night).
+        Assert.That(skills.DigInProblem(int.MaxValue, toSeal: true), Does.Contain("nothing to close"), "stone, bare hands, empty pockets");
+        Assert.That(skills.DigInProblem(int.MaxValue), Is.Null, "the setup: without the need to close it, and with time, this ground would do");
         await _server.CommandAsync($"give {name} minecraft:wooden_pickaxe 1");
         await Wait.UntilAsync(() => client.Inventory.Count("wooden_pickaxe") == 1, Timeout, () => client.Inventory.ToString());
         Assert.That(skills.DigInProblem(), Is.Null, "stone with a wooden pickaxe: 3.5 seconds");
+        Assert.That(skills.DigInProblem(Skills.DigInAtNightfallTicks, toSeal: true), Is.Null, "and the pickaxe brings out the stone to close it with");
         await _server.CommandAsync($"clear {name}");
         await Wait.UntilAsync(() => client.Inventory.Count("wooden_pickaxe") == 0, Timeout, () => client.Inventory.ToString());
         await EarthUnderHimAsync(client, ax, az);
         Assert.That(skills.DigInProblem(), Is.Null, "earth with bare hands: 2.3 seconds");
+        Assert.That(skills.DigInProblem(Skills.DigInAtNightfallTicks, toSeal: true), Is.Null, "and earth comes out by hand to close it with");
         // A gap beside where his head would be (a slope, a cave): live 2026-11-16 he was shot in such a hole, sealed in for the night, by a skeleton 4 blocks away.
         await _server.CommandAsync($"setblock {ax + 1} 198 {az} minecraft:air");
         await Wait.UntilAsync(() => client.World.GetBlock(ax + 1, 198, az)?.Name == "minecraft:air", Timeout, () => "the gap");

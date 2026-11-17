@@ -232,6 +232,54 @@ public class LiveObtainTests
     }
 
     /// <summary>
+    /// Live 2026-11-16, 17:54 to 19:12 and on after a restart: in a flooded pocket about 25 blocks under the sea, with one cell of air to breathe in, "getting out of the water" began with a dive every
+    /// time and the need for air ended it: "coming up for air" 208 times in 78 minutes. Here he is in such a pocket (water two deep, one layer of air, rock over it) with a wooden pickaxe, under land
+    /// or under a sea eight deep: he cuts his way up and ends in the open, out of the pocket.
+    /// </summary>
+    [TestCase(false)]
+    [TestCase(true)]
+    public async Task InAFloodedPocketUnderTheGround_HeCutsHisWayUpToTheOpen(bool underTheSea)
+    {
+        var name = underTheSea ? "ObtainSea" : "ObtainPocket";
+        var extras = new List<Func<int, int, string>>
+        {
+            (x, z) => $"fill {x - 28} 180 {z - 28} {x + 28} 189 {z + 28} minecraft:stone",
+            (x, z) => $"fill {x - 1} 186 {z - 1} {x + 1} 188 {z + 1} minecraft:air",
+            (x, z) => $"fill {x - 1} 186 {z - 1} {x + 1} 187 {z + 1} minecraft:water",
+        };
+        if (underTheSea)
+        {
+            // A sea on the stage: a block of stone 17 across and 8 high, its inside (open at the top) filled with water.
+            extras.Add((x, z) => $"fill {x - 8} 200 {z - 8} {x + 8} 207 {z + 8} minecraft:stone");
+            extras.Add((x, z) => $"fill {x - 7} 200 {z - 7} {x + 7} 207 {z + 7} minecraft:water");
+        }
+        var (client, skills, ax, az) = await StageAsync(name, extras.ToArray());
+        await using var _c = client;
+        await _server.CommandAsync($"give {name} minecraft:wooden_pickaxe 1");
+        await _server.CommandAsync($"tp {name} {ax + 0.5} 186 {az + 0.5}");
+        await Wait.UntilAsync(() => client.FeetBlock.Y is >= 186 and <= 188 && client.FeetBlock.X == ax && client.Inventory.Count("wooden_pickaxe") == 1 && client.World.GetBlock(ax, 186, az)?.Name == "minecraft:water", Timeout, () => $"in the pocket; at {client.FeetBlock}");
+        Assert.That(skills.UnderGround(), Is.True, "the setup: rock over his head");
+        var trace = new List<string>();
+        skills.Trace += m => { lock (trace) trace.Add(m); TestContext.Out.WriteLine(m); };
+        var deaths = 0;
+        client.Died += _ => Interlocked.Increment(ref deaths);
+        using var cts = new CancellationTokenSource(TimeSpan.FromMinutes(5));
+        var started = DateTime.UtcNow;
+        var (ok, text) = await skills.LeaveWaterAsync(cts.Token);
+        TestContext.Out.WriteLine($"{ok}: {text} ({(DateTime.UtcNow - started).TotalSeconds:0} s); at {client.FeetBlock}, health {client.Health}, under the ground {skills.UnderGround()}");
+        Assert.That(Volatile.Read(ref deaths), Is.Zero, "alive");
+        Assert.That(skills.UnderGround(), Is.False, "the open sky over him: " + text);
+        // Out of the water is what was asked: under land that can be a dry stair a few blocks short of the top, with the sky over it. Under the sea it is the surface, or the land round it.
+        if (underTheSea) Assert.That(client.FeetBlock.Y, Is.GreaterThanOrEqualTo(207), "up at the surface of the sea, or out of it: " + text);
+        else
+        {
+            Assert.That(ok, Is.True, text);
+            Assert.That(client.BodySnapshot().InWater, Is.False, "and dry: " + text);
+            Assert.That(client.FeetBlock.Y, Is.GreaterThanOrEqualTo(190), "well up from the pocket at 186: " + text);
+        }
+    }
+
+    /// <summary>
     /// Live 2026-11-16, 17:39: back to life at y 64 with empty pockets, the nearest log was a wreck's or a mine's at y 3; he dived for it and drowned (17 drownings in the 19-hour run, 15 on the way to
     /// a wooden pickaxe). Here the only log there is hangs 50 blocks under the stage: he does not go for it, looks over the land for a tree, and says he found none.
     /// </summary>

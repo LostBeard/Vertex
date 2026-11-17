@@ -278,21 +278,31 @@ public sealed partial class Skills
     {
         if (!UnderGround()) return;
         var (x, y, z) = client.FeetBlock;
-        int? surface = null;
-        for (var by = y + 1; by <= y + 64 && surface == null; by++)
-        {
-            if (!Standable(client.World.GetState(x, by - 1, z)) || !Open(client.World.GetState(x, by, z)) || !Open(client.World.GetState(x, by + 1, z))) continue;
-            var roofed = false;
-            for (var up = by + 2; up <= by + 12 && !roofed; up++)
-                roofed = client.World.GetState(x, up, z) is var s && Standable(s) && D.BlockOf(s).Name is var n && !n.EndsWith("_leaves") && !n.EndsWith("_log");
-            if (!roofed) surface = by;
-        }
-        if (surface is not int top) return;
+        if (OpenSkyOver(x, y, z, 64, overWater: false) is not int top) return;
         Trace?.Invoke($"under the ground at {x} {y} {z}: going up to the surface (y {top}) to look");
         using var climb = CancellationTokenSource.CreateLinkedTokenSource(ct);
         climb.CancelAfter(TimeSpan.FromSeconds(90));
         try { await client.GoToAsync(Goal.Near(x + 0.5, top, z + 0.5, 1.5), new PathOptions { CanDig = true, CanPlace = Have(s => client.ThrowawayBlocks.Contains(s.Name)) > 0, MaxNodes = 20_000 }, climb.Token); }
         catch (OperationCanceledException) when (!ct.IsCancellationRequested) { }
+    }
+
+    /// <summary>
+    /// The first place over his head with the open sky above it: two cells of air with ground under them (or, with <paramref name="overWater"/>, the surface of water: the air a swimmer floats in) and nothing solid for
+    /// 12 blocks above, a tree's crown aside. Null when there is none within `reach` (or the column is not loaded).
+    /// </summary>
+    private int? OpenSkyOver(int x, int y, int z, int reach, bool overWater)
+    {
+        for (var by = y + 1; by <= y + reach; by++)
+        {
+            var under = client.World.GetState(x, by - 1, z);
+            var ground = Standable(under) || (overWater && under > 0 && (D.StateFlags[under] & GameData.FlagWater) != 0);
+            if (!ground || !Open(client.World.GetState(x, by, z)) || !Open(client.World.GetState(x, by + 1, z))) continue;
+            var roofed = false;
+            for (var up = by + 2; up <= by + 12 && !roofed; up++)
+                roofed = client.World.GetState(x, up, z) is var s && Standable(s) && D.BlockOf(s).Name is var n && !n.EndsWith("_leaves") && !n.EndsWith("_log");
+            if (!roofed) return by;
+        }
+        return null;
     }
 
     /// <summary>The nearest log he can see that stands in a biome not known to be too hot, or null. What he needs before anything else is wood, and a bare strip of cool ground beside a burning forest does not give him any: he "settled" on one again and again, and walked into the fire for wood (2026-11-04).</summary>
