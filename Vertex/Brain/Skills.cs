@@ -211,7 +211,11 @@ public sealed partial class Skills(MinecraftClient client)
     }
 
     /// <summary>Finds, walks to, mines and picks up blocks until `count` were broken or none are left nearby.</summary>
-    public async Task<(bool, string)> CollectAsync(string what, int count, CancellationToken ct)
+    /// <param name="enough">
+    /// Says when he holds what the blocks were wanted for, and ends the work there. The count is of blocks he aimed at; what he holds can be more (a block broken on the way to the next) or less (a drop that fell
+    /// where he did not find it), and whoever wants a number of items knows which item. With two of three ores aimed at and three raw iron in his pockets he went after a "third" 150 blocks below (2026-11-16).
+    /// </param>
+    public async Task<(bool, string)> CollectAsync(string what, int count, CancellationToken ct, Func<bool>? enough = null)
     {
         var types = ResolveBlocks(what);
         // A modded block we have no data for, but learned the name of (placed one, or broke one and saw it drop).
@@ -235,7 +239,7 @@ public sealed partial class Skills(MinecraftClient client)
         var partOfABuild = 0;
         var legs = 0;
         double walked = 0;
-        while (broken < count && failures < 6 && !ct.IsCancellationRequested)
+        while (broken < count && failures < 6 && !ct.IsCancellationRequested && enough?.Invoke() != true)
         {
             // 64 blocks sideways at ANY depth (a sphere of 48 never reached the diamonds 70 blocks down: "I couldn't find any diamond ore", in two seconds, 2026-11-03).
             // Near his own level first: wood or stone under the ground is a long dig away, and a tree 30 blocks off is a short walk. (The nearest first otherwise: 3D distance puts a log in a cave under him ahead of a tree in plain sight.)
@@ -246,22 +250,22 @@ public sealed partial class Skills(MinecraftClient client)
                 .OrderBy(p => hotAt is double h && KnownTooHot(BiomeAt(p.Item1, p.Item2, p.Item3), h) ? 1 : 0).ThenBy(p => Math.Abs(p.Y - feetY) > 8 ? 1 : 0).Take(64).ToList();
             // Opening a block with lava beside it (or lava above it, which falls in) lets the lava out onto whoever is digging: leave it (found 2026-10-15: a diamond ringed with lava took 11 of 20 health).
             // From the top of a stack of sand or gravel only: taking one from under the rest brings them down on him (2026-11-04: he dug into a sand bank, went from 7 hearts to nothing "in wall", and died with the job still going).
-            // What he saw a moment ago and is gone without his having aimed at it: he broke it getting at another (the log between him and the next, the ore beside the one whose drop he dug to). It counts, when it
-            // went from close by and is not sand or gravel that fell: uncounted, he took a fourth log for three, and with two of three ores aimed at and all three in his pockets went after a "third" 150 blocks
-            // below, six tries of it (2026-11-16).
+            // What he saw a moment ago and is gone without his having aimed at it: he broke it getting at another (the log between him and the next, the ore beside the one whose drop he dug to). Said, and what it
+            // dropped looked for; not counted, because a block broken is not an item held (counted, a pen that needed its logs came up two short: the drops had fallen where he did not find them). Whether he
+            // has enough is the caller's to say (`enough`).
             var alsoBroken = 0;
             foreach (var (gone, was) in seen.Where(p => !aimedAt.Contains(p.Key) && !Wanted(client.World.GetState(p.Key.Item1, p.Key.Item2, p.Key.Item3))).Select(p => (p.Key, p.Value)).ToList())
             {
                 seen.Remove(gone);
                 var mine = !Falls(was) && client.DistanceToBlock(gone.Item1, gone.Item2, gone.Item3) <= 8;
-                if (mine) { broken++; alsoBroken++; }
-                Trace?.Invoke($"collecting {what}: the one at {gone.Item1} {gone.Item2} {gone.Item3} is gone and I did not aim at it (now {client.World.GetBlock(gone.Item1, gone.Item2, gone.Item3)?.Name ?? "unknown"}){(mine ? $": I broke it on my way, so that is {broken} of {count}" : "")}");
+                if (mine) alsoBroken++;
+                Trace?.Invoke($"collecting {what}: the one at {gone.Item1} {gone.Item2} {gone.Item3} is gone and I did not aim at it (now {client.World.GetBlock(gone.Item1, gone.Item2, gone.Item3)?.Name ?? "unknown"}){(mine ? ": I broke it on my way" : "")}");
             }
             if (alsoBroken > 0)
             {
                 var (ox, oy, oz) = client.FeetBlock;
                 await PickUpNearbyAsync(ox, oy, oz, ct);
-                if (broken >= count) break;
+                if (enough?.Invoke() == true) break;
             }
             foreach (var p in found) seen[p] = client.World.GetState(p.Item1, p.Item2, p.Item3);
             found = found.Where(p => !UnderFallingBlock(p.Item1, p.Item2, p.Item3)).ToList();
@@ -316,6 +320,7 @@ public sealed partial class Skills(MinecraftClient client)
             }
             var state = client.World.GetState(bx, by, bz);
             if (!Wanted(state)) continue;
+            var held = Carried();
             bool ok;
             if (D.IsUnknownBlock(state))
                 // No hardness to time the dig by: the server times it (and we learn how long it takes).
@@ -331,6 +336,13 @@ public sealed partial class Skills(MinecraftClient client)
             {
                 broken++;
                 await PickUpNearbyAsync(bx, by, bz, ct, mayDig: true);
+                // Broken, and nothing more in his pockets for it: said, with what lies about, because the next thing that happens is "I mined 1 wood" and a craft one plank short, and nobody can tell why.
+                if (Carried() <= held)
+                {
+                    var (px, py, pz) = client.Position;
+                    var lying = client.Entities.Values.Where(e => e.IsItem && e.DistanceTo(px, py, pz) < 12).Select(e => $"{e.Item?.Name.Bare() ?? "item"} at {e.X:0.#} {e.Y:0.#} {e.Z:0.#}").Take(4).ToList();
+                    Trace?.Invoke($"collecting {what}: I broke the one at {bx} {by} {bz} and picked up nothing for it; I am at {px:0.#} {py:0.#} {pz:0.#}; lying about: {(lying.Count == 0 ? "nothing I can see" : string.Join(", ", lying))}");
+                }
             }
             else
             {
@@ -350,8 +362,9 @@ public sealed partial class Skills(MinecraftClient client)
         }
         var have = InventorySummary();
         var lavaNote = nextToLava > 0 ? $" {nextToLava} {(nextToLava == 1 ? "was" : "were")} next to lava, so I left {(nextToLava == 1 ? "it" : "them")} alone." : "";
+        var done = broken >= count || enough?.Invoke() == true;
         return broken > 0
-            ? (broken >= count, $"I mined {broken} {what}{(broken < count ? $" (wanted {count}, couldn't find more nearby)" : "")}. I have: {have}.{lavaNote}")
+            ? (done, $"I mined {broken} {what}{(done ? "" : $" (wanted {count}, couldn't find more nearby)")}. I have: {have}.{lavaNote}")
             : (false, nextToLava > 0 ? $"I won't mine that {what}: it is next to lava, which would pour out onto me."
                 : partOfABuild > 0 && failures == 0 ? $"The only {what} I could find is part of something someone built, and I won't take it apart."
                 : digFailures >= 3 ? $"I got to {what} but breaking it didn't work ({digFailures} of {failures} tries)."
@@ -391,6 +404,9 @@ public sealed partial class Skills(MinecraftClient client)
         return Lava(1, 0, 0) || Lava(-1, 0, 0) || Lava(0, 0, 1) || Lava(0, 0, -1) || Lava(0, -1, 0) || Lava(0, 1, 0) || Lava(0, 2, 0);
     }
 
+    /// <summary>How many things he carries, all told: for telling whether something he broke came to him.</summary>
+    private int Carried() => client.Inventory.Slots.Skip(PlayerInventory.MainStart).Where(s => !s.IsEmpty).Sum(s => s.Count);
+
     /// <summary>
     /// Walks over the item drops near a spot. Digging to a drop is only allowed when the caller mined something that can leave one sealed in a pocket (ore) and the drop is within two blocks
     /// of the spot: with digging always on, a field's water hole made Vertex dig a shaft after the dirt it had just dropped (found 2026-10-15 on the AubsCraft dev world).
@@ -398,9 +414,16 @@ public sealed partial class Skills(MinecraftClient client)
     public async Task PickUpNearbyAsync(int x, int y, int z, CancellationToken ct, bool mayDig = false, Func<Entity, bool>? leave = null, double reach = 5)
     {
         await client.WaitTicksAsync(8, ct); // drops spawn and settle
+        // Things fall: within `reach` of the spot sideways, and as far as 16 blocks under it. A log broken three blocks up a trunk fell into the pit he had dug at its foot, 5.5 blocks below the log, and a
+        // look 5 blocks round the log did not find it: "I mined 1 wood", no wood, and a pickaxe one plank short (the iron pickaxe test, 2 runs in 8, 2026-11-16 and 17).
+        bool Near(Entity e)
+        {
+            double dx = e.X - (x + 0.5), dz = e.Z - (z + 0.5), dy = e.Y - (y + 0.5);
+            return dx * dx + dz * dz < reach * reach && dy < reach && dy > -16;
+        }
         for (var tries = 0; tries < 4; tries++)
         {
-            var drop = client.Entities.Values.Where(e => e.IsItem && e.DistanceTo(x + 0.5, y + 0.5, z + 0.5) < reach && (leave == null || !leave(e))).OrderBy(e => e.DistanceTo(x + 0.5, y, z + 0.5)).FirstOrDefault();
+            var drop = client.Entities.Values.Where(e => e.IsItem && Near(e) && (leave == null || !leave(e))).OrderBy(e => e.DistanceTo(x + 0.5, y, z + 0.5)).FirstOrDefault();
             if (drop == null) return;
             // Digging allowed: a drop from ore reached from a few blocks away lies in the sealed pocket the ore left (found 2026-10-15: a diamond mined from above was never picked up).
             await client.GoToAsync(Goal.Near(drop.X, drop.Y, drop.Z, 0.8), new PathOptions { MaxNodes = 5_000, CanDig = mayDig && drop.DistanceTo(x + 0.5, y + 0.5, z + 0.5) < 2.5 }, ct);
@@ -510,8 +533,36 @@ public sealed partial class Skills(MinecraftClient client)
         }
         finally
         {
+            client.Controls.Back = false;
             if (up) await client.ReleaseUseItemAsync(CancellationToken.None);
         }
+    }
+
+    /// <summary>How far from a monster (feet to feet) he swings: a sword reaches 3 blocks from his eyes to its body, a zombie's arms about one and a half from its middle.</summary>
+    public const double StrikeFrom = 2.9;
+
+    /// <summary>Nearer than this to something that hits by hand, with his sword not ready, he steps back out of its reach.</summary>
+    public const double StandOff = 2.6;
+
+    /// <summary>
+    /// Between swings he steps back out of the monster's reach, as a player does (strike at arm's length, back off while the sword comes round, strike again). He walks to two blocks from it and stands
+    /// there until the next swing, which is inside its reach: about one blow taken in every fight with a husk, and 2.4 hearts a fight live with a good weapon against one monster.
+    /// OFF: measured on 2026-11-16 against a husk on hard with an iron sword and no shield, standing his ground cost 6, 4.5 and 4.5 health in three fights, and stepping back 4.5, 4.5, 4.5 and then 14.5 in a
+    /// fight he had to break off. As built it is no better and once much worse; where the one blow in every fight comes from is not yet known (`LiveShieldTests.BetweenSwings...`, run by name, measures it).
+    /// </summary>
+    public bool StepBackBetweenSwings { get; set; }
+
+    /// <summary>Is there ground to step back onto, two blocks straight away from this creature: dry, solid, open, nothing that burns?</summary>
+    private bool RoomBehind(Entity from)
+    {
+        var (px, py, pz) = client.Position;
+        double dx = px - from.X, dz = pz - from.Z;
+        var len = Math.Sqrt(dx * dx + dz * dz);
+        if (len < 0.05) return false;
+        var y = (int)Math.Floor(py + 1e-6);
+        for (var step = 1; step <= 2; step++)
+            if (!DryStand((int)Math.Floor(px + dx / len * step), y, (int)Math.Floor(pz + dz / len * step))) return false;
+        return true;
     }
 
     private async Task<bool> FightLoopAsync(int id, Func<Entity, bool>? keepGoing, bool shield, Action<bool> setUp, Func<bool> isUp, CancellationToken ct)
@@ -519,6 +570,7 @@ public sealed partial class Skills(MinecraftClient client)
         var stuck = 0;
         while (client.Entities.TryGetValue(id, out var t) && !ct.IsCancellationRequested)
         {
+            client.Controls.Back = false;
             // Backing off at 3 hearts is for what hits back. A cow does not, and low health is when he most needs to eat ("I'm too hurt to hunt right now", at 2 hearts and 16 food, 2026-11-04).
             if ((client.Health < 6 && Hostile.Contains(t.Name)) || (keepGoing != null && !keepGoing(t))) return false;
             // A creeper whose fuse is burning (it is within 3 blocks of us): run until its fuse stops, then carry on. (The brain's reflex does the same; a fight run on its own needs it too.)
@@ -534,23 +586,28 @@ public sealed partial class Skills(MinecraftClient client)
                 continue;
             }
             var d = t.DistanceTo(client.Position.X, client.Position.Y, client.Position.Z);
+            var strike = StepBackBetweenSwings ? StrikeFrom : 2.8;       // (2.8 and a walk to within 2 blocks is how he fought before, kept for the test that measures the difference)
             // The shield is up from the moment the mob is coming (hits land while we are still walking up to it) and down only for the swing itself.
             if (shield)
             {
-                var swingNow = d <= 2.8 && (client.AttackReady || client.TicksUntilAttackReady <= 1);
+                var swingNow = d <= strike && (client.AttackReady || client.TicksUntilAttackReady <= 1);
                 if (swingNow && isUp()) { await client.ReleaseUseItemAsync(ct); setUp(false); }
                 else if (!swingNow && !isUp()) { await client.UseItemAsync(Hand.Off, ct); setUp(true); }
             }
-            if (d > 2.8)
+            // In reach but behind a block is not in reach of a sword: he goes round or through, as far as beside it, before he swings (he used to hit through the wall, which no player can).
+            var inView = client.HasClearLineTo(t);
+            if (d > strike || !inView)
             {
                 using var hop = CancellationTokenSource.CreateLinkedTokenSource(ct);
                 hop.CancelAfter(TimeSpan.FromSeconds(1));
-                try { await client.GoToAsync(Goal.Near(t.X, t.Y, t.Z, 2.0), new PathOptions { CanDig = true, MaxNodes = 8_000 }, hop.Token); }
+                // As far as arm's length, not up against it: two blocks from its middle is where its own arms reach.
+                try { await client.GoToAsync(Goal.Near(t.X, t.Y, t.Z, !inView ? 1.0 : StepBackBetweenSwings ? 2.5 : 2.0), new PathOptions { CanDig = true, MaxNodes = 8_000 }, hop.Token); }
                 catch (OperationCanceledException) when (!ct.IsCancellationRequested) { }
                 // No way to it, or no nearer: a pause, and after eight such tries in a row he gives up on this one. Without this a mob he could not reach (a cow across rough ground, a spider over water)
                 // made this loop spin about 20,000 times a second for five minutes (a test, 2026-11-03: a million log lines).
                 var after = client.Entities.TryGetValue(id, out var now) ? now.DistanceTo(client.Position.X, client.Position.Y, client.Position.Z) : 0;
-                if (after > d - 0.3) { if (++stuck >= 8) return false; await client.WaitTicksAsync(4, ct); }
+                var nowInView = now != null && !inView && client.HasClearLineTo(now);        // no nearer, but it has come into view: that is getting somewhere
+                if (after > d - 0.3 && !nowInView) { if (++stuck >= 8) return false; await client.WaitTicksAsync(4, ct); }
                 else stuck = 0;
                 continue;
             }
@@ -560,6 +617,10 @@ public sealed partial class Skills(MinecraftClient client)
             if (!shield && client.OnGround && client.TicksUntilAttackReady <= 7 && t.Name != "minecraft:creeper" && d < 2.6)
                 await client.CritAttackAsync(t, ct);
             else if (client.AttackReady) await client.AttackAsync(t, ct);
+            // The sword is coming round and the thing is close: back out of its reach, facing it, until the swing is nearly ready. Only from what hits by hand (backing away from an archer gives it the shot),
+            // and only onto ground he has looked at.
+            else if (StepBackBetweenSwings && d < StandOff && client.TicksUntilAttackReady > 7 && Hostile.Contains(t.Name) && !Ranged.Contains(t.Name) && t.Name != "minecraft:creeper" && RoomBehind(t))
+                client.Controls.Back = true;
             await client.WaitTicksAsync(1, ct);
         }
         return !client.Entities.ContainsKey(id);
@@ -2854,6 +2915,13 @@ public sealed partial class Skills(MinecraftClient client)
         var eye = client.EyePosition;
         return client.Entities.Values.Where(e => Ranged.Contains(e.Name) && Hostile.Contains(e.Name) && e.DistanceTo(x, y, z) < within && Sight.CanSeeBody(client.World, eye, e.X, e.Y, e.Z))
             .OrderBy(e => e.DistanceTo(x, y, z)).FirstOrDefault();
+    }
+
+    /// <summary>The nearest other player within `within` blocks, or null: someone he is with.</summary>
+    public Entity? NearestFriend(double within)
+    {
+        var (x, y, z) = client.Position;
+        return client.Entities.Values.Where(e => e.IsPlayer && e.Uuid != client.Profile.Id && e.DistanceTo(x, y, z) < within).OrderBy(e => e.DistanceTo(x, y, z)).FirstOrDefault();
     }
 
     /// <summary>Does he carry a sword or an axe?</summary>

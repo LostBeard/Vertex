@@ -353,15 +353,21 @@ public sealed class Reflexes : IDisposable
         var close = c.Entities.Values.Where(e => Skills.IsThreatOnFoot(e.Name) && e.DistanceTo(x, y, z) < 12).OrderBy(e => e.DistanceTo(x, y, z)).ToList();
         var archer = _skills.NearestRanged(26);
         var melee = close.FirstOrDefault(e => e.DistanceTo(x, y, z) < AvoidWithin);
-        if (archer == null && melee == null) return false;
+        // With a friend near he is one of a group, and what comes at the friend is his business too (TJ, 2026-11-16: "when he plays with others he can join them and help protect the group, not just run away").
+        // Armed and with four hearts or more: a monster within 8 blocks of the friend is one to fight, wherever he himself stands. Not creepers: hitting one sets it off beside the friend.
+        var friend = _skills.NearestFriend(24);
+        var canDefend = friend != null && _skills.BestWeaponName != null && c.Health >= 8;
+        var atFriend = canDefend ? c.Entities.Values.Where(e => Skills.IsThreatOnFoot(e.Name) && e.Name != "minecraft:creeper" && e.DistanceTo(friend!.X, friend.Y, friend.Z) < 8)
+            .OrderBy(e => e.DistanceTo(friend!.X, friend.Y, friend.Z)).FirstOrDefault() : null;
+        if (archer == null && melee == null && atFriend == null) return false;
 
         // On another job: only being hurt BY a monster stops it (one over there is the job's own care). Any fall in health used to count, so in the heat every tick with a mob anywhere near restarted his job, and in 8 minutes he
-        // never finished chopping one tree (2026-11-04). It goes back to the job afterwards.
+        // never finished chopping one tree (2026-11-04). It goes back to the job afterwards. A monster on his friend stops it too: following someone is not a reason to watch them being hit.
         var busy = _tasks.IsBusy;
         var hitByMonster = DateTime.UtcNow - _lastMonsterHit < TimeSpan.FromSeconds(2);
-        if (busy && (HandlesMonsters(_tasks.Current) || !hitByMonster)) return false;
+        if (busy && (HandlesMonsters(_tasks.Current) || (!hitByMonster && atFriend == null))) return false;
 
-        var foe = melee != null && (archer == null || melee.DistanceTo(x, y, z) < 5) ? melee : archer!;
+        var foe = melee != null && (archer == null || melee.DistanceTo(x, y, z) < 5) ? melee : archer ?? atFriend!;
         var foeClass = close.Count(e => e.DistanceTo(x, y, z) < 10) >= 3 ? "swarm" : foe.Name == "minecraft:creeper" ? "creeper" : Skills.Ranged.Contains(foe.Name) ? "archer" : "melee";
         var situation = new DangerSituation(foeClass, DangerSituation.KitOf(_skills.BestWeaponName), DangerSituation.HealthOf(c.Health));
 
@@ -384,7 +390,11 @@ public sealed class Reflexes : IDisposable
         var action = learner.Choose(situation, legal);
         // Armed and well, a spider that comes to him is what he has been looking for. What comes of it is written down like any other choice.
         if (legal.Contains(DangerAction.Fight) && situation.Kit != "bare" && c.Health >= 12 && close.Count(e => e.DistanceTo(x, y, z) < 10) < 3 && _skills.WantsWhatItDrops(foe.Name)) action = DangerAction.Fight;
-        Decided?.Invoke($"{DangerLearner.Doing(action)} against {foe.Name.Bare().Replace('_', ' ')} at {foe.DistanceTo(x, y, z):0} blocks ({situation}); odds {string.Join(", ", legal.Select(a => $"{DangerLearner.Doing(a)} {learner.Expected(situation, a):0.00}"))}");
+        // Beside a friend he does not weigh running: he stands with them, armed and with the health for it. What comes of it is written down like any other choice, so he learns what fighting is worth from more than
+        // the one fight in fourteen he used to choose.
+        var standing = canDefend && legal.Contains(DangerAction.Fight);
+        if (standing) action = DangerAction.Fight;
+        Decided?.Invoke($"{DangerLearner.Doing(action)} against {foe.Name.Bare().Replace('_', ' ')} at {foe.DistanceTo(x, y, z):0} blocks ({situation}){(standing ? $", standing with {friend!.PlayerName}" : "")}; odds {string.Join(", ", legal.Select(a => $"{DangerLearner.Doing(a)} {learner.Expected(situation, a):0.00}"))}");
 
         var episode = new Episode { Situation = situation, Action = action, HealthBefore = c.Health, Started = DateTime.UtcNow };
         lock (_episodeLock) { CloseEpisode(learner, _episode, died: false); _episode = episode; }
@@ -456,7 +466,7 @@ public sealed class Reflexes : IDisposable
         var (x, y, z) = c.Position;
         var after = died ? 0 : c.Health;
         var stillClose = !died && c.Entities.Values.Any(m => Skills.IsThreatOnFoot(m.Name) && m.DistanceTo(x, y, z) < 6);
-        var reward = DangerLearner.Reward(died, e.HealthBefore, after, stillClose, e.JobWorked);
+        var reward = DangerLearner.Reward(died, e.HealthBefore, after, stillClose, e.JobWorked, won: e.Action == DangerAction.Fight && e.JobWorked);
         learner.Record(e.Situation, e.Action, reward, died, e.HealthBefore, after, (DateTime.UtcNow - e.Started).TotalSeconds);
         Decided?.Invoke($"result: {DangerLearner.Doing(e.Action)} ({e.Situation}) scored {reward:0.00}{(died ? ": I died" : $", health {e.HealthBefore / 2:0.#} to {after / 2:0.#} hearts")}; now expected {learner.Expected(e.Situation, e.Action):0.00}");
     }

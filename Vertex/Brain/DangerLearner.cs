@@ -46,7 +46,7 @@ public sealed class DangerLearner
         foreach (var line in File.ReadLines(file))
         {
             if (string.IsNullOrWhiteSpace(line)) continue;
-            try { if (JsonSerializer.Deserialize<DangerRecord>(line, Json) is { } r) Add(new DangerSituation(r.Foe, r.Kit, r.Health), r.Action, r.Reward); }
+            try { if (JsonSerializer.Deserialize<DangerRecord>(line, Json) is { } r) Add(new DangerSituation(r.Foe, r.Kit, r.Health), r.Action, Rescored(r)); }
             catch (JsonException) { /* a torn last line after a crash loses one outcome, not all of them */ }
         }
     }
@@ -135,15 +135,34 @@ public sealed class DangerLearner
     /// <summary>
     /// How a choice went, 0 to 1. Dying is 0. Otherwise the share of his health he kept, cut when the monster is still on him (running from it and being caught is not the same as being rid of it), and halved when
     /// the job itself failed.
+    /// A fight he won is worth more than the health it left him: the monster is gone, for him and for whoever is with him, and running leaves it where it was. Half for the win and half for the health kept. Scored on
+    /// health alone, a fight won at the cost of a quarter of his health came to 0.56 and running unhurt to 1, so in 2,210 choices he ran 1,617 times and fought 160, though armed against one monster he had fought 47
+    /// times without dying and run 308 times and died in 43 (counted 2026-11-16; TJ: "I really want him to be good at fighting the monsters so that when he plays with others he can ... help protect the group").
     /// </summary>
-    public static double Reward(bool died, float before, float after, bool foeStillClose, bool jobWorked)
+    /// <param name="won">A fight that did what it set out to: what he went for is gone.</param>
+    public static double Reward(bool died, float before, float after, bool foeStillClose, bool jobWorked, bool won = false)
     {
         if (died) return 0;
         var kept = before <= 0 ? 0 : Math.Clamp(after / before, 0, 1);
-        var r = (double)kept * kept;
-        if (foeStillClose) r *= 0.6;
+        var r = won ? 0.5 + 0.5 * kept : (double)kept * kept;
+        if (foeStillClose) r *= won ? 0.8 : 0.6;
         if (!jobWorked) r *= 0.5;
         return Math.Clamp(r, 0, 1);
+    }
+
+    /// <summary>
+    /// What a stored outcome is worth by today's rule. The rows keep the facts (health before and after, the action, whether he died) and the score of the day; a fight he was hurt in and won is found by its old
+    /// score, which was the share of health kept, squared (times 0.6 with others still near), and is given what a won fight is given now. Everything else stands as it was written.
+    /// </summary>
+    public static double Rescored(DangerRecord r)
+    {
+        if (r.Action != DangerAction.Fight || r.Died || r.HealthBefore <= 0) return r.Reward;
+        var kept = Math.Clamp((double)r.HealthAfter / r.HealthBefore, 0, 1);
+        if (kept >= 1) return r.Reward;
+        var old = kept * kept;
+        if (Math.Abs(r.Reward - old) < 0.005) return 0.5 + 0.5 * kept;
+        if (Math.Abs(r.Reward - old * 0.6) < 0.005) return (0.5 + 0.5 * kept) * 0.8;
+        return r.Reward;
     }
 
     public void Record(DangerSituation s, DangerAction a, double reward, bool died, float before, float after, double seconds)

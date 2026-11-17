@@ -186,6 +186,17 @@ on a one-block island with water on three sides and a three-high dirt wall on th
   digs in, seals the hole and stays until the sun is up (`ShelterForTheNightAsync`). Under the ground already (three blocks of rock or earth over his head) he goes on working, and on the steps that are
   done down there first (stone, iron, diamond: `Skills.DoneUnderTheGround`), so a night is spent mining when there is mining to do. He comes up early if he loses a heart down there. With no death at
   night for 14 days the belief lapses and he finds out again.
+- **Only what he can look at** (2026-11-16; TJ: "he mines blocks that a normal player would not be able to because they would not be able to see them"). The server asks only how far away a block or
+  a creature is; a player's own crosshair asks what is in front of it. `MinecraftClient.DigAsync` breaks a block only when a look from his eyes reaches one of its faces first (`AimPointOn`); a block
+  behind others is got at by breaking what is in front, nearest first, up to eight of them, and never through someone's build or a block with lava against it. `AttackAsync` does nothing to a creature
+  with a block between them (`HasClearLineTo`), and in a fight he goes round or through before he swings. Opening and placing are not held to this yet.
+- **A fight he wins is worth winning** (`DangerLearner.Reward`, 2026-11-16; TJ: "I really want him to be good at fighting the monsters so that when he plays with others he can join them and help
+  protect the group, not just run away"). His choices against monsters were scored on the health they left him, so a fight won at the cost of a quarter of it came to 0.56 and running unhurt to 1: in
+  2,210 choices he ran 1,617 times and fought 160. A won fight now scores half for the win and half for the health kept, and the fights already in his record are read the same way (`Rescored`):
+  armed against one monster, fighting comes out at 0.66 and running at 0.59; bare-handed, running stays ahead.
+- **Beside a friend he stands and fights.** With another player within 24 blocks, a weapon in his pockets and four hearts or more, a monster that comes at him or within 8 blocks of the friend is
+  fought, whatever his record says of running, and he leaves the job he was on for it (it resumes after). Not creepers. The log says "standing with <name>".
+- **A shield early**: it is the step after the iron pickaxe (one ingot and six planks), not the last one after all the armor. Skeletons cost him more health than anything else.
 - **Where he may dig in** (`Skills.DigInProblem`, 2026-11-16). Solid ground four deep, no sand or gravel, no water or lava beside it (as before), and now: the three blocks diggable in 5 seconds with
   the best tool he carries when something is on him (12 seconds at nightfall), and rock or earth on all four sides of the two cells he will be in. Stone with bare hands is 22 seconds under fire; a
   hole on a slope or beside a cave is open at the side. Where the ground will not do, digging in is not among the choices `DangerLearner` is given, and for the night he walks to ground that will.
@@ -197,8 +208,10 @@ on a one-block island with water on three sides and a three-high dirt wall on th
 - **Looking for what lives on the surface, from the surface** (2026-11-16). Under the ground, a search for animals, sheep, spiders or trees first takes him up (`ComeUpToLookAsync`: a stair to the first
   standing room with open sky over it). Before, the walk "over the land" was a tunnel under it: live an iron pickaxe made at 16:39 was worn out by 16:44, about 250 blocks of stone later. Ore and stone
   are still looked for from where he is.
-- **What he breaks without aiming at it counts** (`CollectAsync`, 2026-11-16): the log between him and the next, the ore beside the one whose drop he dug to. The log line is "is gone and I did not
-  aim at it ... I broke it on my way". Uncounted, he took a fourth log for three and once went looking for a third ore with all three in his pockets.
+- **He stops collecting when he holds what was wanted** (`CollectAsync`'s `enough`, 2026-11-16). The count is of blocks he aimed at; what he holds can be more (the log between him and the next,
+  the ore beside the one whose drop he dug to: the log says "is gone and I did not aim at it ... I broke it on my way") or less (a drop he did not find). Getting an item (`DigForAsync`, `WoodForAsync`)
+  says when he has it. Without it he once went looking for a third ore with all three in his pockets. Counting the unaimed block itself was tried for a few hours and taken out: a pen came up two logs
+  short.
 - **Using what he learned.** Stranded on a tiny patch, he asks his memory BEFORE trying: the lessons for that situation (tag `exp:tiny-patch`) carry the ways that worked or failed (`worked:swim`,
   `failed:dig`; ways are swim, dig, climb). Each candidate shore is planned without moving, and the order of tries moves toward a way that worked and away from one that failed; with no earlier
   lessons it stays nearest first. It is only the ORDER: nothing is ruled out, a way that failed is still tried if the others do not work. When the order changed he says why in the lesson

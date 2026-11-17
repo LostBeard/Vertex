@@ -36,6 +36,11 @@ public class LiveShieldTests
         await _server.CommandAsync("kill @e[type=!minecraft:player]");
         await _server.CommandAsync($"fill {ax - r} 200 {az - r} {ax + r} 215 {az + r} minecraft:air");
         await _server.CommandAsync($"fill {ax - r} 199 {az - r} {ax + r} 199 {az + r} minecraft:stone");
+        // A wall two high round the edge: the floor hangs in the air, and a stray backing away from him stepped off it and was gone ("I couldn't get to the stray", 2026-11-17, in a run of the classes).
+        await _server.CommandAsync($"fill {ax - r} 200 {az - r} {ax + r} 201 {az - r} minecraft:stone");
+        await _server.CommandAsync($"fill {ax - r} 200 {az + r} {ax + r} 201 {az + r} minecraft:stone");
+        await _server.CommandAsync($"fill {ax - r} 200 {az - r} {ax - r} 201 {az + r} minecraft:stone");
+        await _server.CommandAsync($"fill {ax + r} 200 {az - r} {ax + r} 201 {az + r} minecraft:stone");
         await _server.CommandAsync($"clear {name}");
         await Task.Delay(1500);
         await _server.CommandAsync($"tp {name} {ax + 0.5} 200 {az + 0.5} -90 0");
@@ -198,5 +203,35 @@ public class LiveShieldTests
             shielded.Add(lost);
         }
         TestContext.Out.WriteLine($"health lost without a shield: {string.Join(", ", plain)}; with: {string.Join(", ", shielded)}");
+    }
+
+    /// <summary>
+    /// TJ, 2026-11-16: "I really want him to be good at fighting the monsters." Willing is one half; the other is what a fight costs him. He walked to two blocks from a monster and stood there between
+    /// swings, inside its reach: about one blow of a husk's in every fight (4.5 of his 20 on hard), 2.4 hearts a fight live. Stepping back out of its reach while his sword comes round, as a player does,
+    /// against the same husk, the same sword and no shield: eight fights, four each way, turn about so that neither way always goes first.
+    /// A measurement, run by name: its first run (2026-11-16) said stepping back as built is no better (standing 6, 4.5, 4.5; stepping back 4.5, 4.5, 4.5, then 14.5 and a fight broken off), so the
+    /// switch is off in the game and this stays out of the ordinary runs until the tactic earns its place.
+    /// </summary>
+    [Test]
+    [Explicit("a measurement of a tactic that is switched off: see the summary")]
+    public async Task BetweenSwings_HeStepsBackOutOfAHusksReach_AndTakesFewerBlows()
+    {
+        const string name = "VertexStepBack";
+        var (client, ax, az) = await JoinOnArenaAsync(name, 20);
+        await using var _ = client;
+        await GiveAsync(client, name, "minecraft:iron_sword", 1);
+        var skills = new Skills(client);
+        var standing = new List<float>();
+        var stepping = new List<float>();
+        foreach (var stepBack in new[] { false, true, true, false, false, true, true, false })
+        {
+            skills.StepBackBetweenSwings = stepBack;
+            var (won, lost) = await FightAHuskAsync(client, name, ax, az, skills);
+            Assert.That(won, Is.True, $"he beat the husk ({(stepBack ? "stepping back" : "standing his ground")})");
+            (stepBack ? stepping : standing).Add(lost);
+        }
+        TestContext.Out.WriteLine($"health lost standing within its reach: {string.Join(", ", standing)} (sum {standing.Sum()}); stepping back: {string.Join(", ", stepping)} (sum {stepping.Sum()})");
+        Assert.That(standing.Sum(), Is.GreaterThan(0), "the control: standing within its reach costs something, or this proves nothing");
+        Assert.That(stepping.Sum(), Is.LessThanOrEqualTo(standing.Sum() / 2), "stepping back costs half as much or less");
     }
 }

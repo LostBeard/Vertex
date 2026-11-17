@@ -104,7 +104,7 @@ public class LiveAnimalTests
 
         var (none, noneText) = await skills.BreedAnimalsAsync("pigs", 1, CancellationToken.None);
         Assert.That(none, Is.False);
-        Assert.That(noneText, Does.Contain("two adult pigs").And.Contain("I only see 0"));
+        Assert.That(noneText, Does.Contain("two adult pigs").And.Contain("I only found 0"), "he went and looked, and says how far");
 
         await Summon("pig", ax - 2, az + 2);
         await Summon("pig", ax + 2, az - 2);
@@ -130,6 +130,9 @@ public class LiveAnimalTests
         const string name = "VertexShear";
         var (client, ax, az) = await JoinInPenAsync(name);
         await using var _ = client;
+        // Earth under them, not grass: a sheep on grass eats now and then (one tick in a thousand) and its wool is back, so "no sheep still carrying wool" failed in some full runs and never alone
+        // (again on 2026-11-16) without anything being wrong with the shearing.
+        await _server.CommandAsync($"fill {ax - 14} 199 {az - 14} {ax + 14} 199 {az + 14} minecraft:dirt");
         await Summon("sheep", ax - 3, az + 1);
         await Summon("sheep", ax + 3, az - 2);
         await Summon("sheep", ax + 1, az + 3, "Color:3b");
@@ -150,7 +153,7 @@ public class LiveAnimalTests
 
         var (again, againText) = await skills.ShearSheepAsync(0, CancellationToken.None);
         Assert.That(again, Is.False, "nothing left to shear");
-        Assert.That(againText, Does.Contain("don't see any sheep with wool"));
+        Assert.That(againText, Does.Contain("sheep with wool").And.Contain("didn't find any"), "he went and looked, and says so");
     }
 
     [Test]

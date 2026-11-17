@@ -185,11 +185,15 @@ public sealed partial class Skills
         int Held() => Have(s => s.Name.EndsWith("_log")) * 4 + Have(s => s.Name.EndsWith("_planks"));
         // What he holds is what counts, not what he broke: a log can fall where he does not find it, and the craft then fails one plank short.
         var text = "";
-        for (var round = 0; round < 3 && Held() < planks; round++)
+        // One round that brings nothing is a drop he did not find (it happens: a log broken, "I mined 1 wood", and no log in his pockets, twice in the test runs of 2026-11-16 and 17); there are other logs.
+        // Two in a row is no wood to be had.
+        var nothing = 0;
+        for (var round = 0; round < 4 && Held() < planks; round++)
         {
             var before = Held();
-            (_, text) = await CollectAsync("wood", (int)Math.Ceiling((planks - before) / 4), ct);
-            if (Held() <= before) break;
+            (_, text) = await CollectAsync("wood", (int)Math.Ceiling((planks - before) / 4), ct, enough: () => Held() >= planks);
+            if (Held() > before) nothing = 0;
+            else if (++nothing >= 2) break;
         }
         return Held() >= planks ? null : (text.Length > 0 ? text : "I couldn't get enough wood.");
     }
@@ -214,7 +218,7 @@ public sealed partial class Skills
             var missing = target - client.Inventory.Count(item);
             if (missing <= 0) return null;
             Trace?.Invoke($"digging for {missing} {Plain(item)}");
-            var (_, text) = await CollectAsync(block, missing, ct);
+            var (_, text) = await CollectAsync(block, missing, ct, enough: () => client.Inventory.Count(item) >= target);
             if (client.Inventory.Count(item) >= target) return null;
             if (round == 2 || text.Contains("couldn't", StringComparison.OrdinalIgnoreCase) || text.Contains("haven't found", StringComparison.OrdinalIgnoreCase) || text.Contains("won't", StringComparison.OrdinalIgnoreCase)) return text;
         }
@@ -299,12 +303,14 @@ public sealed partial class Skills
         yield return new("minecraft:bow", 1, "a bow", () => HasAny("bow"));
         yield return new("minecraft:arrow", 8, "some arrows", () => HasAny("arrow"));
         yield return new("minecraft:iron_pickaxe", 1, "an iron pickaxe", () => HasPickaxe(3));
+        // A shield as soon as there is iron for one (one ingot and six planks): held up it stops an arrow dead, and skeletons took more of his health than anything else, 607 hearts in the 19-hour run against 443 from
+        // zombies. It used to come last, after all the armor, and in that run he got as far as working toward one 6 times.
+        yield return new("minecraft:shield", 1, "a shield", () => HasAny("shield") || client.Inventory.OffHandItem.Name == "minecraft:shield");
         yield return new("minecraft:iron_sword", 1, "an iron sword", () => HasAny("iron_sword", "diamond_sword", "netherite_sword"));
         yield return new("minecraft:iron_chestplate", 1, "an iron chestplate", () => HasAny("iron_chestplate", "diamond_chestplate", "netherite_chestplate") || WearingBetter("chestplate"));
         yield return new("minecraft:iron_helmet", 1, "an iron helmet", () => HasAny("iron_helmet", "diamond_helmet", "netherite_helmet") || WearingBetter("helmet"));
         yield return new("minecraft:iron_leggings", 1, "iron leggings", () => HasAny("iron_leggings", "diamond_leggings", "netherite_leggings") || WearingBetter("leggings"));
         yield return new("minecraft:iron_boots", 1, "iron boots", () => HasAny("iron_boots", "diamond_boots", "netherite_boots") || WearingBetter("boots"));
-        yield return new("minecraft:shield", 1, "a shield", () => HasAny("shield") || client.Inventory.OffHandItem.Name == "minecraft:shield");
         yield return new("minecraft:diamond_pickaxe", 1, "a diamond pickaxe", () => HasPickaxe(4));
     }
 

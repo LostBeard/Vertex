@@ -3,6 +3,7 @@ using SpawnDev.Minecraft.Entities;
 using SpawnDev.Minecraft.Items;
 using SpawnDev.Minecraft.Physics;
 using SpawnDev.Minecraft.Protocol;
+using SpawnDev.Minecraft.World;
 using CB = SpawnDev.Minecraft.Protocol.PacketIds;
 
 namespace SpawnDev.Minecraft;
@@ -332,17 +333,111 @@ public sealed partial class MinecraftClient
     }
 
     /// <summary>
-    /// Breaks a block like the vanilla client: look at it, START_DESTROY, accumulate getDestroyProgress every
+    /// Where a player with his eyes at <paramref name="eye"/> could put his crosshair on a block: a point on one of the faces turned toward him with no other block's shape between it and his eyes. Null when
+    /// every such face is behind something, and <paramref name="inTheWay"/> is then the first block his look meets on the way to the face he sees most squarely. The server does not check this; a player's own client does,
+    /// and he was breaking ore through the stone in front of it (TJ, 2026-11-16: "he mines blocks that a normal player would not be able to because they would not be able to see them").
+    /// </summary>
+    public static (double X, double Y, double Z)? AimPointOn(GameWorld world, (double X, double Y, double Z) eye, int x, int y, int z, out (int X, int Y, int Z)? inTheWay)
+    {
+        inTheWay = null;
+        // His eyes are in it (buried in sand, a block set where he stands): whichever way he looks, that is the block he is looking at. Without this he could not dig himself out, and lost a heart a second.
+        if ((int)Math.Floor(eye.X) == x && (int)Math.Floor(eye.Y) == y && (int)Math.Floor(eye.Z) == z) return (x + 0.5, y + 0.5, z + 0.5);
+        // The faces turned toward the eyes, the one he sees most squarely first; on each, its middle and four points toward its corners (a player moves his crosshair over what he can see of it).
+        var faces = new List<(double D, double X, double Y, double Z, int Axis)>();
+        if (eye.X > x + 1) faces.Add((eye.X - (x + 1), x + 1, y + 0.5, z + 0.5, 0)); else if (eye.X < x) faces.Add((x - eye.X, x, y + 0.5, z + 0.5, 0));
+        if (eye.Y > y + 1) faces.Add((eye.Y - (y + 1), x + 0.5, y + 1, z + 0.5, 1)); else if (eye.Y < y) faces.Add((y - eye.Y, x + 0.5, y, z + 0.5, 1));
+        if (eye.Z > z + 1) faces.Add((eye.Z - (z + 1), x + 0.5, y + 0.5, z + 1, 2)); else if (eye.Z < z) faces.Add((z - eye.Z, x + 0.5, y + 0.5, z, 2));
+        faces.Sort((a, b) => b.D.CompareTo(a.D));       // the face he is furthest out from is the one he looks at most squarely
+        ReadOnlySpan<(double U, double V)> spots = [(0, 0), (0.3, 0.3), (-0.3, 0.3), (0.3, -0.3), (-0.3, -0.3)];
+        foreach (var f in faces)
+            foreach (var (u, v) in spots)
+            {
+                var p = f.Axis switch { 0 => (f.X, f.Y + u, f.Z + v), 1 => (f.X + u, f.Y, f.Z + v), _ => (f.X + u, f.Y + v, f.Z) };
+                var hit = FirstShapeOnTheWay(world, eye, p, x, y, z);
+                if (hit == null) return p;
+                inTheWay ??= hit;
+            }
+        return null;
+    }
+
+    /// <summary>The first cell holding a block with a shape on the straight line from the eyes to a point, the target's own cell aside; null when the line is open.</summary>
+    private static (int X, int Y, int Z)? FirstShapeOnTheWay(GameWorld world, (double X, double Y, double Z) eye, (double X, double Y, double Z) to, int tx, int ty, int tz)
+    {
+        double dx = to.X - eye.X, dy = to.Y - eye.Y, dz = to.Z - eye.Z;
+        var steps = Math.Max(1, (int)Math.Ceiling(Math.Sqrt(dx * dx + dy * dy + dz * dz) / 0.05));
+        int lx = int.MinValue, ly = 0, lz = 0, state = 0;
+        Box[]? shape = null;
+        for (var i = 0; i <= steps; i++)
+        {
+            var t = (double)i / steps;
+            double px = eye.X + dx * t, py = eye.Y + dy * t, pz = eye.Z + dz * t;
+            int cx = (int)Math.Floor(px), cy = (int)Math.Floor(py), cz = (int)Math.Floor(pz);
+            if (cx != lx || cy != ly || cz != lz)
+            {
+                (lx, ly, lz) = (cx, cy, cz);
+                if (cx == tx && cy == ty && cz == tz) return null;      // his look has reached the block itself
+                state = world.GetState(cx, cy, cz);
+                if (state < 0) return (cx, cy, cz);                    // ground he does not know: he cannot say he sees through it
+                shape = state > 0 && world.Data.HasCollision(state) ? world.Data.CollisionBoxes(state) : null;
+            }
+            if (shape == null) continue;
+            // The block's own shape, not its whole cell: a look passes over a slab and beside a fence post.
+            double fx = px - cx, fy = py - cy, fz = pz - cz;
+            foreach (var b in shape)
+                if (fx >= b.MinX && fx <= b.MaxX && fy >= b.MinY && fy <= b.MaxY && fz >= b.MinZ && fz <= b.MaxZ) return (cx, cy, cz);
+        }
+        return null;
+    }
+
+    /// <summary>Where he could put his crosshair on this block from where he stands, or null when it is behind something (see the static form).</summary>
+    public (double X, double Y, double Z)? AimPointOn(int x, int y, int z) => AimPointOn(World, EyePosition, x, y, z, out _);
+
+    /// <summary>
+    /// Breaks a block as a player does: the one he is looking at. A block behind others is got at by breaking what is in front of it first, nearest first, up to eight of them; not through someone's build, a
+    /// block that would let lava out, or one that will not break, and then it returns false. See <see cref="AimPointOn(GameWorld, ValueTuple{double, double, double}, int, int, int, out ValueTuple{int, int, int}?)"/>.
+    /// </summary>
+    public async Task<bool> DigAsync(int x, int y, int z, CancellationToken cancellationToken = default)
+    {
+        for (var cleared = 0; ; cleared++)
+        {
+            var state = World.GetState(x, y, z);
+            if (state <= 0 || World.Data.IsAir(state) || World.Data.Hardness[state] < 0) return false;
+            if (DistanceToBlock(x, y, z) > BlockReach) return false;
+            if (AimPointOn(World, EyePosition, x, y, z, out var inTheWay) is { } aim) return await DigSeenAsync(x, y, z, aim, cancellationToken);
+            // Eight at most: a look as long as his reach, cornerwise through solid rock, crosses seven blocks. (Four was too few: an ore within reach down and across through rock was left, and he went looking elsewhere.)
+            if (inTheWay is not var (wx, wy, wz) || cleared >= 8 || !MayClearFromTheWay(wx, wy, wz))
+            {
+                var what = inTheWay is var (ix, iy, iz) ? $"{World.GetBlock(ix, iy, iz)?.Name ?? "something"} at {ix} {iy} {iz} is in the way" : "nothing I can look at it past";
+                DigNote?.Invoke($"dig: {World.Data.BlockOf(state).Name} at {x} {y} {z}: not in view from here ({what}), left alone");
+                return false;
+            }
+            // What is in the way is by its nature in view: his look meets it first.
+            if (AimPointOn(World, EyePosition, wx, wy, wz, out _) is not { } front || !await DigSeenAsync(wx, wy, wz, front, cancellationToken)) return false;
+        }
+    }
+
+    /// <summary>May he break this to get at what is behind it? Not what someone built or what stands by it, not what will not break or did not a moment ago, and not a block with lava against it.</summary>
+    private bool MayClearFromTheWay(int x, int y, int z)
+    {
+        var s = World.GetState(x, y, z);
+        if (s <= 0 || World.Data.Hardness[s] < 0 || IsBuiltBlock(World.Data.BlockOf(s)) || PartOfABuild(x, y, z) || DigRefused(x, y, z)) return false;
+        foreach (var (dx, dy, dz) in new[] { (1, 0, 0), (-1, 0, 0), (0, 1, 0), (0, -1, 0), (0, 0, 1), (0, 0, -1) })
+            if (World.GetState(x + dx, y + dy, z + dz) is var n && n > 0 && (World.Data.StateFlags[n] & GameData.FlagLava) != 0) return false;
+        return true;
+    }
+
+    /// <summary>
+    /// Breaks the block he is looking at, like the vanilla client: look at it, START_DESTROY, accumulate getDestroyProgress every
     /// tick (it changes if we fall, swap tools or get effects), STOP_DESTROY at 1.0, then wait for the server to
     /// confirm the block is gone. Returns false if it could not be broken (out of reach, unbreakable, refused).
     /// </summary>
-    public async Task<bool> DigAsync(int x, int y, int z, CancellationToken cancellationToken = default)
+    private async Task<bool> DigSeenAsync(int x, int y, int z, (double X, double Y, double Z) aim, CancellationToken cancellationToken)
     {
         var state = World.GetState(x, y, z);
         if (state <= 0 || World.Data.IsAir(state) || World.Data.Hardness[state] < 0) return false;
         if (DistanceToBlock(x, y, z) > BlockReach) return false;
         var face = FaceToward(x, y, z);
-        LookAt(x + 0.5, y + 0.5, z + 0.5);
+        LookAt(aim.X, aim.Y, aim.Z);
         var started = DateTime.UtcNow;
         var expected = TicksToBreak(state);
         var tool = Inventory.MainHand.IsEmpty ? "bare hands" : Inventory.MainHand.Name;
@@ -383,7 +478,7 @@ public sealed partial class MinecraftClient
                 NoteRefusedDig(x, y, z);
                 return false;
             }
-            LookAt(x + 0.5, y + 0.5, z + 0.5);
+            LookAt(aim.X, aim.Y, aim.Z);
             progress += DestroyProgressPerTick(state);
             await SwingAsync(Hand.Main, cancellationToken);
         }
@@ -566,9 +661,20 @@ public sealed partial class MinecraftClient
 
     // ---------------------------------------------------------------- entities
 
-    /// <summary>Attacks an entity (vanilla: interact ATTACK then swing). Mind AttackCooldownTicks for full damage.</summary>
+    /// <summary>Could a player standing here hit this creature: is there a straight line from his eyes to its body (middle, head or feet) with no block's shape in it? As with blocks, the server does not ask; a player's crosshair does.</summary>
+    public bool HasClearLineTo(Entity target)
+    {
+        var eye = EyePosition;
+        var h = target.Type.Height;
+        foreach (var part in (ReadOnlySpan<double>)[0.5, 0.9, 0.15])
+            if (FirstShapeOnTheWay(World, eye, (target.X, target.Y + h * part, target.Z), int.MinValue, 0, 0) == null) return true;
+        return false;
+    }
+
+    /// <summary>Attacks an entity (vanilla: interact ATTACK then swing). Mind AttackCooldownTicks for full damage. Nothing happens when a block is between them: a sword does not go through a wall.</summary>
     public async Task AttackAsync(Entity target, CancellationToken cancellationToken = default)
     {
+        if (!HasClearLineTo(target)) return;
         LookAt(target.X, target.Y + target.Type.Height * 0.5, target.Z);
         using (var p = new PacketWriter(CB.Play.Serverbound.Interact))
         {

@@ -96,6 +96,67 @@ public class DangerLearnerTests
         Assert.That(DangerLearner.Reward(false, 20, 20, false, false), Is.EqualTo(0.5).Within(1e-9));
     }
 
+    /// <summary>
+    /// TJ, 2026-11-16: "I really want him to be good at fighting the monsters ... not just run away." Scored on health alone, a fight won at the cost of a quarter of his health came to 0.56 and running unhurt to
+    /// 1: he ran 1,617 times and fought 160. A won fight is now half for the win and half for the health kept.
+    /// </summary>
+    [Test]
+    public void AFightHeWon_IsWorthMoreThanTheHealthItLeftHim_AndNothingIfItKilledHim()
+    {
+        Assert.That(DangerLearner.Reward(false, 20, 15, false, true), Is.EqualTo(0.5625).Within(1e-9), "as it was: the health kept, squared");
+        Assert.That(DangerLearner.Reward(false, 20, 15, false, true, won: true), Is.EqualTo(0.875).Within(1e-9), "won: half for the win, half for the health");
+        Assert.That(DangerLearner.Reward(false, 20, 15, true, true, won: true), Is.EqualTo(0.7).Within(1e-9), "won, with others still near");
+        Assert.That(DangerLearner.Reward(false, 20, 20, false, true, won: true), Is.EqualTo(1), "won unhurt");
+        Assert.That(DangerLearner.Reward(true, 20, 0, false, true, won: true), Is.EqualTo(0), "dead is dead");
+        Assert.That(DangerLearner.Reward(false, 20, 15, false, true, won: true), Is.GreaterThan(DangerLearner.Reward(false, 20, 18, true, true)), "a win that cost 2.5 hearts beats running, losing one and being caught");
+    }
+
+    private static DangerRecord Row(DangerAction action, double reward, float before, float after, bool died = false) => new(DateTime.UtcNow, "melee", "good", "high", action, reward, died, before, after, 9);
+
+    [Test]
+    public void WhatWasWrittenDownBefore_IsReadByTodaysRule_WhereItWasAFightHeWon_AndNowhereElse()
+    {
+        Assert.That(DangerLearner.Rescored(Row(DangerAction.Fight, 0.5625, 20, 15)), Is.EqualTo(0.875).Within(1e-9), "hurt, the job worked, nothing left near: he won");
+        Assert.That(DangerLearner.Rescored(Row(DangerAction.Fight, 0.3375, 20, 15)), Is.EqualTo(0.7).Within(1e-9), "won, others still near");
+        Assert.That(DangerLearner.Rescored(Row(DangerAction.Fight, 0.28125, 20, 15)), Is.EqualTo(0.28125), "he backed off: as written");
+        Assert.That(DangerLearner.Rescored(Row(DangerAction.Fight, 1, 20, 20)), Is.EqualTo(1), "unhurt: as written");
+        Assert.That(DangerLearner.Rescored(Row(DangerAction.Fight, 0, 20, 0, died: true)), Is.EqualTo(0), "he died: as written");
+        Assert.That(DangerLearner.Rescored(Row(DangerAction.Flee, 0.5625, 20, 15)), Is.EqualTo(0.5625), "running is not a fight");
+        Assert.That(DangerLearner.Rescored(Row(DangerAction.DigIn, 0.5625, 20, 15)), Is.EqualTo(0.5625));
+    }
+
+    /// <summary>
+    /// His record armed against one monster, in its proportions (47 fights: 14 unhurt, 20 won at a cost, 13 backed off; 308 runs averaging 0.59): read as it was written, running comes out ahead; read by
+    /// today's rule, fighting does.
+    /// </summary>
+    [Test]
+    public void ArmedAgainstOneMonster_HisOwnRecord_NowSaysFight()
+    {
+        var file = Path.Combine(Path.GetTempPath(), $"danger-{Guid.NewGuid():N}.jsonl");
+        var json = new System.Text.Json.JsonSerializerOptions { Converters = { new System.Text.Json.Serialization.JsonStringEnumConverter() } };
+        try
+        {
+            var rows = new List<DangerRecord>();
+            for (var i = 0; i < 14; i++) rows.Add(Row(DangerAction.Fight, 1, 20, 20));
+            for (var i = 0; i < 20; i++) rows.Add(Row(DangerAction.Fight, 0.5625, 20, 15));
+            for (var i = 0; i < 13; i++) rows.Add(Row(DangerAction.Fight, 0.08, 20, 8));
+            for (var i = 0; i < 182; i++) rows.Add(Row(DangerAction.Flee, 1, 20, 20));
+            for (var i = 0; i < 126; i++) rows.Add(Row(DangerAction.Flee, 0, 20, 0, died: true));
+            File.WriteAllLines(file, rows.Select(r => System.Text.Json.JsonSerializer.Serialize(r, json)));
+            var situation = new DangerSituation("melee", "good", "high");
+
+            var asWritten = new DangerLearner();
+            foreach (var r in rows) asWritten.Record(situation, r.Action, r.Reward, r.Died, r.HealthBefore, r.HealthAfter, r.Seconds);
+            Assert.That(asWritten.Expected(situation, DangerAction.Fight), Is.LessThan(asWritten.Expected(situation, DangerAction.Flee)), "the setup: by the old score he should run");
+
+            var today = new DangerLearner(file);
+            Assert.That(today.Outcomes, Is.EqualTo(rows.Count));
+            Assert.That(today.Expected(situation, DangerAction.Fight), Is.GreaterThan(today.Expected(situation, DangerAction.Flee)), "by today's he should fight");
+            Assert.That(today.Expected(situation, DangerAction.Flee), Is.EqualTo(asWritten.Expected(situation, DangerAction.Flee)).Within(1e-9), "and what running has come to is untouched");
+        }
+        finally { File.Delete(file); }
+    }
+
     [Test]
     public void WhatHeSaysHeLearned_IsCounted()
     {
@@ -507,6 +568,68 @@ public class LiveDangerChoiceTests
             await Wait.UntilAsync(() => client.Inventory.Count("arrow") < 32, TimeSpan.FromSeconds(30), () => $"an arrow gone (doing {tasks.Current})");
             await Wait.UntilAsync(() => learner.Outcomes > before, TimeSpan.FromSeconds(150), () => $"its result written down (doing {tasks.Current})");
             Assert.That(File.ReadAllLines(file).Last(), Does.Contain("\"Shoot\""));
+        }
+        finally
+        {
+            await _server.CommandAsync("kill @e[type=minecraft:zombie]");
+            File.Delete(file);
+        }
+    }
+
+    /// <summary>
+    /// TJ, 2026-11-16: "when he plays with others he can join them and help protect the group, not just run away." Everything he has written down says running is best (40 runs that went well, 10 fights that
+    /// went badly). Beside a friend, with a sword and his health, he fights the zombie that comes at them all the same; and one that goes for the friend 14 blocks from him, he goes to and kills.
+    /// </summary>
+    [Test]
+    public async Task BesideAFriend_ArmedHeStandsAndFights_WhateverHeThinksOfFighting_AndGoesToTheOneThatIsOnHisFriend()
+    {
+        var (client, skills, tasks, ax, az) = await JoinAsync("Stander");
+        await using var _ = client;
+        var friend = new MinecraftClient(GameProfile.Offline("Mate"));
+        await using var _f = friend;
+        using (var join = new CancellationTokenSource(Timeout)) await friend.ConnectAsync("127.0.0.1", Port, join.Token);
+        await _server.CommandAsync("effect give Mate minecraft:resistance 600 4 true");
+        await _server.CommandAsync($"tp Mate {ax + 2.5} 200 {az + 0.5}");
+        await _server.CommandAsync("give Stander minecraft:iron_sword");
+        await Wait.UntilAsync(() => skills.BestWeaponName == "iron_sword" && skills.NearestFriend(24)?.PlayerName == "Mate", Timeout, () => $"a sword and a friend: {skills.InventorySummary()}, friend {skills.NearestFriend(24)?.PlayerName}");
+
+        var file = Path.Combine(TestContext.CurrentContext.WorkDirectory, $"danger-{Guid.NewGuid():N}.jsonl");
+        var json = new System.Text.Json.JsonSerializerOptions { Converters = { new System.Text.Json.Serialization.JsonStringEnumConverter() } };
+        var rows = Enumerable.Range(0, 40).Select(_ => new DangerRecord(DateTime.UtcNow, "melee", "good", "high", DangerAction.Flee, 1, false, 20, 20, 3))
+            .Concat(Enumerable.Range(0, 10).Select(_ => new DangerRecord(DateTime.UtcNow, "melee", "good", "high", DangerAction.Fight, 0.05, false, 20, 9, 9)));
+        File.WriteAllLines(file, rows.Select(r => System.Text.Json.JsonSerializer.Serialize(r, json)));
+        const string zombie = "{PersistenceRequired:1b,active_effects:[{id:\"minecraft:fire_resistance\",duration:1000000}]}";
+        var deaths = 0;
+        client.Died += _ => Interlocked.Increment(ref deaths);
+        try
+        {
+            var learner = new DangerLearner(file, new Random(3));
+            var situation = new DangerSituation("melee", "good", "high");
+            Assert.That(learner.Expected(situation, DangerAction.Flee), Is.GreaterThan(learner.Expected(situation, DangerAction.Fight) + 0.4), "the setup: by what he has written down, he runs");
+            using var reflexes = new Reflexes(client, skills, tasks, () => Character.BuiltIn[0].Style) { Learner = learner };
+            var decisions = new List<string>();
+            reflexes.Decided += m => { lock (decisions) decisions.Add(m); TestContext.Out.WriteLine(m); };
+
+            // One comes at the two of them.
+            await _server.CommandAsync($"summon minecraft:zombie {ax + 6.5} 200 {az + 0.5} {zombie}");
+            await Wait.UntilAsync(() => { lock (decisions) return decisions.Any(d => !d.StartsWith("result")); }, TimeSpan.FromSeconds(30), () => "a choice");
+            string first; lock (decisions) first = decisions.First(d => !d.StartsWith("result"));
+            Assert.That(first, Does.StartWith("fighting against zombie").And.Contain("standing with Mate"), "he stands with his friend");
+            await Wait.UntilAsync(() => !client.Entities.Values.Any(e => e.Name == "minecraft:zombie"), TimeSpan.FromSeconds(60), () => $"the zombie dead (doing {tasks.Current}, health {client.Health})");
+            Assert.That(Volatile.Read(ref deaths), Is.Zero, "and lives");
+
+            // One goes for the friend, 14 blocks from him: beyond anything that would have made him think of it before.
+            await Wait.UntilAsync(() => !tasks.IsBusy, TimeSpan.FromSeconds(30), () => $"free again (doing {tasks.Current})");
+            await _server.CommandAsync($"tp Mate {ax + 14.5} 200 {az + 0.5}");
+            await _server.CommandAsync($"tp Stander {ax + 0.5} 200 {az + 0.5}");
+            await Wait.UntilAsync(() => skills.NearestFriend(24) is { } f && Math.Abs(f.X - ax - 14.5) < 1 && Math.Abs(client.Position.X - ax - 0.5) < 1, Timeout, () => $"apart: he at {client.FeetBlock}");
+            int before; lock (decisions) before = decisions.Count;
+            await _server.CommandAsync($"summon minecraft:zombie {ax + 17.5} 200 {az + 0.5} {zombie}");
+            await Wait.UntilAsync(() => { lock (decisions) return decisions.Skip(before).Any(d => d.StartsWith("fighting against zombie") && d.Contains("standing with Mate")); }, TimeSpan.FromSeconds(40),
+                () => { lock (decisions) return "he goes for the one on his friend: " + string.Join(" | ", decisions.Skip(before)); });
+            await Wait.UntilAsync(() => !client.Entities.Values.Any(e => e.Name == "minecraft:zombie"), TimeSpan.FromSeconds(60), () => $"that zombie dead (doing {tasks.Current}, health {client.Health}, at {client.FeetBlock})");
+            Assert.That(Volatile.Read(ref deaths), Is.Zero);
+            await Wait.UntilAsync(() => File.ReadAllLines(file).Skip(50).Any(r => r.Contains("\"Fight\"")), TimeSpan.FromSeconds(30), () => "what came of standing, written down like any other choice");
         }
         finally
         {

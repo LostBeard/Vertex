@@ -38,6 +38,9 @@ public class LiveObtainTests
         await _server.CommandAsync($"effect give {name} minecraft:resistance 600 4 true");
         var ax = 2000 + 300 * _stage++;
         const int az = 0;
+        // Only one stage held in memory: with every stage kept loaded the sixteenth did not load in time ("timed out waiting: on the stage", 2026-11-16, after five tests were added to this class in a day).
+        // LiveDangerChoiceTests met the same wall at about its 22nd.
+        if (_stage > 1) await _server.CommandAsync($"forceload remove {ax - 300 - 40} {az - 40} {ax - 300 + 40} {az + 40}");
         await _server.CommandAsync($"forceload add {ax - 40} {az - 40} {ax + 40} {az + 40}");
         await Task.Delay(1500);
         await _server.CommandAsync($"fill {ax - 28} 190 {az - 28} {ax + 28} 199 {az + 28} minecraft:stone");
@@ -104,6 +107,12 @@ public class LiveObtainTests
             (x, z) => $"fill {x + 12} 200 {z - 2} {x + 16} 206 {z + 2} minecraft:air",
             (x, z) => $"fill {x - 14} 200 {z + 3} {x - 14} 205 {z + 3} minecraft:air");
         await using var _c = client;
+        // No sheep of the world's own either: the stage floats over real country, and where it floats moves when tests are added to this class. On 2026-11-16 there was a sheep on the ground 124 blocks
+        // from it, and he went and got it.
+        await _server.CommandAsync("kill @e[type=minecraft:sheep]");
+        await client.WaitTicksAsync(40);
+        await _server.CommandAsync("kill @e[type=minecraft:sheep]");
+        await Wait.UntilAsync(() => !client.Entities.Values.Any(e => e.Name == "minecraft:sheep"), Timeout, () => "no sheep in sight");
         var looked = new List<string>();
         skills.Trace += m => { lock (looked) looked.Add(m); TestContext.Out.WriteLine(m); };
         using var cts = new CancellationTokenSource(TimeSpan.FromMinutes(3));
@@ -211,24 +220,25 @@ public class LiveObtainTests
     }
 
     /// <summary>
-    /// Three logs wanted from a trunk of six. Getting at the next one he breaks the log between without aiming at it, and it was not counted: he took a fourth for three. With ore it cost more: two
-    /// of three aimed at, all three in his pockets, and he went after a "third" 150 blocks below the stage, six tries of it (4 of that test's 6 minutes, 2026-11-16).
-    /// Which log goes that way is up to where the first one's drop lands (he steps into the trunk for it, and the log above is where his head would be): it happened in most runs here and not in all,
-    /// so the test holds him to the outcome, three logs for three wanted, and says in its output whether it happened. With the count switched off the run gave four.
+    /// Three logs wanted from a trunk of six, by someone who says when he holds three. Getting at the next one he often breaks the log between without aiming at it (he steps into the trunk for the first
+    /// one's drop, and the log above is where his head would be): he then holds three after aiming at two, and stops. Counting only what he aimed at he took a fourth; and with ore it cost more: two of
+    /// three aimed at, all three in his pockets, and he went after a "third" 150 blocks below the stage, six tries of it (4 of that test's 6 minutes, 2026-11-16). Counting the block he broke on the way
+    /// instead was wrong the other way: a block broken is not an item held, and a pen came up two logs short. So it is what he holds that ends it. Whether the unaimed break happens is up to where a drop
+    /// lands (most runs here, not all); the test holds him to the outcome and says in its output which it was.
     /// </summary>
     [Test]
-    public async Task ALogHeBreaksOnTheWayToTheNext_Counts_ThreeWantedIsThreeTaken()
+    public async Task WhenHeHoldsWhatWasWanted_HeStops_WhateverHeAimedAt()
     {
         var (client, skills, ax, az) = await StageAsync("ObtainCount");
         await using var _c = client;
         var trace = new List<string>();
         skills.Trace += m => { lock (trace) trace.Add(m); TestContext.Out.WriteLine(m); };
         using var cts = new CancellationTokenSource(TimeSpan.FromMinutes(3));
-        var (ok, text) = await skills.CollectAsync("wood", 3, cts.Token);
+        var (ok, text) = await skills.CollectAsync("wood", 3, cts.Token, enough: () => client.Inventory.Count("oak_log") >= 3);
         TestContext.Out.WriteLine($"{ok}: {text}");
         Assert.That(ok, Is.True, text);
         Assert.That(client.Inventory.Count("oak_log"), Is.EqualTo(3), "three, not the fourth he used to take: " + text);
-        lock (trace) TestContext.Out.WriteLine(trace.Any(t => t.Contains("I broke it on my way")) ? "one went without his aiming at it, and was counted" : "this time he aimed at all three");
+        lock (trace) TestContext.Out.WriteLine(trace.Any(t => t.Contains("I broke it on my way")) ? "one went without his aiming at it, and he stopped when he held three" : "this time he aimed at all three");
     }
 
     /// <summary>

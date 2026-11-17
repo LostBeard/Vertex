@@ -183,9 +183,11 @@ public sealed partial class MinecraftClient
     {
         var raw = World.GetRawState(x, y, z);
         if (raw <= 0 || World.Data.IsAir(World.GetState(x, y, z)) || DistanceToBlock(x, y, z) > BlockReach) return null;
+        // Only a block he can look at, like any other he breaks (see DigAsync): not one behind others.
+        if (AimPointOn(x, y, z) is not { } aim) return null;
         var tool = Inventory.MainHand is { IsEmpty: false } held && held.Type?.ToolRules.Length > 0 ? held.Name : null;
         var face = FaceToward(x, y, z);
-        LookAt(x + 0.5, y + 0.5, z + 0.5);
+        LookAt(aim.X, aim.Y, aim.Z);
         var drops = new List<string>();
         void OnSpawn(Entities.Entity e) { if (e.IsItem) _pendingDrops.Add(e); }
         _pendingDrops.Clear();

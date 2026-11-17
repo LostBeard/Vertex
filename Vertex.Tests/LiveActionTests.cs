@@ -82,6 +82,101 @@ public class LiveActionTests
             + string.Join("; ", client.Entities.Values.Where(e => e.IsItem).Select(e => $"{e.Item} at {e.X:0.##} {e.Y:0.##} {e.Z:0.##}")));
     }
 
+    /// <summary>
+    /// TJ, 2026-11-16, watching him under the ground: "he will mine a block that is on the other side of the blocks in front of him ... blocks that a normal player would not be able to because they
+    /// would not be able to see them". The server lets it through; a player's own crosshair does not. Ore behind a block of earth at eye height: he breaks the earth first and then the ore. Ore in the
+    /// open: only the ore, and the stone beside his line of sight stays. Ore behind someone's planks: he leaves both.
+    /// </summary>
+    [Test]
+    public async Task ABlockBehindAnother_IsGotAtByBreakingTheOneInFrontFirst_AndNeverThroughSomeonesBuild()
+    {
+        const string name = "VertexSight";
+        var (client, x, z) = await JoinOnArenaAsync(name, (ax, az) =>
+        [
+            $"setblock {ax + 2} 201 {az} minecraft:dirt",
+            $"setblock {ax + 3} 201 {az} minecraft:iron_ore",
+            $"setblock {ax + 3} 201 {az + 3} minecraft:coal_ore",
+            $"setblock {ax + 2} 201 {az + 1} minecraft:stone",
+            $"setblock {ax - 2} 201 {az} minecraft:oak_planks",
+            $"setblock {ax - 3} 201 {az} minecraft:diamond_ore",
+        ]);
+        await using var _ = client;
+        await GiveAsync(client, name, "minecraft:iron_pickaxe", 1, () => client.Inventory.Count("iron_pickaxe") == 1);
+        Assert.That(await client.EquipAsync("iron_pickaxe"), Is.True);
+        string? At(int bx, int by, int bz) => client.World.GetBlock(bx, by, bz)?.Name;
+        await Wait.UntilAsync(() => At(x + 3, 201, z) == "minecraft:iron_ore" && At(x + 2, 201, z) == "minecraft:dirt" && At(x - 3, 201, z) == "minecraft:diamond_ore", Timeout, () => "the arena's blocks");
+
+        Assert.That(client.AimPointOn(x + 2, 201, z), Is.Not.Null, "the earth in front is in view");
+        Assert.That(client.AimPointOn(x + 3, 201, z), Is.Null, "the ore behind it is not");
+        Assert.That(client.DistanceToBlock(x + 3, 201, z), Is.LessThan(client.BlockReach), "the setup: and it is within reach, which is all the server asks");
+        Assert.That(client.AimPointOn(x + 3, 201, z + 3), Is.Not.Null, "the ore in the open is in view");
+
+        // Behind the earth: the earth goes first, then the ore.
+        var order = new List<string>();
+        void Changed(int bx, int by, int bz, int was, int state) { if (by == 201 && client.World.Data.IsAir(Math.Max(0, state))) lock (order) order.Add($"{bx - x} {bz - z}"); }
+        client.World.BlockChanged += Changed;
+        try
+        {
+            Assert.That(await client.DigAsync(x + 3, 201, z), Is.True, "he gets the ore");
+            await Wait.UntilAsync(() => At(x + 3, 201, z) == "minecraft:air", Timeout, () => "the ore gone");
+            Assert.That(At(x + 2, 201, z), Is.EqualTo("minecraft:air"), "by way of the earth in front of it");
+            lock (order) Assert.That(order, Is.EqualTo(new[] { "2 0", "3 0" }), "the earth first, the ore second");
+
+            // In the open: only what he aimed at.
+            Assert.That(await client.DigAsync(x + 3, 201, z + 3), Is.True);
+            Assert.That(At(x + 2, 201, z + 1), Is.EqualTo("minecraft:stone"), "the stone beside his line of sight was not touched");
+
+            // Behind someone's planks: not through them.
+            Assert.That(client.AimPointOn(x - 3, 201, z), Is.Null, "the setup: the diamond ore is behind the planks");
+            Assert.That(await client.DigAsync(x - 3, 201, z), Is.False, "he leaves it");
+            Assert.That(At(x - 2, 201, z), Is.EqualTo("minecraft:oak_planks"));
+            Assert.That(At(x - 3, 201, z), Is.EqualTo("minecraft:diamond_ore"));
+        }
+        finally { client.World.BlockChanged -= Changed; }
+    }
+
+    /// <summary>
+    /// The same rule for what he hits as for what he mines: only what he can look at. A zombie two blocks away behind a stone wall is within a sword's reach, and the server would count the blow; eight
+    /// swings at it do nothing. With the wall gone the same swings kill it.
+    /// </summary>
+    [Test]
+    public async Task ASwordDoesNotGoThroughAWall()
+    {
+        const string name = "VertexWall";
+        var (client, x, z) = await JoinOnArenaAsync(name, (ax, az) =>
+        [
+            $"fill {ax + 1} 200 {az - 1} {ax + 1} 202 {az + 1} minecraft:stone",
+            $"summon minecraft:zombie {ax + 2.5} 200 {az + 0.5} {{NoAI:1b,PersistenceRequired:1b,active_effects:[{{id:\"minecraft:fire_resistance\",duration:1000000}}]}}",
+        ]);
+        await using var _ = client;
+        await GiveAsync(client, name, "minecraft:iron_sword", 1, () => client.Inventory.Count("iron_sword") == 1);
+        Assert.That(await client.EquipAsync("iron_sword"), Is.True);
+        await Wait.UntilAsync(() => client.Entities.Values.Any(e => e.Name == "minecraft:zombie"), Timeout, () => "the zombie");
+        SpawnDev.Minecraft.Entities.Entity? Zombie() => client.Entities.Values.FirstOrDefault(e => e.Name == "minecraft:zombie");
+        var (px, py, pz) = client.Position;
+        Assert.That(Zombie()!.DistanceTo(px, py, pz), Is.LessThan(client.EntityReach), "the setup: within a sword's reach");
+        Assert.That(client.HasClearLineTo(Zombie()!), Is.False, "the setup: and behind the wall");
+        try
+        {
+            for (var i = 0; i < 8 && Zombie() is { } behind; i++)
+            {
+                await client.AttackAsync(behind);
+                await client.WaitTicksAsync(client.AttackCooldownTicks + 1);
+            }
+            Assert.That(Zombie(), Is.Not.Null, "eight swings at a wall hurt nobody behind it");
+
+            await _server.CommandAsync($"fill {x + 1} 200 {z - 1} {x + 1} 202 {z + 1} minecraft:air");
+            await Wait.UntilAsync(() => Zombie() is { } seen && client.HasClearLineTo(seen), Timeout, () => "the wall gone");
+            for (var i = 0; i < 12 && Zombie() is { } open; i++)
+            {
+                await client.AttackAsync(open);
+                await client.WaitTicksAsync(client.AttackCooldownTicks + 1);
+            }
+            await Wait.UntilAsync(() => Zombie() == null, Timeout, () => "the zombie dead, in the open");
+        }
+        finally { await _server.CommandAsync("kill @e[type=minecraft:zombie]"); }
+    }
+
     [Test]
     public async Task Dig_ByHandAndWithTools_AtVanillaSpeed()
     {
@@ -411,7 +506,10 @@ public class LiveActionTests
         using (var cts = new CancellationTokenSource(Timeout)) await aubs.ConnectAsync("127.0.0.1", Port, cts.Token);
         await _server.CommandAsync($"tp {ward} {x + 0.5} 200 {z + 4.5}");
         await GiveAsync(client, name, "minecraft:stone_sword", 1, () => client.Inventory.Count("stone_sword") == 1);
-        await Wait.UntilAsync(() => client.Entities.Values.Count(e => e.Name == "minecraft:zombie") == 3 && client.Entities.Values.Any(e => e.PlayerName == ward),
+        // The ward where the teleport put them, as Vertex sees it: they join wherever they last left, and guarding that began before the move had arrived took the far zombie for one of theirs and killed it
+        // (once in a full run on 10-11, and again on 2026-11-16: "ward moved from -72.50,-540.50 to -61.50,-549.50").
+        await Wait.UntilAsync(() => client.Entities.Values.Count(e => e.Name == "minecraft:zombie") == 3
+                && client.Entities.Values.Any(e => e.PlayerName == ward && Math.Abs(e.X - (x + 0.5)) < 1 && Math.Abs(e.Z - (z + 4.5)) < 1),
             Timeout, () => string.Join(", ", client.Entities.Values));
         var farZombie = client.Entities.Values.Single(e => e.Name == "minecraft:zombie" && e.X < x - 10);
         var far = farZombie.Id;

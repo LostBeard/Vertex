@@ -131,7 +131,7 @@ public class LiveFightingTests
         await GiveAsync(client, name, "minecraft:arrow", 2);
         var (none, c) = await skills.ShootAsync("creeper", CancellationToken.None);
         Assert.That(none, Is.False);
-        Assert.That(c, Does.Contain("don't see any creeper"));
+        Assert.That(c, Does.Contain("creeper").And.Contain("didn't find any"));
     }
 
     [Test]
