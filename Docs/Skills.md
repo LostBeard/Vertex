@@ -207,6 +207,9 @@ on a one-block island with water on three sides and a three-high dirt wall on th
 - **More than one at once** (`Skills.HitWhatIsInReach`, `Skills.StepBackWhenCrowded`, 2026-11-17). His swing goes to whichever monster is nearest within the sword's reach, and while the sword
   comes round he backs away facing the nearest, where there is level ground behind him. Measured against husks on hard with an iron sword and no shield, four fights each: two husks cost 5,
   10.5, 12 and 10.25 health at arm's length alone and 0, 0, 0, 0 this way; three husks were four fights broken off at 2 or 3 hearts and then 0, 0, 0, 0 with all three down.
+  Where straight back is shut (a wall, a drop) he gives ground to a side or along it (`Skills.WayToGiveGround`), and with others within 7 blocks he waits on the nearest of them and does
+  not walk to the one he first picked, which may be hanging back behind them. In that form: 16 fights of 16 at no cost (two husks; three in the open, by a wall, and in a tunnel one wide).
+- **Wood that stays up in the tree** (on the leaves, or on the next log of a leaning trunk) is shaken down: he takes away what the drop lies on, and it falls to him (2026-11-17).
 - **A shield early**: it is the step after the iron pickaxe (one ingot and six planks), not the last one after all the armor. Skeletons cost him more health than anything else.
 - **Where he may dig in** (`Skills.DigInProblem`, 2026-11-16). Solid ground four deep, no sand or gravel, no water or lava beside it (as before), and now: the three blocks diggable in 5 seconds with
   the best tool he carries when something is on him (12 seconds at nightfall), and rock or earth on all four sides of the two cells he will be in. Stone with bare hands is 22 seconds under fire; a

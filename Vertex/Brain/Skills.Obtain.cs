@@ -418,7 +418,10 @@ public sealed partial class Skills
             if (killed) await PickUpNearbyAsync((int)Math.Floor(target.X), (int)Math.Floor(target.Y), (int)Math.Floor(target.Z), ct);
             else outOfReach.Add(target.Id);
         }
-        Trace?.Invoke($"hunted a {target.Name.Bare().Replace('_', ' ')} from {from:0} blocks: {(killed ? "killed it" : "did not")}, {(DateTime.UtcNow - started).TotalSeconds:0} s");
+        // With what he has for it and what still lies about: four fish killed and two pieces of food to show for it said nothing of where the rest went (a test, 2026-11-17).
+        var (mx, my, mz) = client.Position;
+        var lying = client.Entities.Values.Where(e => e.IsItem && e.DistanceTo(mx, my, mz) < 12).Select(e => $"{e.Item?.Name.Bare() ?? "item"} at {e.X:0.#} {e.Y:0.#} {e.Z:0.#}").Take(4).ToList();
+        Trace?.Invoke($"hunted a {target.Name.Bare().Replace('_', ' ')} from {from:0} blocks: {(killed ? "killed it" : "did not")}, {(DateTime.UtcNow - started).TotalSeconds:0} s; food in my pockets {EdibleStacks.Sum(s => s.Count)}; I am at {mx:0.#} {my:0.#} {mz:0.#}{(lying.Count > 0 ? "; lying about: " + string.Join(", ", lying) : "")}");
         return killed;
     }
 

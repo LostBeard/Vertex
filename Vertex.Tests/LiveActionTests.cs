@@ -128,7 +128,13 @@ public class LiveActionTests
 
             // Behind someone's planks: not through them.
             Assert.That(client.AimPointOn(x - 3, 201, z), Is.Null, "the setup: the diamond ore is behind the planks");
-            Assert.That(await client.DigAsync(x - 3, 201, z), Is.False, "he leaves it");
+            var notes = new List<string>();
+            void Noted(string m) { lock (notes) notes.Add(m); }
+            client.DigNote += Noted;
+            try { Assert.That(await client.DigAsync(x - 3, 201, z), Is.False, "he leaves it"); }
+            finally { client.DigNote -= Noted; }
+            // And his log says why, not only that he left it.
+            lock (notes) Assert.That(notes, Has.Some.Match("oak_planks at .* is in the way and is (something built|part of a build)"), string.Join(" | ", notes));
             Assert.That(At(x - 2, 201, z), Is.EqualTo("minecraft:oak_planks"));
             Assert.That(At(x - 3, 201, z), Is.EqualTo("minecraft:diamond_ore"));
         }
@@ -270,6 +276,28 @@ public class LiveActionTests
         await Wait.UntilAsync(() => zombie.Health < 20f, Timeout, () => $"zombie health {zombie.Health}");
         Assert.That(zombie.Health, Is.EqualTo(20f - 4.92f).Within(0.01f));
         await _server.CommandAsync("kill @e[tag=vfight]");
+    }
+
+    /// <summary>
+    /// What the server puts in his pockets in the moment between his closing a chest and the server hearing of it is sent as a change to the chest's screen, which he has already closed. He threw
+    /// that away: the thing was his on the server and not in his own count. (`LiveTradingTests.Skill_BuysAQuantity...` failed on it in two full runs of three on 2026-11-17: iron ingots given
+    /// right after a trade, never seen.) Here the server is kept busy with six big fills and the give queued behind them, so that his closing arrives while it works and is heard after the give.
+    /// </summary>
+    [Test]
+    public async Task WhatHeIsGivenWhileAChestIsClosing_IsStillInHisCount()
+    {
+        const string name = "VertexLate";
+        var (client, x, z) = await JoinOnArenaAsync(name, (ax, az) => [$"setblock {ax + 2} 200 {az} minecraft:chest[facing=west]"]);
+        await using var _ = client;
+        for (var round = 1; round <= 4; round++)
+        {
+            Assert.That(await client.OpenContainerAsync(x + 2, 200, z), $"round {round}: open: {client.OpenWindow}");
+            for (var i = 0; i < 6; i++) await _server.CommandAsync($"fill {x - 16} 120 {z - 16} {x + 15} 151 {z + 15} minecraft:{(i % 2 == 0 ? "stone" : "air")}");
+            await _server.CommandAsync($"give {name} minecraft:diamond 1");
+            await Task.Delay(100);
+            await client.CloseWindowAsync();
+            await Wait.UntilAsync(() => client.Inventory.Count("diamond") == round, TimeSpan.FromSeconds(20), () => $"round {round}: he counts {client.Inventory.Count("diamond")} diamonds; {client.Inventory}");
+        }
     }
 
     [Test]

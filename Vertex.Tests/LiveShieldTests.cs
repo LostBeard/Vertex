@@ -146,14 +146,19 @@ public class LiveShieldTests
     /// What a fight costs him against the monsters arm's length has not been measured against: four fights the old way and four at arm's length, turn about, at night (a zombie burns by day and a
     /// spider is not hostile in the light). A measurement to read, run by name; it asserts nothing about the outcome.
     /// </summary>
-    [TestCase("zombie", "", 1, "VertexFoeZom")]
-    [TestCase("spider", "", 1, "VertexFoeSpi")]
-    [TestCase("zombie", "{IsBaby:1b}", 1, "VertexFoeBaby")]
-    [TestCase("husk", "", 2, "VertexFoeTwo")]
-    [TestCase("husk", "", 3, "VertexFoeThree")]
+    [TestCase("zombie", "", 1, "VertexFoeZom", "open")]
+    [TestCase("spider", "", 1, "VertexFoeSpi", "open")]
+    [TestCase("zombie", "{IsBaby:1b}", 1, "VertexFoeBaby", "open")]
+    [TestCase("husk", "", 2, "VertexFoeTwo", "open")]
+    [TestCase("husk", "", 3, "VertexFoeThree", "open")]
+    // Where there is no ground to give: a wall three blocks behind him, and a tunnel one block wide (they come in a line, and he can only back straight down it).
+    [TestCase("husk", "", 3, "VertexFoeWall", "wall")]
+    [TestCase("husk", "", 3, "VertexFoeTunl", "tunnel")]
+    // Sixteen fights giving ground and nothing else, to catch the one in ten or so that costs him: such a fight is printed tick by tick.
+    [TestCase("husk", "", 3, "VertexFoeMany", "open")]
     [Explicit("a measurement to read: what a fight costs him against other monsters")]
-    public async Task AgainstOtherMonsters_WhatAFightCosts(string mob, string nbt, int count, string name) =>
-        await FightsAsync(mob, nbt, count, name, count > 1 ? "BCDDCBCDBBDC" : "ABBAABBA", night: true);
+    public async Task AgainstOtherMonsters_WhatAFightCosts(string mob, string nbt, int count, string name, string place) =>
+        await FightsAsync(mob, nbt, count, name, name == "VertexFoeMany" ? "DDDDDDDDDDDDDDDD" : place != "open" ? "CDDCCDDC" : count > 1 ? "BCDDCBCDBBDC" : "ABBAABBA", night: true, place);
 
     /// <summary>
     /// TJ, 2026-11-16: good at fighting "so that when he plays with others he can join them and help protect the group". A group is where more than one monster comes at once. Against three husks he
@@ -173,16 +178,28 @@ public class LiveShieldTests
     /// Fights with `count` of a monster that come for him, one fight for each letter of `order`: A as he fought; B at arm's length; C: B and the swing goes to whichever is nearest in reach; D: C and
     /// he gives ground while the sword comes round. Returns the health each fight cost (all 20 for a death) and how each ended, by letter.
     /// </summary>
-    private async Task<(Dictionary<char, List<float>> Lost, Dictionary<char, List<string>> Ends)> FightsAsync(string mob, string nbt, int count, string name, string order, bool night)
+    private async Task<(Dictionary<char, List<float>> Lost, Dictionary<char, List<string>> Ends)> FightsAsync(string mob, string nbt, int count, string name, string order, bool night, string place = "open")
     {
         var (client, ax, az) = await JoinOnArenaAsync(name, 20);
         await using var _ = client;
         var skills = new Skills(client);
+        // "wall": a wall three blocks behind where he stands. "tunnel": walls either side of the line between him and them, one block apart.
+        var walls = place switch
+        {
+            "wall" => new[] { $"fill {ax - 3} 200 {az - 8} {ax - 3} 202 {az + 8}" },
+            "tunnel" => new[] { $"fill {ax - 12} 200 {az - 1} {ax + 14} 202 {az - 1}", $"fill {ax - 12} 200 {az + 1} {ax + 14} 202 {az + 1}" },
+            _ => Array.Empty<string>(),
+        };
         var ways = new[] { ('A', "as he fought"), ('B', "at arm's length"), ('C', "at arm's length, hitting the nearest in reach"), ('D', "the same, and giving ground between swings") };
         var lost = ways.ToDictionary(w => w.Item1, _ => new List<float>());
         var ends = ways.ToDictionary(w => w.Item1, _ => new List<string>());
+        var lastDeath = "";
+        client.Died += m => lastDeath = $"{m} at {client.Position.X:0.0} {client.Position.Y:0.0} {client.Position.Z:0.0} (the arena's middle is {ax} 200 {az})";
         try
         {
+            foreach (var w in walls) await _server.CommandAsync(w + " minecraft:stone");
+            if (place == "wall") await Wait.UntilAsync(() => client.World.GetBlock(ax - 3, 201, az)?.Name == "minecraft:stone", Timeout, () => "the wall");
+            if (place == "tunnel") await Wait.UntilAsync(() => client.World.GetBlock(ax + 5, 201, az + 1)?.Name == "minecraft:stone", Timeout, () => "the tunnel");
             if (night) await _server.CommandAsync("time set midnight");
             foreach (var way in order)
             {
@@ -195,7 +212,8 @@ public class LiveShieldTests
                 await _server.CommandAsync($"tp {name} {ax + 0.5} 200 {az + 0.5} -90 0");
                 await client.WaitTicksAsync(40);
                 if (client.Inventory.Count("iron_sword") == 0) await GiveAsync(client, name, "minecraft:iron_sword", 1);      // a death takes it
-                for (var n = 0; n < count; n++) await _server.CommandAsync($"summon minecraft:{mob} {ax + 8.5} 200 {az + 0.5 + n * 2} {nbt}");
+                for (var n = 0; n < count; n++)
+                    await _server.CommandAsync(place == "tunnel" ? $"summon minecraft:{mob} {ax + 8.5 + n * 1.5} 200 {az + 0.5} {nbt}" : $"summon minecraft:{mob} {ax + 8.5} 200 {az + 0.5 + n * 2} {nbt}");
                 await Wait.UntilAsync(() => client.Entities.Values.Count(e => e.Name == "minecraft:" + mob) >= count, Timeout, () => "the " + mob);
                 var before = client.Health;
                 var lowest = before;
@@ -203,7 +221,24 @@ public class LiveShieldTests
                 void Died() => deaths++;
                 client.Spawned += Died;
                 using var watch = new CancellationTokenSource();
-                var watcher = Task.Run(async () => { while (!watch.IsCancellationRequested) { lowest = Math.Min(lowest, client.Health); await Task.Delay(20); } });
+                var far = 0.0;      // how far from the arena's middle the fight took him (its floor ends 20 blocks out)
+                var ticks = new List<string>();     // the fight tick by tick, printed only when giving ground cost him: where each of them was, his sword, the keys he held
+                var began = client.Ticks;
+                var watcher = Task.Run(async () =>
+                {
+                    var seen = client.Health;
+                    while (!watch.IsCancellationRequested)
+                    {
+                        lowest = Math.Min(lowest, client.Health);
+                        var (wx, wy, wz) = client.Position;
+                        if (wy > 199) far = Math.Max(far, Math.Sqrt((wx - ax - 0.5) * (wx - ax - 0.5) + (wz - az - 0.5) * (wz - az - 0.5)));
+                        var foes = client.Entities.Values.Where(e => e.Name == "minecraft:" + mob).Select(e => e.DistanceTo(wx, wy, wz)).OrderBy(d => d).Select(d => d.ToString("0.0"));
+                        var k = client.Controls;
+                        ticks.Add($"t{client.Ticks - began,4} at {wx - ax:0.0} {wz - az:0.0} health {client.Health,4:0.#} sword in {client.TicksUntilAttackReady,2} keys {(k.Forward ? "F" : "")}{(k.Back ? "B" : "")}{(k.Left ? "L" : "")}{(k.Right ? "R" : "")}{(k.Jump ? "J" : "")} {(client.OnGround ? "" : "AIR ")}foes at {string.Join(" ", foes)}{(client.Health < seen ? "  <-- HIT" : "")}");
+                        seen = client.Health;
+                        await Task.Delay(50);
+                    }
+                });
                 using var limit = new CancellationTokenSource(TimeSpan.FromSeconds(60));
                 string text;
                 try { text = (await skills.AttackAsync(mob, limit.Token)).Item2; }
@@ -213,14 +248,20 @@ public class LiveShieldTests
                 client.Spawned -= Died;
                 var cost = deaths > 0 ? before : before - lowest;
                 lost[way].Add(cost);
-                ends[way].Add(deaths > 0 ? "DIED" : text);
-                TestContext.Out.WriteLine($"{way}: {(deaths > 0 ? "died" : text)} lost {cost}");
+                ends[way].Add(deaths > 0 ? "DIED: " + lastDeath : text);
+                TestContext.Out.WriteLine($"{way}: {(deaths > 0 ? "died: " + lastDeath : text)} lost {cost}; went {far:0.0} blocks from the middle");
+                if (way == 'D' && cost > 0)
+                {
+                    var firstHit = ticks.FindIndex(l => l.Contains("<-- HIT"));
+                    foreach (var l in ticks.Skip(Math.Max(0, firstHit - 50)).Take(110)) TestContext.Out.WriteLine("   " + l);
+                }
             }
         }
         finally
         {
             await _server.CommandAsync($"kill @e[type=minecraft:{mob}]");
             if (night) await _server.CommandAsync("time set day");
+            foreach (var w in walls) await _server.CommandAsync(w + " minecraft:air");
         }
         foreach (var (way, what) in ways.Where(w => lost[w.Item1].Count > 0))
             TestContext.Out.WriteLine($"{count} {mob}{nbt} {way} {what}: health lost {string.Join(", ", lost[way])} (sum {lost[way].Sum()}); {string.Join(" | ", ends[way])}");

@@ -336,6 +336,35 @@ public sealed partial class Skills(MinecraftClient client)
             {
                 broken++;
                 await PickUpNearbyAsync(bx, by, bz, ct, mayDig: true);
+                // What he cut lies up in the tree, on the next log of a leaning trunk or on the leaves, over his head where no walk reaches it (six logs in half a day of his play, 2026-11-17: "I broke the
+                // one at ... and picked up nothing for it"). He takes away what it lies on, and it falls to him. Tree only (a log or leaves, and nobody's build), up to four times for one log.
+                for (var shake = 0; shake < 6 && Carried() <= held && !ct.IsCancellationRequested; shake++)
+                {
+                    var feet = client.Position.Y;
+                    var up = client.Entities.Values.Where(e => e.IsItem && Math.Abs(e.X - (bx + 0.5)) < 3 && Math.Abs(e.Z - (bz + 0.5)) < 3 && Math.Abs(e.Y - by) < 4 && e.Y > feet + 1.5)
+                        .OrderBy(e => e.DistanceTo(bx + 0.5, by, bz + 0.5)).FirstOrDefault();
+                    if (up == null) break;
+                    // What it lies on: a dropped thing is a quarter of a block wide and rests on every block under any part of it. With the leaf under its middle gone it stayed up on the edge of the
+                    // next one (a test, 2026-11-17), so each of the up to four blocks under its corners is looked at, the one under its middle first.
+                    var uy = (int)Math.Floor(up.Y - 0.1);
+                    var (ux, uz, under, name) = (0, 0, 0, "");
+                    foreach (var (ox, oz) in new[] { (0.0, 0.0), (-0.125, -0.125), (0.125, -0.125), (-0.125, 0.125), (0.125, 0.125) })
+                    {
+                        int cx = (int)Math.Floor(up.X + ox), cz = (int)Math.Floor(up.Z + oz);
+                        var s = client.World.GetState(cx, uy, cz);
+                        var n = s > 0 ? D.BlockOf(s).Name : "";
+                        if (!(n.EndsWith("_leaves") || n.EndsWith("_log") || n.EndsWith("_wood")) || client.PartOfABuild(cx, uy, cz)) continue;
+                        (ux, uz, under, name) = (cx, cz, s, n);
+                        break;
+                    }
+                    if (name == "") break;
+                    Trace?.Invoke($"collecting {what}: what I cut lies up in the tree at {up.X:0.#} {up.Y:0.#} {up.Z:0.#}; taking away the {name.Bare().Replace('_', ' ')} under it");
+                    aimedAt.Add((ux, uy, uz));
+                    await client.EquipBestToolAsync(under, ct);
+                    if (!await client.DigAsync(ux, uy, uz, ct)) break;
+                    if (Wanted(under)) broken++;
+                    await PickUpNearbyAsync(ux, uy, uz, ct, mayDig: true);
+                }
                 // Broken, and nothing more in his pockets for it: said, with what lies about, because the next thing that happens is "I mined 1 wood" and a craft one plank short, and nobody can tell why.
                 if (Carried() <= held)
                 {
@@ -428,6 +457,15 @@ public sealed partial class Skills(MinecraftClient client)
             // Digging allowed: a drop from ore reached from a few blocks away lies in the sealed pocket the ore left (found 2026-10-15: a diamond mined from above was never picked up).
             await client.GoToAsync(Goal.Near(drop.X, drop.Y, drop.Z, 0.8), new PathOptions { MaxNodes = 5_000, CanDig = mayDig && drop.DistanceTo(x + 0.5, y + 0.5, z + 0.5) < 2.5 }, ct);
             await client.WaitTicksAsync(3, ct);
+            // In water what he is after is a block or more under him as he floats over it, out of his hands' reach, and it comes up by itself (and he sinks toward it when he stops swimming). He used
+            // to swim on after a fifth of a second: of four fish killed, one or two pieces were left behind in most runs of a test (2026-11-17). He stays over it until it is his, three seconds at most.
+            var (wx, _, wz) = client.Position;
+            if (client.Entities.ContainsKey(drop.Id) && Math.Abs(drop.X - wx) < 1.5 && Math.Abs(drop.Z - wz) < 1.5
+                && client.World.GetState((int)Math.Floor(drop.X), (int)Math.Floor(drop.Y), (int)Math.Floor(drop.Z)) is var at && at > 0 && (D.StateFlags[at] & GameData.FlagWater) != 0)
+            {
+                client.Controls.Clear();
+                for (var wait = 0; wait < 60 && client.Entities.ContainsKey(drop.Id) && !ct.IsCancellationRequested; wait++) await client.WaitTicksAsync(1, ct);
+            }
         }
     }
 
@@ -536,7 +574,7 @@ public sealed partial class Skills(MinecraftClient client)
         }
         finally
         {
-            client.Controls.Back = false;
+            client.Controls.Back = client.Controls.Left = client.Controls.Right = false;
             if (up) await client.ReleaseUseItemAsync(CancellationToken.None);
         }
     }
@@ -597,6 +635,42 @@ public sealed partial class Skills(MinecraftClient client)
         return true;
     }
 
+    /// <summary>
+    /// Which way to give ground from this creature, as the keys he holds while he faces it: straight back where there is level ground behind him; with a wall or a drop there, back and to a side,
+    /// or along it to a side, whichever of those that are open ends farthest from the monsters near him. Null when he is boxed in. (With a wall three blocks behind him and only straight back to
+    /// go, three husks cost him 4.5, 4.5, 8 and 0 where open ground cost nothing: measured 2026-11-17.)
+    /// </summary>
+    private (bool Back, bool Left, bool Right)? WayToGiveGround(Entity from)
+    {
+        var (px, py, pz) = client.Position;
+        double ax = px - from.X, az = pz - from.Z;
+        var len = Math.Sqrt(ax * ax + az * az);
+        if (len < 0.05) return null;
+        ax /= len; az /= len;
+        // Facing it, his left hand points along (-az, ax): facing south (+z), left is east (+x).
+        double lx = -az, lz = ax;
+        var y = (int)Math.Floor(py + 1e-6);
+        bool Room(double dx, double dz)
+        {
+            for (var step = 1; step <= 2; step++)
+                if (!DryStand((int)Math.Floor(px + dx * step), y, (int)Math.Floor(pz + dz * step))) return false;
+            return true;
+        }
+        if (Room(ax, az)) return (true, false, false);
+        const double h = 0.70710678;
+        var near = client.Entities.Values.Where(e => !e.IsPlayer && Hostile.Contains(e.Name) && e.DistanceTo(px, py, pz) < 8).ToList();
+        ((bool Back, bool Left, bool Right) Keys, double Clear)? best = null;
+        foreach (var (dx, dz, keys) in new[] { ((ax + lx) * h, (az + lz) * h, (true, true, false)), ((ax - lx) * h, (az - lz) * h, (true, false, true)), (lx, lz, (false, true, false)), (-lx, -lz, (false, false, true)) })
+        {
+            if (!Room(dx, dz)) continue;
+            double ex = px + dx * 2, ez = pz + dz * 2;
+            var clear = near.Count == 0 ? 0 : near.Min(e => Math.Sqrt((e.X - ex) * (e.X - ex) + (e.Z - ez) * (e.Z - ez)));
+            // Back and to a side before straight to a side, unless the side way is clearly the clearer.
+            if (best == null || clear > best.Value.Clear + 0.5) best = (keys, clear);
+        }
+        return best?.Keys;
+    }
+
     /// <summary>The others he hit in a fight with one (see <see cref="HitWhatIsInReach"/>): those of them that are gone were his too, and whoever counts what he defeated takes them from here.</summary>
     private readonly HashSet<int> _alsoHit = [];
 
@@ -613,9 +687,10 @@ public sealed partial class Skills(MinecraftClient client)
         var stuck = 0;
         double lastTX = double.NaN, lastTZ = double.NaN;
         var notComing = 0;
+        var waitedOnOthers = 0;
         while (client.Entities.TryGetValue(id, out var t) && !ct.IsCancellationRequested)
         {
-            client.Controls.Back = false;
+            client.Controls.Back = client.Controls.Left = client.Controls.Right = false;
             // Is it coming at him: has it moved toward where he stands since the last look (its own steps, not his)? A husk walks 0.115 blocks a tick.
             {
                 var (hx, _, hz) = client.Position;
@@ -645,6 +720,8 @@ public sealed partial class Skills(MinecraftClient client)
             // More than one on him. The one he came for is `t`; the swing goes to whichever of them is nearest within the sword's reach (`hit`), and how many others are close is `crowd`.
             var hit = t;
             var crowd = 0;
+            Entity? nearOther = null;
+            var dNearOther = double.MaxValue;
             if (armsLength && (HitWhatIsInReach || StepBackWhenCrowded))
             {
                 var (mx, my, mz) = client.Position;
@@ -655,15 +732,16 @@ public sealed partial class Skills(MinecraftClient client)
                     if (e.Id == id || e.IsPlayer || !Hostile.Contains(e.Name) || Ranged.Contains(e.Name) || e.Name == "minecraft:creeper") continue;
                     var de = e.DistanceTo(mx, my, mz);
                     if (de < 6) crowd++;
+                    if (de < dNearOther) (nearOther, dNearOther) = (e, de);
                     if (de < dNearest) (nearest, dNearest) = (e, de);
                     if (HitWhatIsInReach && de < inReach && de <= strike && client.HasClearLineTo(e)) (hit, inReach) = (e, de);
                 }
                 // The sword is coming round and one of them is nearly on him: he gives ground, facing the nearest, until the swing is nearly ready. The one he has just hit is knocked back; the other is not,
                 // and it walks slower than he backs away.
-                if (StepBackWhenCrowded && crowd > 0 && dNearest < CrowdStandOff && client.TicksUntilAttackReady > 3 && RoomBehind(nearest))
+                if (StepBackWhenCrowded && crowd > 0 && dNearest < CrowdStandOff && client.TicksUntilAttackReady > 3 && WayToGiveGround(nearest) is var (back, left, right))
                 {
                     client.LookAt(nearest.X, nearest.Y + nearest.Type.Height * 0.5, nearest.Z);
-                    client.Controls.Back = true;
+                    (client.Controls.Back, client.Controls.Left, client.Controls.Right) = (back, left, right);
                     await client.WaitTicksAsync(1, ct);
                     continue;
                 }
@@ -691,6 +769,16 @@ public sealed partial class Skills(MinecraftClient client)
                     await client.WaitTicksAsync(1, ct);
                     continue;
                 }
+                // With others about, the one he set out for may hang back behind them ("not coming") while the nearest of them comes on, and walking to it is walking into them: traced 2026-11-17, a
+                // four-tick walk forward begun with one of them 3 blocks off ended with it at 1.2 and its blow landed. He waits on the nearest instead, for up to two seconds without a swing.
+                if (nearOther != null && dNearOther <= WaitForItWithin && waitedOnOthers < 40 && client.HasClearLineTo(nearOther))
+                {
+                    waitedOnOthers++;
+                    client.Controls.Clear();
+                    client.LookAt(nearOther.X, nearOther.Y + nearOther.Type.Height * 0.5, nearOther.Z);
+                    await client.WaitTicksAsync(1, ct);
+                    continue;
+                }
                 using var hop = CancellationTokenSource.CreateLinkedTokenSource(ct);
                 // A second's walk at a time from afar. Close to what hits by hand, four ticks at a time: a walk is toward where it was when the walk began, and nothing in it looks at where it is now. A second of
                 // that took him from 3 blocks to 0.9 with his sword ready and unswung, twice out of twice in the traces of 2026-11-17, and that is where the blow in every fight came from.
@@ -715,6 +803,7 @@ public sealed partial class Skills(MinecraftClient client)
             else if (client.AttackReady)
             {
                 await client.AttackAsync(hit, ct);
+                waitedOnOthers = 0;
                 if (other) _alsoHit.Add(hit.Id);
             }
             // The sword is coming round and the thing is close: back out of its reach, facing it, until the swing is nearly ready. Only from what hits by hand (backing away from an archer gives it the shot),

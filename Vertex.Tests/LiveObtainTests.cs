@@ -84,12 +84,19 @@ public class LiveObtainTests
             (x, z) => $"summon minecraft:salmon {x + 3} 198 {z + 10} {{NoAI:1b,PersistenceRequired:1b}}",
             (x, z) => $"summon minecraft:salmon {x + 6} 198 {z + 12} {{NoAI:1b,PersistenceRequired:1b}}");
         await using var _c = client;
+        var kills = 0;
+        skills.Trace += m => { if (m.StartsWith("hunted a") && m.Contains("killed it")) Interlocked.Increment(ref kills); TestContext.Out.WriteLine(m); };
+        client.DigNote += m => TestContext.Out.WriteLine(m);
+        TestContext.Out.WriteLine("fish he sees at the start: " + string.Join(", ", client.Entities.Values.Where(e => e.Name is "minecraft:cod" or "minecraft:salmon").Select(e => $"{e.Name.Replace("minecraft:", "")} at {e.X - ax:0.0} {e.Y:0.0} {e.Z - az:0.0}")));
         using var cts = new CancellationTokenSource(TimeSpan.FromMinutes(3));
         var food = skills.Milestones().First(m => m.Item == "food");
         var (ok, text) = await skills.AdvanceAsync(food, cts.Token);
         TestContext.Out.WriteLine(text);
         Assert.That(ok, Is.True, text);
         Assert.That(skills.HasFood, Is.True);
+        // And every fish he killed is in his pockets. What a fish leaves is a block under him as he floats over it and comes up by itself; he used to swim on, and of four fish killed one or two
+        // pieces were left behind in most runs (2026-11-17: this test failed twice in eight runs on it, with all four fish dead and two pieces of food).
+        Assert.That(client.Inventory.Count("cod") + client.Inventory.Count("salmon"), Is.EqualTo(Volatile.Read(ref kills)), "one piece for each fish he killed: " + text);
     }
 
     [Test]
@@ -315,6 +322,33 @@ public class LiveObtainTests
         lock (trace) Assert.That(trace.Any(t => t.Contains("looking on the land")), Is.True, "over the land: " + string.Join(" | ", trace));
         Assert.That(client.FeetBlock.Y, Is.GreaterThanOrEqualTo(199), "still on the stage");
         Assert.That(Volatile.Read(ref deaths), Is.Zero);
+    }
+
+    /// <summary>
+    /// Live 2026-11-17, six times in half a day ("I broke the one at 130 78 -435 and picked up nothing for it ... lying about: acacia_log at 130.4 77 -434.9", he at y 73): what he cut lay up in the
+    /// tree, on the leaves or on the next log of a leaning trunk, over his head. Here the only log sits on a floor of leaves three blocks up: he takes away the leaf it fell on and has his log.
+    /// </summary>
+    [Test, Repeat(6)]       // six logs: where on the leaves each one comes to rest is the game's doing, and one across the edge of two leaves is the case that was missed
+    public async Task ALogThatFallsOntoTheLeaves_IsShakenDown_AndHeHasIt()
+    {
+        var (client, skills, ax, az) = await StageAsync("ObtainCrown",
+            (x, z) => $"fill {x + 12} 200 {z - 2} {x + 16} 206 {z + 2} minecraft:air",
+            (x, z) => $"fill {x - 14} 200 {z + 3} {x - 14} 205 {z + 3} minecraft:air",
+            (x, z) => $"fill {x + 3} 202 {z - 1} {x + 5} 202 {z + 1} minecraft:oak_leaves[persistent=true]",
+            (x, z) => $"setblock {x + 4} 203 {z} minecraft:oak_log");
+        await using var _c = client;
+        await Wait.UntilAsync(() => client.World.GetBlock(ax + 4, 203, az)?.Name == "minecraft:oak_log" && client.World.GetBlock(ax + 4, 202, az)?.Name == "minecraft:oak_leaves" && client.World.GetBlock(ax + 14, 202, az)?.Name == "minecraft:air",
+            Timeout, () => $"the stage; at {client.FeetBlock}");
+        var trace = new List<string>();
+        skills.Trace += m => { lock (trace) trace.Add(m); TestContext.Out.WriteLine(m); };
+        client.DigNote += m => TestContext.Out.WriteLine(m);
+        var had = client.Inventory.Count("oak_log");       // the same player comes back for each repeat with what he has cut so far
+        using var cts = new CancellationTokenSource(TimeSpan.FromMinutes(2));
+        var (ok, text) = await skills.CollectAsync("wood", 1, cts.Token);
+        TestContext.Out.WriteLine($"{ok}: {text}; at {client.FeetBlock}; oak logs {had} -> {client.Inventory.Count("oak_log")}");
+        Assert.That(client.World.GetBlock(ax + 4, 203, az)?.Name, Is.EqualTo("minecraft:air"), "he cut the log");
+        Assert.That(client.Inventory.Count("oak_log"), Is.EqualTo(had + 1), "and has it: " + text);
+        Assert.That(ok, Is.True, text);
     }
 
     /// <summary>

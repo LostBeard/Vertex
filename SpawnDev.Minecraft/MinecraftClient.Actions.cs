@@ -230,6 +230,8 @@ public sealed partial class MinecraftClient
         using var p = new PacketWriter(CB.Play.Serverbound.ContainerClose);
         p.WriteVarInt(id);
         await SendAsync(p, cancellationToken);
+        // Until the server has heard this, what it puts in our pockets is still sent as a change to this screen: it is kept to read those by (see ContainerSetSlot).
+        _closedWindow = OpenWindow;
         OpenWindow = null;
     }
 
@@ -405,9 +407,12 @@ public sealed partial class MinecraftClient
             if (DistanceToBlock(x, y, z) > BlockReach) return false;
             if (AimPointOn(World, EyePosition, x, y, z, out var inTheWay) is { } aim) return await DigSeenAsync(x, y, z, aim, cancellationToken);
             // Eight at most: a look as long as his reach, cornerwise through solid rock, crosses seven blocks. (Four was too few: an ore within reach down and across through rock was left, and he went looking elsewhere.)
-            if (inTheWay is not var (wx, wy, wz) || cleared >= 8 || !MayClearFromTheWay(wx, wy, wz))
+            if (inTheWay is not var (wx, wy, wz) || cleared >= 8 || WhyNotClearFromTheWay(wx, wy, wz) != null)
             {
-                var what = inTheWay is var (ix, iy, iz) ? $"{World.GetBlock(ix, iy, iz)?.Name ?? "something"} at {ix} {iy} {iz} is in the way" : "nothing I can look at it past";
+                // Why it stays, in the line: four such lines in two hours of his play said only "left alone" (2026-11-17), and whether that was lava, a build or eight blocks cleared could not be told.
+                var what = inTheWay is var (ix, iy, iz)
+                    ? $"{World.GetBlock(ix, iy, iz)?.Name ?? "something"} at {ix} {iy} {iz} is in the way{(cleared >= 8 ? ", after clearing 8" : WhyNotClearFromTheWay(ix, iy, iz) is { } why ? " and " + why : "")}"
+                    : "nothing I can look at it past";
                 DigNote?.Invoke($"dig: {World.Data.BlockOf(state).Name} at {x} {y} {z}: not in view from here ({what}), left alone");
                 return false;
             }
@@ -416,14 +421,21 @@ public sealed partial class MinecraftClient
         }
     }
 
-    /// <summary>May he break this to get at what is behind it? Not what someone built or what stands by it, not what will not break or did not a moment ago, and not a block with lava against it.</summary>
-    private bool MayClearFromTheWay(int x, int y, int z)
+    /// <summary>
+    /// Why he may not break this to get at what is behind it, or null when he may. Not what someone built or what stands by it, not what will not break or did not a moment ago, and not a block
+    /// with lava against it.
+    /// </summary>
+    private string? WhyNotClearFromTheWay(int x, int y, int z)
     {
         var s = World.GetState(x, y, z);
-        if (s <= 0 || World.Data.Hardness[s] < 0 || IsBuiltBlock(World.Data.BlockOf(s)) || PartOfABuild(x, y, z) || DigRefused(x, y, z)) return false;
+        if (s <= 0) return "is not a block I know";
+        if (World.Data.Hardness[s] < 0) return "cannot be broken";
+        if (IsBuiltBlock(World.Data.BlockOf(s))) return "is something built";
+        if (PartOfABuild(x, y, z)) return "is part of a build";
+        if (DigRefused(x, y, z)) return "would not break a moment ago";
         foreach (var (dx, dy, dz) in new[] { (1, 0, 0), (-1, 0, 0), (0, 1, 0), (0, -1, 0), (0, 0, 1), (0, 0, -1) })
-            if (World.GetState(x + dx, y + dy, z + dz) is var n && n > 0 && (World.Data.StateFlags[n] & GameData.FlagLava) != 0) return false;
-        return true;
+            if (World.GetState(x + dx, y + dy, z + dz) is var n && n > 0 && (World.Data.StateFlags[n] & GameData.FlagLava) != 0) return "has lava against it";
+        return null;
     }
 
     /// <summary>

@@ -24,6 +24,9 @@ public sealed partial class MinecraftClient
     /// <summary>The container screen that is open (chest, furnace...), or null.</summary>
     public ContainerWindow? OpenWindow { get; private set; }
 
+    /// <summary>The screen we closed last, until another opens: the server goes on sending changes to it until it has heard that we closed it.</summary>
+    private ContainerWindow? _closedWindow;
+
     /// <summary>Our own pose, as the server set it (Sleeping while in a bed).</summary>
     public EntityPose Pose { get; private set; }
 
@@ -537,6 +540,12 @@ public sealed partial class MinecraftClient
                     OpenWindow.Slots = slots;
                     MirrorPlayerSlots(OpenWindow);
                 }
+                else if (_closedWindow?.Id == window)
+                {
+                    // Sent before the server heard us close it: its last 36 slots are still our pockets as the server has them.
+                    _closedWindow.Slots = slots;
+                    MirrorPlayerSlots(_closedWindow);
+                }
                 return;
             }
             case CB.Play.Clientbound.ContainerSetSlot:
@@ -557,6 +566,15 @@ public sealed partial class MinecraftClient
                     OpenWindow.StateId = stateId;
                     OpenWindow.Slots[slot] = stack;
                     MirrorPlayerSlots(OpenWindow);
+                }
+                else if (_closedWindow is { } closed && closed.Id == window && (uint)slot < (uint)closed.Slots.Length)
+                {
+                    // A change to the screen we have just closed, sent before the server heard of it: what it gave us in that moment (a pick-up, a /give, a trade's result) comes this way and no other.
+                    // Dropped, it was ours on the server and not in our own count (iron ingots given after a trade were never seen, 2 full test runs of 3 on 2026-11-17). Only the one slot, and only
+                    // where the screen showed our pockets: the rest of that screen is no longer ours to read.
+                    closed.Slots[slot] = stack;
+                    var pockets = closed.Slots.Length - 36;
+                    if (pockets >= 0 && slot >= pockets) SetInventorySlot(PlayerInventory.MainStart + (slot - pockets), stack);
                 }
                 return;
             }
@@ -579,6 +597,7 @@ public sealed partial class MinecraftClient
                 var type = r.ReadVarInt();
                 var title = TextComponent.ToPlainText(r.ReadNbt());
                 OpenWindow = new ContainerWindow(id, type, title);
+                _closedWindow = null;
                 WindowOpened?.Invoke(OpenWindow);
                 return;
             }
