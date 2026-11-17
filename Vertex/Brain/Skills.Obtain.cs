@@ -382,12 +382,48 @@ public sealed partial class Skills
         for (var round = 0; round < 6 && EdibleStacks.Sum(s => s.Count) < pieces; round++)
         {
             // Fish only when they are close: they swim off, and 15 of 20 fish hunts came to nothing, minutes at a time out on the water among pufferfish, once with a full stomach (live 2026-11-05). Anything on land, as far as he can see.
-            Entity? Find() { var (x, y, z) = client.Position; return client.Entities.Values.Where(e => names.Contains(e.Name) && !IsBaby(e) && !out_of_reach.Contains(e.Id) && (!Fish.Contains(e.Name) || e.DistanceTo(x, y, z) <= 16)).OrderBy(e => Fish.Contains(e.Name) ? 1 : 0).ThenBy(e => e.DistanceTo(x, y, z)).FirstOrDefault(); }
+            // Whichever is nearer, a fish counting as 16 blocks farther off than it is: an animal on land is the surer catch, but not from across the country. Any land animal in sight used to come before
+            // any fish, and with salmon 5 blocks from him he set off after a rabbit 114 blocks away and two chickens at 134, got none, and ended with no food (a test, 2026-11-17).
+            Entity? Find() { var (x, y, z) = client.Position; return client.Entities.Values.Where(e => names.Contains(e.Name) && !IsBaby(e) && !out_of_reach.Contains(e.Id) && (!Fish.Contains(e.Name) || e.DistanceTo(x, y, z) <= 16)).OrderBy(e => e.DistanceTo(x, y, z) + (Fish.Contains(e.Name) ? 16 : 0)).FirstOrDefault(); }
             var (_, legs, walked) = await LookOverLandAsync(() => Find() != null, 3, ct);
             if (Find() is not { } animal) return (false, "I looked for an animal to eat and found none" + Looked(legs, walked) + ".");
             if (!await CatchAsync(animal, out_of_reach, ct) && client.Health < 6) return (false, "I'm too hurt to hunt right now.");
         }
+        // Cooked before it is called food: the three pieces of a hunt are worth nearly three times as much out of a furnace.
+        if (RawFood > 0) await CookWhatHeCarriesAsync(ct);
         return (EdibleStacks.Sum(s => s.Count) >= pieces, $"I have: {InventorySummary()}.");
+    }
+
+    /// <summary>What he hunts and catches, and what each becomes in a furnace.</summary>
+    private static readonly (string Raw, string Cooked)[] Cookable =
+        [("beef", "cooked_beef"), ("porkchop", "cooked_porkchop"), ("mutton", "cooked_mutton"), ("chicken", "cooked_chicken"), ("rabbit", "cooked_rabbit"), ("cod", "cooked_cod"), ("salmon", "cooked_salmon")];
+
+    /// <summary>How many pieces of raw meat and fish he carries that a furnace would cook.</summary>
+    public int RawFood => Cookable.Sum(c => client.Inventory.Count(c.Raw));
+
+    /// <summary>
+    /// Cooks the meat and fish he carries. He ate everything raw: 52 meals in two days of his logs (2026-11-16 and 17), not one of them cooked, and 142 of the 151 deaths of the 19-hour run were with
+    /// nothing to eat. The game's own numbers say what that costs (see the test: a cooked piece feeds more than twice a raw one). With what a furnace needs in his pockets or beside him: a furnace
+    /// within reach or eight cobblestone to make one, and something to burn. Ten seconds a piece, standing at the furnace, so not with a monster within 16 blocks.
+    /// </summary>
+    public async Task<(bool, string)> CookWhatHeCarriesAsync(CancellationToken ct)
+    {
+        var cookedNow = new List<string>();
+        string? why = null;
+        foreach (var (raw, cooked) in Cookable)
+        {
+            var have = client.Inventory.Count(raw);
+            if (have == 0) continue;
+            if (NearestHostile(16) != null) { why = "there is a monster near"; break; }
+            var before = client.Inventory.Count(cooked);
+            var (ok, message) = await client.SmeltAsync(cooked, have, ct);
+            var made = client.Inventory.Count(cooked) - before;
+            if (made > 0) cookedNow.Add($"{made} {cooked.Replace('_', ' ')}");
+            if (!ok) { why = message; if (made == 0) break; }       // no furnace, or nothing to burn: the same for the rest
+        }
+        var text = cookedNow.Count > 0 ? $"I cooked {string.Join(", ", cookedNow)}{(why != null ? $" (and then: {why})" : "")}." : $"I could not cook what I have: {why ?? "I have nothing raw"}.";
+        Trace?.Invoke("cooking: " + text);
+        return (cookedNow.Count > 0, text);
     }
 
     /// <summary>
@@ -494,9 +530,20 @@ public sealed partial class Skills
     {
         if (_dropped is not { } d) return (false, "I have nothing to go back for.");
         var stuck = 0;
+        // Not among a crowd. "Dying on the way costs nothing" sent him back with empty hands into the cave that had just killed him, twice in three minutes (09:59 and 10:02 on 2026-11-17: "near me: 4
+        // creepers, 4 zombies, 3 skeletons", "4 skeletons, 3 creepers, 2 zombies"). Three or more monsters within 10 blocks of his things, seen from wherever he is: he leaves them.
+        (bool, string)? LeftToTheCrowd()
+        {
+            var crowd = client.Entities.Values.Count(e => IsThreatOnFoot(e.Name) && e.DistanceTo(d.X + 0.5, d.Y, d.Z + 0.5) < 10);
+            if (crowd < 3) return null;
+            _dropped = null;
+            Trace?.Invoke($"my things at {d.X} {d.Y} {d.Z} have {crowd} monsters round them: leaving them");
+            return (false, $"There are {crowd} monsters where I died, at {d.X} {d.Y} {d.Z}: I am leaving my things there.");
+        }
         while (ThingsToFetch)
         {
             ct.ThrowIfCancellationRequested();
+            if (LeftToTheCrowd() is { } left) return left;
             var (fx, _, fz) = client.Position;
             if (Math.Sqrt((fx - d.X) * (fx - d.X) + (fz - d.Z) * (fz - d.Z)) <= 24) break;
             Trace?.Invoke($"going back for my things at {d.X} {d.Y} {d.Z}");
@@ -515,6 +562,7 @@ public sealed partial class Skills
         for (var tries = 0; tries < 16 && ThingsToFetch; tries++)
         {
             ct.ThrowIfCancellationRequested();
+            if (LeftToTheCrowd() is { } left) return left;
             var (px, py, pz) = client.Position;
             var drop = client.Entities.Values.Where(e => e.IsItem && !given.Contains(e.Id) && e.DistanceTo(d.X + 0.5, d.Y + 0.5, d.Z + 0.5) < 20).OrderBy(e => e.DistanceTo(px, py, pz)).FirstOrDefault();
             if (drop == null && been) break;

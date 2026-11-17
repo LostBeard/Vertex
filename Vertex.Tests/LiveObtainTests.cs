@@ -99,6 +99,40 @@ public class LiveObtainTests
         Assert.That(client.Inventory.Count("cod") + client.Inventory.Count("salmon"), Is.EqualTo(Volatile.Read(ref kills)), "one piece for each fish he killed: " + text);
     }
 
+    /// <summary>
+    /// He ate everything raw: 52 meals in two days of his logs (2026-11-16 and 17), none cooked, and with nothing to eat he works on at one or two hearts. What he hunts he now cooks before he
+    /// calls it food, with what a furnace needs in his pockets (eight cobblestone, planks for the table and the fire). The game's own numbers: cooked beef feeds more than twice what raw beef does.
+    /// </summary>
+    [Test]
+    public async Task WhatHeHunts_HeCooks_BeforeHeCallsItFood()
+    {
+        const string name = "ObtainCook";
+        var (client, skills, ax, az) = await StageAsync(name,
+            (x, z) => $"summon minecraft:cow {x + 5} 200 {z + 3} {{NoAI:1b,PersistenceRequired:1b}}",
+            (x, z) => $"summon minecraft:cow {x + 7} 200 {z - 3} {{NoAI:1b,PersistenceRequired:1b}}",
+            (x, z) => $"summon minecraft:cow {x - 5} 200 {z + 4} {{NoAI:1b,PersistenceRequired:1b}}",
+            (x, z) => $"summon minecraft:cow {x - 7} 200 {z - 4} {{NoAI:1b,PersistenceRequired:1b}}");
+        await using var _c = client;
+        await _server.CommandAsync($"clear {name}");
+        await _server.CommandAsync($"give {name} minecraft:cobblestone 8");
+        await _server.CommandAsync($"give {name} minecraft:oak_planks 16");
+        await _server.CommandAsync($"give {name} minecraft:wooden_sword 1");
+        await Wait.UntilAsync(() => client.Inventory.Count("cobblestone") == 8 && client.Inventory.Count("oak_planks") == 16 && client.Inventory.Count("wooden_sword") == 1 && client.Inventory.Count("beef") == 0 && client.Inventory.Count("cooked_beef") == 0,
+            Timeout, () => client.Inventory.ToString());
+        var data = client.World.Data;
+        Assert.That(data.Item("cooked_beef")!.FoodNutrition, Is.GreaterThan(2 * data.Item("beef")!.FoodNutrition), "the game's numbers: cooked feeds more than twice what raw does");
+        var trace = new List<string>();
+        skills.Trace += m => { lock (trace) trace.Add(m); TestContext.Out.WriteLine(m); };
+        using var cts = new CancellationTokenSource(TimeSpan.FromMinutes(5));
+        var food = skills.Milestones().First(m => m.Item == "food");
+        var (ok, text) = await skills.AdvanceAsync(food, cts.Token);
+        TestContext.Out.WriteLine($"{ok}: {text}");
+        Assert.That(ok, Is.True, text);
+        Assert.That(client.Inventory.Count("cooked_beef"), Is.GreaterThanOrEqualTo(3), "what he hunted, cooked: " + text);
+        Assert.That(client.Inventory.Count("beef"), Is.Zero, "and nothing left raw");
+        Assert.That(skills.RawFood, Is.Zero);
+    }
+
     [Test]
     public async Task LookingForAnimals_HeGoesToTheLand_NotOutOverTheWater()
     {

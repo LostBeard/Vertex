@@ -175,6 +175,52 @@ public class LiveShieldTests
     }
 
     /// <summary>
+    /// Live on 733a172 (15:51, 2026-11-17): a zombie at 2 blocks hit him three times in three seconds where he stood, with a second zombie about. The log cannot say why he stood. What the code
+    /// could do, and this test shows: waiting on the nearest of the others (so as not to walk into them) also held him still for two seconds when the one he had set out for was right beside
+    /// him and only out of view. Here a husk stands two blocks off behind a post, and another in plain view six blocks the other way; neither moves. He goes for the one beside him at once.
+    /// </summary>
+    [Test]
+    public async Task AMonsterBesideHimButOutOfView_IsGoneFor_NotLeftWhileHeWaitsOnOneFartherOff()
+    {
+        const string name = "VertexHidden";
+        var (client, ax, az) = await JoinOnArenaAsync(name, 20);
+        await using var _ = client;
+        await GiveAsync(client, name, "minecraft:iron_sword", 1);
+        var skills = new Skills(client);
+        try
+        {
+            await _server.CommandAsync("kill @e[type=minecraft:husk]");
+            await _server.CommandAsync($"fill {ax + 1} 200 {az} {ax + 1} 201 {az} minecraft:stone");
+            await _server.CommandAsync($"tp {name} {ax + 0.5} 200 {az + 0.5} -90 0");
+            await Wait.UntilAsync(() => client.World.GetBlock(ax + 1, 201, az)?.Name == "minecraft:stone" && Math.Abs(client.Position.X - ax - 0.5) < 0.1 && client.OnGround, Timeout, () => $"the post, and him beside it; at {client.Position}");
+            await _server.CommandAsync($"summon minecraft:husk {ax + 2.5} 200 {az + 0.5} {{NoAI:1b,PersistenceRequired:1b}}");
+            await _server.CommandAsync($"summon minecraft:husk {ax - 5.5} 200 {az + 0.5} {{NoAI:1b,PersistenceRequired:1b}}");
+            await Wait.UntilAsync(() => client.Entities.Values.Count(e => e.Name == "minecraft:husk") == 2, Timeout, () => "the two husks");
+            var beside = client.Entities.Values.Where(e => e.Name == "minecraft:husk").OrderBy(e => Math.Abs(e.X - ax - 2.5)).First();
+            var farther = client.Entities.Values.First(e => e.Name == "minecraft:husk" && e.Id != beside.Id);
+            Assert.That(client.HasClearLineTo(beside), Is.False, "the setup: the one beside him is behind the post");
+            Assert.That(client.HasClearLineTo(farther), Is.True, "the setup: the other is in plain view");
+            var (sx, _, sz) = client.Position;
+            using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(40));
+            var began = DateTime.UtcNow;
+            var fight = skills.AttackAsync("husk", cts.Token);
+            // With the fault he stood two seconds facing the far one before he moved.
+            await Wait.UntilAsync(() => Math.Abs(client.Position.X - sx) + Math.Abs(client.Position.Z - sz) > 0.5 || !client.Entities.ContainsKey(beside.Id), TimeSpan.FromSeconds(1.2),
+                () => $"he has not moved in {(DateTime.UtcNow - began).TotalSeconds:0.0} s; at {client.Position}");
+            await Wait.UntilAsync(() => !client.Entities.ContainsKey(beside.Id), TimeSpan.FromSeconds(20), () => "the one beside him is still there");
+            Assert.That(client.Entities.ContainsKey(farther.Id), Is.True, "and it was the one beside him he went for first");
+            var (ok, text) = await fight;
+            TestContext.Out.WriteLine(text);
+            Assert.That(ok, Is.True, text);
+        }
+        finally
+        {
+            await _server.CommandAsync("kill @e[type=minecraft:husk]");
+            await _server.CommandAsync($"fill {ax + 1} 200 {az} {ax + 1} 201 {az} minecraft:air");
+        }
+    }
+
+    /// <summary>
     /// Fights with `count` of a monster that come for him, one fight for each letter of `order`: A as he fought; B at arm's length; C: B and the swing goes to whichever is nearest in reach; D: C and
     /// he gives ground while the sword comes round. Returns the health each fight cost (all 20 for a death) and how each ended, by letter.
     /// </summary>

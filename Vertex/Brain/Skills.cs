@@ -688,6 +688,7 @@ public sealed partial class Skills(MinecraftClient client)
         double lastTX = double.NaN, lastTZ = double.NaN;
         var notComing = 0;
         var waitedOnOthers = 0;
+        var waitHealth = 0f;
         while (client.Entities.TryGetValue(id, out var t) && !ct.IsCancellationRequested)
         {
             client.Controls.Back = client.Controls.Left = client.Controls.Right = false;
@@ -771,13 +772,21 @@ public sealed partial class Skills(MinecraftClient client)
                 }
                 // With others about, the one he set out for may hang back behind them ("not coming") while the nearest of them comes on, and walking to it is walking into them: traced 2026-11-17, a
                 // four-tick walk forward begun with one of them 3 blocks off ended with it at 1.2 and its blow landed. He waits on the nearest instead, for up to two seconds without a swing.
-                if (nearOther != null && dNearOther <= WaitForItWithin && waitedOnOthers < 40 && client.HasClearLineTo(nearOther))
+                // Not when the one he set out for is itself beside him and only out of view (round a corner, a step up or down): then it is the one to get at, now. And not once something has hurt
+                // him while he stood. (Live on 733a172, 15:51 on 2026-11-17, a zombie at 2 blocks hit him three times in three seconds where he stood, with a second zombie about; the log does not
+                // say why he stood, and this wait as first written could have held him there for two of those seconds.)
+                if (nearOther != null && d > strike + 0.5 && dNearOther <= WaitForItWithin && waitedOnOthers < 40 && client.HasClearLineTo(nearOther))
                 {
-                    waitedOnOthers++;
-                    client.Controls.Clear();
-                    client.LookAt(nearOther.X, nearOther.Y + nearOther.Type.Height * 0.5, nearOther.Z);
-                    await client.WaitTicksAsync(1, ct);
-                    continue;
+                    if (waitedOnOthers == 0) waitHealth = client.Health;
+                    if (client.Health < waitHealth - 0.01f) waitedOnOthers = 40;
+                    else
+                    {
+                        waitedOnOthers++;
+                        client.Controls.Clear();
+                        client.LookAt(nearOther.X, nearOther.Y + nearOther.Type.Height * 0.5, nearOther.Z);
+                        await client.WaitTicksAsync(1, ct);
+                        continue;
+                    }
                 }
                 using var hop = CancellationTokenSource.CreateLinkedTokenSource(ct);
                 // A second's walk at a time from afar. Close to what hits by hand, four ticks at a time: a walk is toward where it was when the walk began, and nothing in it looks at where it is now. A second of

@@ -1236,6 +1236,63 @@ public class LiveDangerChoiceTests
         Assert.That(skills.ThingsToFetch, Is.False, "once is enough");
     }
 
+    /// <summary>
+    /// Live 2026-11-17, 09:59 and 10:02: twice in three minutes he went back with empty hands for his things into the cave that had just killed him ("near me: 4 creepers, 4 zombies, 3 skeletons"),
+    /// and died there both times. With three monsters standing where his things lie he leaves them, and does not go near.
+    /// </summary>
+    [Test]
+    public async Task HisThingsAmongACrowdOfMonsters_HeLeavesThem_AndDoesNotGoNear()
+    {
+        var (client, skills, _, ax, az) = await JoinAsync("FetchCrowd");
+        await using var __ = client;
+        skills.Trace += m => TestContext.Out.WriteLine(m);
+        client.Died += _ => { var (x, y, z) = client.Position; skills.NoteDiedHere(x, y, z); };
+        var spawned = 0;
+        client.Spawned += () => Interlocked.Increment(ref spawned);
+        await _server.CommandAsync("give FetchCrowd minecraft:iron_pickaxe");
+        await Wait.UntilAsync(() => skills.InventorySummary().Contains("iron pickaxe"), Timeout, () => skills.InventorySummary());
+        skills.NoteKit();
+        await _server.CommandAsync($"tp FetchCrowd {ax + 15.5} 200 {az + 0.5}");
+        await Wait.UntilAsync(() => client.FeetBlock.X == ax + 15, Timeout, () => $"at {client.FeetBlock}");
+        await _server.CommandAsync("damage FetchCrowd 100 minecraft:arrow");
+        await Wait.UntilAsync(() => Volatile.Read(ref spawned) > 0 && client.Health >= 20f, Timeout, () => $"the respawn (health {client.Health})");
+        Assert.That(skills.ThingsToFetch, Is.True, "the setup: he has things to go back for");
+        try
+        {
+            // He comes back 30 blocks off, and three husks stand where he died (they do not move: this is about what he does).
+            await _server.CommandAsync($"tp FetchCrowd {ax - 15.5} 200 {az + 0.5}");
+            await Wait.UntilAsync(() => client.FeetBlock.X == ax - 16 && client.OnGround, Timeout, () => $"at {client.FeetBlock}");
+            foreach (var dz in new[] { -2, 0, 2 }) await _server.CommandAsync($"summon minecraft:husk {ax + 15.5} 200 {az + 0.5 + dz} {{NoAI:1b,PersistenceRequired:1b,Tags:[\"fetchcrowd\"]}}");
+            await Wait.UntilAsync(() => client.Entities.Values.Count(e => e.Name == "minecraft:husk") >= 3, Timeout, () => "the husks");
+            var (sx, _, sz) = client.Position;
+            var nearest = Math.Sqrt((sx - ax - 15.5) * (sx - ax - 15.5) + (sz - az - 0.5) * (sz - az - 0.5));     // from where he stands now: he may be done before the watcher has looked once
+            using var watch = new CancellationTokenSource();
+            var watcher = Task.Run(async () =>
+            {
+                while (!watch.IsCancellationRequested)
+                {
+                    var (x, _, z) = client.Position;
+                    nearest = Math.Min(nearest, Math.Sqrt((x - ax - 15.5) * (x - ax - 15.5) + (z - az - 0.5) * (z - az - 0.5)));
+                    await Task.Delay(50);
+                }
+            });
+            using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(60));
+            var (ok, said) = await skills.FetchThingsAsync(cts.Token);
+            watch.Cancel();
+            await watcher;
+            TestContext.Out.WriteLine($"{ok}: {said}; nearest he came to them: {nearest:0.0}");
+            Assert.That(ok, Is.False, said);
+            Assert.That(said, Does.Contain("3 monsters").And.Contain("leaving my things"));
+            Assert.That(nearest, Is.GreaterThan(20), "he did not go near them");
+            Assert.That(skills.ThingsToFetch, Is.False, "and he does not set off again");
+        }
+        finally
+        {
+            await _server.CommandAsync("kill @e[tag=fetchcrowd]");
+            await _server.CommandAsync("kill @e[type=minecraft:item]");
+        }
+    }
+
     [Test]
     public async Task WithNoTools_HeDoesNotSettleOnBareCoolGround_HeGoesOnToCoolTrees()
     {
