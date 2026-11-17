@@ -111,6 +111,42 @@ public class DangerLearnerTests
         Assert.That(DangerLearner.Reward(false, 20, 15, false, true, won: true), Is.GreaterThan(DangerLearner.Reward(false, 20, 18, true, true)), "a win that cost 2.5 hearts beats running, losing one and being caught");
     }
 
+    /// <summary>
+    /// Live 2026-11-17, 06:29: he went 18 blocks to fight a witch, filed as an archer (odds fighting 0.61), won, and the poison took him from 10 hearts to half a heart; he drowned two minutes later.
+    /// A witch is its own kind of foe, and before he has tried anything on one, fighting it by hand is the last thing he expects to go well.
+    /// </summary>
+    [Test]
+    public void AWitch_IsItsOwnKindOfFoe_AndByHandIsTheLastThingHeExpectsToGoWell()
+    {
+        Assert.That(Reflexes.FoeClassOf("minecraft:witch", 1), Is.EqualTo("witch"));
+        Assert.That(Reflexes.FoeClassOf("minecraft:skeleton", 1), Is.EqualTo("archer"), "the others are filed as before");
+        Assert.That(Reflexes.FoeClassOf("minecraft:zombie", 1), Is.EqualTo("melee"));
+        Assert.That(Reflexes.FoeClassOf("minecraft:creeper", 1), Is.EqualTo("creeper"));
+        Assert.That(Reflexes.FoeClassOf("minecraft:witch", 3), Is.EqualTo("swarm"), "three close are a crowd, whatever is in it");
+        var learner = new DangerLearner(random: new Random(1));
+        var witch = new DangerSituation("witch", "good", "high");
+        foreach (var other in new[] { DangerAction.Flee, DangerAction.DigIn, DangerAction.SwimOut, DangerAction.Shoot })
+            Assert.That(learner.Expected(witch, DangerAction.Fight), Is.LessThan(learner.Expected(witch, other)), $"fighting a witch by hand against {other}");
+        Assert.That(learner.Expected(new DangerSituation("archer", "good", "high"), DangerAction.Fight), Is.GreaterThan(learner.Expected(witch, DangerAction.Fight)), "a skeleton is still worth going at");
+    }
+
+    /// <summary>
+    /// The same fight was judged four seconds after it ended, at 2.5 hearts, and scored 0.63; the poison ran four seconds more, down to half a heart. A choice is judged when it has stopped costing him.
+    /// </summary>
+    [Test]
+    public void AChoiceIsNotJudged_WhileItIsStillCostingHim()
+    {
+        var began = new DateTime(2026, 11, 17, 6, 29, 39, DateTimeKind.Utc);
+        var ended = began.AddSeconds(11);
+        Assert.That(Reflexes.EpisodeDue(began, null, null, began.AddSeconds(60)), Is.False, "the job is still running");
+        Assert.That(Reflexes.EpisodeDue(began, ended, null, ended.AddSeconds(3)), Is.False, "three seconds after it ended");
+        Assert.That(Reflexes.EpisodeDue(began, ended, null, ended.AddSeconds(5)), Is.True, "five seconds after it ended, unhurt since");
+        Assert.That(Reflexes.EpisodeDue(began, ended, ended.AddSeconds(4), ended.AddSeconds(5)), Is.False, "five seconds after, and hurt a second ago: the poison is still at work");
+        Assert.That(Reflexes.EpisodeDue(began, ended, ended.AddSeconds(9), ended.AddSeconds(11)), Is.False, "hurt two seconds ago");
+        Assert.That(Reflexes.EpisodeDue(began, ended, ended.AddSeconds(9), ended.AddSeconds(13)), Is.True, "four seconds since the last of it");
+        Assert.That(Reflexes.EpisodeDue(began, ended, began.AddSeconds(150), began.AddSeconds(151)), Is.True, "two and a half minutes is the end of it, hurt or not");
+    }
+
     private static DangerRecord Row(DangerAction action, double reward, float before, float after, bool died = false) => new(DateTime.UtcNow, "melee", "good", "high", action, reward, died, before, after, 9);
 
     [Test]

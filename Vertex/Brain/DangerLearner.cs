@@ -6,7 +6,7 @@ namespace Vertex.Brain;
 public enum DangerAction { Fight, Flee, DigIn, SwimOut, Shoot }
 
 /// <summary>The situation as far as the choice is concerned. Few values on purpose: each life gives only a few dozen decisions, so what is learned has to be shared between many situations.</summary>
-/// <param name="Foe">"melee", "archer", "swarm" (three or more close) or "creeper".</param>
+/// <param name="Foe">"melee", "archer", "witch", "swarm" (three or more close) or "creeper".</param>
 /// <param name="Kit">"bare", "weak" (wood or gold) or "good" (stone or better).</param>
 /// <param name="Health">"low" (under 7 points), "mid" or "high" (14 and up).</param>
 public sealed record DangerSituation(string Foe, string Kit, string Health)
@@ -70,6 +70,11 @@ public sealed class DangerLearner
             ("archer", DangerAction.Fight) => s.Kit switch { "good" => 0.6, "weak" => 0.45, _ => 0.25 },
             ("archer", DangerAction.Flee) => 0.4,
             ("archer", _) => 0.6,
+            // A witch: by hand even a won fight leaves him poisoned (the one on record, 2026-11-17: from 10 hearts to half a heart), and it does not throw past ten blocks, so leaving works.
+            ("witch", DangerAction.Shoot) => 0.65,
+            ("witch", DangerAction.Fight) => s.Kit == "good" ? 0.35 : 0.2,
+            ("witch", DangerAction.Flee) => 0.65,
+            ("witch", _) => 0.6,
             ("swarm", DangerAction.Fight) => s.Kit == "good" ? 0.4 : 0.15,
             ("swarm", DangerAction.Flee) => 0.45,
             ("swarm", _) => 0.6,
@@ -192,7 +197,7 @@ public sealed class DangerLearner
     }
 
     public static string Doing(DangerAction a) => a switch { DangerAction.Fight => "fighting", DangerAction.Flee => "running away", DangerAction.DigIn => "digging in", DangerAction.Shoot => "shooting", _ => "swimming out to open water" };
-    private static string Foe(string f) => f switch { "melee" => "a monster", "archer" => "an archer", "swarm" => "a crowd of monsters", _ => "a creeper" };
+    private static string Foe(string f) => f switch { "melee" => "a monster", "archer" => "an archer", "swarm" => "a crowd of monsters", "witch" => "a witch", _ => "a creeper" };
     private static string Kit(string k) => k switch { "bare" => "bare hands", "weak" => "a poor weapon", _ => "a good weapon" };
 
     private double SampleBeta(double alpha, double beta)

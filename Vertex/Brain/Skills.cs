@@ -483,7 +483,9 @@ public sealed partial class Skills(MinecraftClient client)
             var (x, y, z) = client.Position;
             var target = client.Entities.Values.Where(e => !e.IsPlayer && Matches(e) && !outOfReach.Contains(e.Id) && e.DistanceTo(x, y, z) < 24).OrderBy(e => e.DistanceTo(x, y, z)).FirstOrDefault();
             if (target == null) break;
-            if (await FightAsync(target.Id, null, ct))
+            var won = await FightAsync(target.Id, null, ct);
+            kills += AlsoDefeated();
+            if (won)
             {
                 kills++;
                 // What it dropped, with nothing else on top of him: he has been leaving string on the ground.
@@ -527,6 +529,7 @@ public sealed partial class Skills(MinecraftClient client)
         // With a shield in the off hand it is up between swings and down for each one (you cannot swing with it raised).
         var shield = client.Inventory.OffHandItem.Name == "minecraft:shield";
         var up = false;
+        _alsoHit.Clear();
         try
         {
             return await FightLoopAsync(id, keepGoing, shield, v => up = v, () => up, ct);
@@ -561,6 +564,23 @@ public sealed partial class Skills(MinecraftClient client)
     /// </summary>
     public bool FightAtArmsLength { get; set; } = true;
 
+    /// <summary>
+    /// With more than one monster on him, his swing goes to whichever is nearest within the sword's reach, not only to the one he set out for. Measured 2026-11-17 (husks on hard, iron sword, no
+    /// shield, four fights each way turn about, health lost of 20): two husks, 5, 10.5, 12, 10.25 without and 4.5, 4.5, 4.5, 10.5 with; three husks, four fights broken off hurt at 2 or 3 hearts
+    /// without and 4.5, 4.5, 14, 8.5 with, all won.
+    /// </summary>
+    public bool HitWhatIsInReach { get; set; } = true;
+
+    /// <summary>
+    /// With more than one monster on him, he gives ground while the sword comes round, facing the nearest: the one he has just hit is knocked back, the other is not, and it walks slower than he
+    /// backs away. Measured with the above: 0 health lost in four fights of four against two husks and in four of four against three. Only where there is level ground behind him
+    /// (<see cref="RoomBehind"/>): on a slope or against a wall he fights as without it.
+    /// </summary>
+    public bool StepBackWhenCrowded { get; set; } = true;
+
+    /// <summary>With more than one on him, nearer than this to the nearest and his sword not ready, he backs away.</summary>
+    public const double CrowdStandOff = 3.6;
+
     /// <summary>Within this of a monster that is coming at him he stops walking toward it and waits for it.</summary>
     public const double WaitForItWithin = 7;
 
@@ -575,6 +595,17 @@ public sealed partial class Skills(MinecraftClient client)
         for (var step = 1; step <= 2; step++)
             if (!DryStand((int)Math.Floor(px + dx / len * step), y, (int)Math.Floor(pz + dz / len * step))) return false;
         return true;
+    }
+
+    /// <summary>The others he hit in a fight with one (see <see cref="HitWhatIsInReach"/>): those of them that are gone were his too, and whoever counts what he defeated takes them from here.</summary>
+    private readonly HashSet<int> _alsoHit = [];
+
+    /// <summary>How many of the others he hit in the fight just fought are gone; counted once.</summary>
+    private int AlsoDefeated()
+    {
+        var n = _alsoHit.Count(i => !client.Entities.ContainsKey(i));
+        _alsoHit.Clear();
+        return n;
     }
 
     private async Task<bool> FightLoopAsync(int id, Func<Entity, bool>? keepGoing, bool shield, Action<bool> setUp, Func<bool> isUp, CancellationToken ct)
@@ -611,6 +642,34 @@ public sealed partial class Skills(MinecraftClient client)
             // What comes at him to hit him by hand: not an archer (standing off from one gives it the shot), not a creeper (it has its own way above), not an animal.
             var armsLength = FightAtArmsLength && Hostile.Contains(t.Name) && !Ranged.Contains(t.Name) && t.Name != "minecraft:creeper";
             var strike = armsLength ? 3.0 : StepBackBetweenSwings ? StrikeFrom : 2.8;       // (2.8 and a walk to within 2 blocks is how he fought before, kept for the test that measures the difference)
+            // More than one on him. The one he came for is `t`; the swing goes to whichever of them is nearest within the sword's reach (`hit`), and how many others are close is `crowd`.
+            var hit = t;
+            var crowd = 0;
+            if (armsLength && (HitWhatIsInReach || StepBackWhenCrowded))
+            {
+                var (mx, my, mz) = client.Position;
+                var (nearest, inReach) = (t, d);
+                var dNearest = d;
+                foreach (var e in client.Entities.Values)
+                {
+                    if (e.Id == id || e.IsPlayer || !Hostile.Contains(e.Name) || Ranged.Contains(e.Name) || e.Name == "minecraft:creeper") continue;
+                    var de = e.DistanceTo(mx, my, mz);
+                    if (de < 6) crowd++;
+                    if (de < dNearest) (nearest, dNearest) = (e, de);
+                    if (HitWhatIsInReach && de < inReach && de <= strike && client.HasClearLineTo(e)) (hit, inReach) = (e, de);
+                }
+                // The sword is coming round and one of them is nearly on him: he gives ground, facing the nearest, until the swing is nearly ready. The one he has just hit is knocked back; the other is not,
+                // and it walks slower than he backs away.
+                if (StepBackWhenCrowded && crowd > 0 && dNearest < CrowdStandOff && client.TicksUntilAttackReady > 3 && RoomBehind(nearest))
+                {
+                    client.LookAt(nearest.X, nearest.Y + nearest.Type.Height * 0.5, nearest.Z);
+                    client.Controls.Back = true;
+                    await client.WaitTicksAsync(1, ct);
+                    continue;
+                }
+            }
+            var other = hit != t;
+            if (other) d = hit.DistanceTo(client.Position.X, client.Position.Y, client.Position.Z);
             // The shield is up from the moment the mob is coming (hits land while we are still walking up to it) and down only for the swing itself.
             if (shield)
             {
@@ -619,7 +678,7 @@ public sealed partial class Skills(MinecraftClient client)
                 else if (!swingNow && !isUp()) { await client.UseItemAsync(Hand.Off, ct); setUp(true); }
             }
             // In reach but behind a block is not in reach of a sword: he goes round or through, as far as beside it, before he swings (he used to hit through the wall, which no player can).
-            var inView = client.HasClearLineTo(t);
+            var inView = other || client.HasClearLineTo(t);
             if (d > strike || !inView)
             {
                 // It is coming, and close: he stands, faces it and lets it come to the sword. Walking on would take him to where it was a second ago, which is past where it is now. If it stops coming (twelve
@@ -647,16 +706,20 @@ public sealed partial class Skills(MinecraftClient client)
                 else stuck = 0;
                 continue;
             }
-            client.LookAt(t.X, t.Y + t.Type.Height * 0.5, t.Z);
+            client.LookAt(hit.X, hit.Y + hit.Type.Height * 0.5, hit.Z);
             // Jump as the charge is about to complete and hit on the way down: a critical hit (x1.5) at no cost
             // in attack rate. Not on creepers (stay mobile) or when up close to several mobs.
             // (And not on what is coming at him by hand, when he fights at arm's length: the jump is half a second standing where it can reach him.)
             if (!shield && !armsLength && client.OnGround && client.TicksUntilAttackReady <= 7 && t.Name != "minecraft:creeper" && d < 2.6)
                 await client.CritAttackAsync(t, ct);
-            else if (client.AttackReady) await client.AttackAsync(t, ct);
+            else if (client.AttackReady)
+            {
+                await client.AttackAsync(hit, ct);
+                if (other) _alsoHit.Add(hit.Id);
+            }
             // The sword is coming round and the thing is close: back out of its reach, facing it, until the swing is nearly ready. Only from what hits by hand (backing away from an archer gives it the shot),
             // and only onto ground he has looked at.
-            else if (StepBackBetweenSwings && d < StandOff && client.TicksUntilAttackReady > 7 && Hostile.Contains(t.Name) && !Ranged.Contains(t.Name) && t.Name != "minecraft:creeper" && RoomBehind(t))
+            else if (StepBackBetweenSwings && d < StandOff && client.TicksUntilAttackReady > 7 && Hostile.Contains(hit.Name) && !Ranged.Contains(hit.Name) && hit.Name != "minecraft:creeper" && RoomBehind(hit))
                 client.Controls.Back = true;
             await client.WaitTicksAsync(1, ct);
         }
@@ -706,6 +769,7 @@ public sealed partial class Skills(MinecraftClient client)
                     continue;
                 }
                 if (await FightAsync(threat.Id, e => Ward() is { } w && e.DistanceTo(w.X, w.Y, w.Z) < 16, ct)) kills++;
+                kills += AlsoDefeated();
                 continue;
             }
             var (x, y, z) = client.Position;
@@ -2053,8 +2117,12 @@ public sealed partial class Skills(MinecraftClient client)
         {
             // Grid points just outside the circle count too (half a spacing): the ground at its edge has to be lit by a torch beyond it.
             if ((x - cx) * (x - cx) + (z - cz) * (z - cz) > (radius + spacing / 2) * (radius + spacing / 2)) continue;
-            if (!client.World.IsLoaded(x, z) || GroundLevel(x, z, cy) is not int gy) continue;
-            if (LitNearby(x, gy, z, 4)) { already++; continue; }
+            if (!client.World.IsLoaded(x, z)) continue;
+            // Lit is asked first, and of the spot whether or not it is open ground: a spot with a torch standing on it is not open ground, and where every spot of the grid held one he said he
+            // could find no ground to put torches on (2026-11-17).
+            var ground = GroundLevel(x, z, cy);
+            if (LitNearby(x, ground ?? cy, z, 4)) { already++; continue; }
+            if (ground is not int gy) continue;
             spots.Add((x, gy, z));
         }
         if (spots.Count == 0) return (true, already > 0 ? "It is already well lit here." : "I couldn't find any ground to put torches on around here.");

@@ -194,12 +194,19 @@ on a one-block island with water on three sides and a three-high dirt wall on th
   protect the group, not just run away"). His choices against monsters were scored on the health they left him, so a fight won at the cost of a quarter of it came to 0.56 and running unhurt to 1: in
   2,210 choices he ran 1,617 times and fought 160. A won fight now scores half for the win and half for the health kept, and the fights already in his record are read the same way (`Rescored`):
   armed against one monster, fighting comes out at 0.66 and running at 0.59; bare-handed, running stays ahead.
+- **A witch is its own kind of foe** (`Reflexes.FoeClassOf`, 2026-11-17), learned apart from skeletons: before he has tried anything on one, fighting it by hand is the last thing he expects to
+  go well (he won such a fight and its poison left him at half a heart). And a choice is judged only when it has stopped costing him (`Reflexes.EpisodeDue`: four seconds after its job
+  ended and three since his health last went down), so poison and fire count against the choice that brought them.
 - **Beside a friend he stands and fights.** With another player within 24 blocks, a weapon in his pockets and four hearts or more, a monster that comes at him or within 8 blocks of the friend is
   fought, whatever his record says of running, and he leaves the job he was on for it (it resumes after). Not creepers. The log says "standing with <name>".
 - **He fights at arm's length** (`Skills.FightAtArmsLength`, 2026-11-17). Against what comes at him to hit him by hand (not archers, not creepers) he stands, lets it come to the full reach of
   his sword (3 blocks, feet to feet), swings the moment it is there, does not jump for a critical hit, and near it walks four ticks at a time. Before, with his sword ready, he walked from 3 blocks
   to 0.9 without swinging (a one-second walk goes to where the monster was) and then jumped beside it. Measured against a husk on hard with an iron sword and no shield: 8, 8, 0 and 4.5 health
   lost of 20 as he fought, 0 in each of four fights at arm's length. Animals and archers are fought as before, critical hits and all.
+  The same day at night, four fights each way: a zombie 4.5, 8, 4.5, 8 before and 4.5, 0, 0, 0 at arm's length; a baby zombie 4.5, 8, 8, 4.5 and 0, 0, 0, 0; a spider 0, 3, 3, 0 and 3, 0, 0, 0.
+- **More than one at once** (`Skills.HitWhatIsInReach`, `Skills.StepBackWhenCrowded`, 2026-11-17). His swing goes to whichever monster is nearest within the sword's reach, and while the sword
+  comes round he backs away facing the nearest, where there is level ground behind him. Measured against husks on hard with an iron sword and no shield, four fights each: two husks cost 5,
+  10.5, 12 and 10.25 health at arm's length alone and 0, 0, 0, 0 this way; three husks were four fights broken off at 2 or 3 hearts and then 0, 0, 0, 0 with all three down.
 - **A shield early**: it is the step after the iron pickaxe (one ingot and six planks), not the last one after all the armor. Skeletons cost him more health than anything else.
 - **Where he may dig in** (`Skills.DigInProblem`, 2026-11-16). Solid ground four deep, no sand or gravel, no water or lava beside it (as before), and now: the three blocks diggable in 5 seconds with
   the best tool he carries when something is on him (12 seconds at nightfall), and rock or earth on all four sides of the two cells he will be in. Stone with bare hands is 22 seconds under fire; a

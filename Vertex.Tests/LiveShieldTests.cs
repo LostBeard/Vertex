@@ -143,6 +143,91 @@ public class LiveShieldTests
     }
 
     /// <summary>
+    /// What a fight costs him against the monsters arm's length has not been measured against: four fights the old way and four at arm's length, turn about, at night (a zombie burns by day and a
+    /// spider is not hostile in the light). A measurement to read, run by name; it asserts nothing about the outcome.
+    /// </summary>
+    [TestCase("zombie", "", 1, "VertexFoeZom")]
+    [TestCase("spider", "", 1, "VertexFoeSpi")]
+    [TestCase("zombie", "{IsBaby:1b}", 1, "VertexFoeBaby")]
+    [TestCase("husk", "", 2, "VertexFoeTwo")]
+    [TestCase("husk", "", 3, "VertexFoeThree")]
+    [Explicit("a measurement to read: what a fight costs him against other monsters")]
+    public async Task AgainstOtherMonsters_WhatAFightCosts(string mob, string nbt, int count, string name) =>
+        await FightsAsync(mob, nbt, count, name, count > 1 ? "BCDDCBCDBBDC" : "ABBAABBA", night: true);
+
+    /// <summary>
+    /// TJ, 2026-11-16: good at fighting "so that when he plays with others he can join them and help protect the group". A group is where more than one monster comes at once. Against three husks he
+    /// hits whichever is nearest in reach and gives ground while his sword comes round: measured 2026-11-17, 0 health lost in four fights of four, where standing at arm's length and fighting them one
+    /// at a time had to be broken off at 2 or 3 hearts four times of four. Three fights that way here, every husk down and at most one blow taken in all; two fights the other way are the control.
+    /// </summary>
+    [Test]
+    public async Task AgainstThreeHusksAtOnce_HeGivesGround_AndIsHardlyTouched()
+    {
+        var (lost, ends) = await FightsAsync("husk", "", 3, "VertexThree", "DBDBD", night: false);
+        Assert.That(ends['D'], Has.All.Contain("defeated 3"), "giving ground, he brings down all three every time");
+        Assert.That(lost['D'].Sum(), Is.LessThanOrEqualTo(4.5f), "and takes at most one of their blows in three fights");
+        Assert.That(lost['B'].Sum(), Is.GreaterThan(9f), "the control: three husks cost a player who stands and takes them one at a time, or this proves nothing");
+    }
+
+    /// <summary>
+    /// Fights with `count` of a monster that come for him, one fight for each letter of `order`: A as he fought; B at arm's length; C: B and the swing goes to whichever is nearest in reach; D: C and
+    /// he gives ground while the sword comes round. Returns the health each fight cost (all 20 for a death) and how each ended, by letter.
+    /// </summary>
+    private async Task<(Dictionary<char, List<float>> Lost, Dictionary<char, List<string>> Ends)> FightsAsync(string mob, string nbt, int count, string name, string order, bool night)
+    {
+        var (client, ax, az) = await JoinOnArenaAsync(name, 20);
+        await using var _ = client;
+        var skills = new Skills(client);
+        var ways = new[] { ('A', "as he fought"), ('B', "at arm's length"), ('C', "at arm's length, hitting the nearest in reach"), ('D', "the same, and giving ground between swings") };
+        var lost = ways.ToDictionary(w => w.Item1, _ => new List<float>());
+        var ends = ways.ToDictionary(w => w.Item1, _ => new List<string>());
+        try
+        {
+            if (night) await _server.CommandAsync("time set midnight");
+            foreach (var way in order)
+            {
+                skills.FightAtArmsLength = way != 'A';
+                skills.HitWhatIsInReach = way is 'C' or 'D';
+                skills.StepBackWhenCrowded = way == 'D';
+                await _server.CommandAsync($"kill @e[type=minecraft:{mob}]");
+                await _server.CommandAsync($"effect give {name} minecraft:instant_health 1 10 true");
+                await _server.CommandAsync($"effect give {name} minecraft:saturation 1 10 true");
+                await _server.CommandAsync($"tp {name} {ax + 0.5} 200 {az + 0.5} -90 0");
+                await client.WaitTicksAsync(40);
+                if (client.Inventory.Count("iron_sword") == 0) await GiveAsync(client, name, "minecraft:iron_sword", 1);      // a death takes it
+                for (var n = 0; n < count; n++) await _server.CommandAsync($"summon minecraft:{mob} {ax + 8.5} 200 {az + 0.5 + n * 2} {nbt}");
+                await Wait.UntilAsync(() => client.Entities.Values.Count(e => e.Name == "minecraft:" + mob) >= count, Timeout, () => "the " + mob);
+                var before = client.Health;
+                var lowest = before;
+                var deaths = 0;
+                void Died() => deaths++;
+                client.Spawned += Died;
+                using var watch = new CancellationTokenSource();
+                var watcher = Task.Run(async () => { while (!watch.IsCancellationRequested) { lowest = Math.Min(lowest, client.Health); await Task.Delay(20); } });
+                using var limit = new CancellationTokenSource(TimeSpan.FromSeconds(60));
+                string text;
+                try { text = (await skills.AttackAsync(mob, limit.Token)).Item2; }
+                catch (OperationCanceledException) { text = "(still fighting after a minute)"; }
+                watch.Cancel();
+                await watcher;
+                client.Spawned -= Died;
+                var cost = deaths > 0 ? before : before - lowest;
+                lost[way].Add(cost);
+                ends[way].Add(deaths > 0 ? "DIED" : text);
+                TestContext.Out.WriteLine($"{way}: {(deaths > 0 ? "died" : text)} lost {cost}");
+            }
+        }
+        finally
+        {
+            await _server.CommandAsync($"kill @e[type=minecraft:{mob}]");
+            if (night) await _server.CommandAsync("time set day");
+        }
+        foreach (var (way, what) in ways.Where(w => lost[w.Item1].Count > 0))
+            TestContext.Out.WriteLine($"{count} {mob}{nbt} {way} {what}: health lost {string.Join(", ", lost[way])} (sum {lost[way].Sum()}); {string.Join(" | ", ends[way])}");
+        return (lost, ends);
+    }
+
+    /// <summary>
     /// Melee with a shield still wins (the shield is up between swings and down for each one). It is NOT asserted to cost less health than without: measured 2026-10-15, a husk's fight is one
     /// or two blows of 4.5 either way (4.5 four times without, 4.5/4.5/4.5/6 with), too short to tell a difference from noise; the stand-still test above is the one that proves the block.
     /// </summary>

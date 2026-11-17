@@ -100,6 +100,33 @@ public class LiveCompanionTests
         Assert.That(Torches(client, ax, az), Has.Count.EqualTo(torches.Count), "and none was added");
     }
 
+    /// <summary>
+    /// Where every spot of the grid already holds a torch he says it is lit. He said "I couldn't find any ground to put torches on" instead, because a spot with a torch standing on it is not open
+    /// ground and was passed over before it was asked whether it was lit. The test above met it on 2026-11-17, when its arena happened to stand on a grid point (x -54, z -540, both multiples of
+    /// six), which put its own first torch on the grid and left no lit spot without one.
+    /// </summary>
+    [Test]
+    public async Task LightUp_WhereEveryGridSpotHoldsATorch_SaysItIsLit_NotThatThereIsNoGround()
+    {
+        const string name = "VertexLit";
+        var (client, ax, az) = await JoinOnArenaAsync(name);
+        await using var _ = client;
+        await GiveAsync(client, name, "minecraft:torch", 8);
+        int Floor6(int v) => (int)Math.Floor(v / 6.0) * 6;
+        var last = (X: 0, Z: 0);
+        for (var x = Floor6(ax - 11); x <= ax + 11; x += 6)
+        for (var z = Floor6(az - 11); z <= az + 11; z += 6)
+        {
+            await _server.CommandAsync($"setblock {x} 200 {z} minecraft:torch");
+            last = (x, z);
+        }
+        await Wait.UntilAsync(() => BlockAt(client, last.X, 200, last.Z) == "minecraft:torch", Timeout, () => "the torches");
+        var (ok, text) = await new Skills(client).LightUpAsync(8, null, CancellationToken.None);
+        Assert.That(ok, Is.True, text);
+        Assert.That(text, Does.Contain("already well lit"));
+        Assert.That(client.Inventory.Count("torch"), Is.EqualTo(8), "nothing was spent");
+    }
+
     [Test]
     public async Task LightUp_MakesTorchesFromCoalAndSticks_AndSaysWhenItRunsOutOrCannot()
     {

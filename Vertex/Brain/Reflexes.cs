@@ -331,7 +331,25 @@ public sealed class Reflexes : IDisposable
         public required DateTime Started;
         public DateTime? JobEnded;
         public bool JobWorked = true;
+        /// <summary>His health when last looked at, and when it last went down: a choice is not judged while it is still costing him.</summary>
+        public float HealthSeen = float.MaxValue;
+        public DateTime? LastDrop;
     }
+
+    /// <summary>
+    /// The class of what he faces, as the learner keeps it. A witch is its own: it throws poison and harm from ten blocks and heals itself, and what works on a skeleton does not on it (live
+    /// 2026-11-17: he went 18 blocks to fight one "as an archer", won, and was left at half a heart).
+    /// </summary>
+    public static string FoeClassOf(string foeName, int closeWithinTen) =>
+        closeWithinTen >= 3 ? "swarm" : foeName == "minecraft:creeper" ? "creeper" : foeName == "minecraft:witch" ? "witch" : Skills.Ranged.Contains(foeName) ? "archer" : "melee";
+
+    /// <summary>
+    /// Is a choice ready to be judged: four seconds after its job ended and three since his health last went down, or two and a half minutes after it began whatever is going on. Judged four seconds
+    /// after a fight with a witch he was at 2.5 hearts and the fight scored 0.63; the poison went on to half a heart (2026-11-17), and that is what the fight cost.
+    /// </summary>
+    public static bool EpisodeDue(DateTime started, DateTime? jobEnded, DateTime? lastHurt, DateTime now) =>
+        now - started > TimeSpan.FromSeconds(150)
+        || (jobEnded is { } ended && now - ended > TimeSpan.FromSeconds(4) && (lastHurt is not { } hurt || now - hurt > TimeSpan.FromSeconds(3)));
 
     private Episode? _episode;
     private readonly object _episodeLock = new();
@@ -368,7 +386,7 @@ public sealed class Reflexes : IDisposable
         if (busy && (HandlesMonsters(_tasks.Current) || (!hitByMonster && atFriend == null))) return false;
 
         var foe = melee != null && (archer == null || melee.DistanceTo(x, y, z) < 5) ? melee : archer ?? atFriend!;
-        var foeClass = close.Count(e => e.DistanceTo(x, y, z) < 10) >= 3 ? "swarm" : foe.Name == "minecraft:creeper" ? "creeper" : Skills.Ranged.Contains(foe.Name) ? "archer" : "melee";
+        var foeClass = FoeClassOf(foe.Name, close.Count(e => e.DistanceTo(x, y, z) < 10));
         var situation = new DangerSituation(foeClass, DangerSituation.KitOf(_skills.BestWeaponName), DangerSituation.HealthOf(c.Health));
 
         // The shield: what is never worth learning by dying. Never hit a creeper (it blows up); a choice that would fail at once is not on offer.
@@ -396,7 +414,7 @@ public sealed class Reflexes : IDisposable
         if (standing) action = DangerAction.Fight;
         Decided?.Invoke($"{DangerLearner.Doing(action)} against {foe.Name.Bare().Replace('_', ' ')} at {foe.DistanceTo(x, y, z):0} blocks ({situation}){(standing ? $", standing with {friend!.PlayerName}" : "")}; odds {string.Join(", ", legal.Select(a => $"{DangerLearner.Doing(a)} {learner.Expected(situation, a):0.00}"))}");
 
-        var episode = new Episode { Situation = situation, Action = action, HealthBefore = c.Health, Started = DateTime.UtcNow };
+        var episode = new Episode { Situation = situation, Action = action, HealthBefore = c.Health, HealthSeen = c.Health, Started = DateTime.UtcNow };
         lock (_episodeLock) { CloseEpisode(learner, _episode, died: false); _episode = episode; }
         _dangerJob = true;
         _nextDangerTick = _tick + 20;
@@ -443,7 +461,7 @@ public sealed class Reflexes : IDisposable
         return true;
     }
 
-    /// <summary>A choice is judged a few seconds after its job ended (what happened next is part of the result), or after two and a half minutes whatever it is doing.</summary>
+    /// <summary>A choice is judged a few seconds after its job ended and after it has stopped costing him (what happened next is part of the result), or after two and a half minutes whatever it is doing.</summary>
     private void CloseEpisodeIfDue()
     {
         if (Learner is not { } learner) return;
@@ -451,7 +469,10 @@ public sealed class Reflexes : IDisposable
         {
             if (_episode is not { } e) return;
             var now = DateTime.UtcNow;
-            if ((e.JobEnded is { } ended && now - ended > TimeSpan.FromSeconds(4)) || now - e.Started > TimeSpan.FromSeconds(150))
+            var health = _client.Health;
+            if (health < e.HealthSeen - 0.01f) e.LastDrop = now;
+            e.HealthSeen = health;
+            if (EpisodeDue(e.Started, e.JobEnded, e.LastDrop, now))
             {
                 CloseEpisode(learner, e, died: false);
                 _episode = null;
