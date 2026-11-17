@@ -156,7 +156,11 @@ public class LiveFightingTests
             await GiveAsync(client, name, "minecraft:arrow", 32);
         }
         await GiveAsync(client, name, "minecraft:iron_sword", 1);
-        await Wait.UntilAsync(() => client.Entities.Values.Any(e => e.PlayerName == "AubriWard"), Timeout, () => "Vertex sees its friend");
+        // Until Vertex sees its friend where this test put it, not only sees it: the friend first shows where it logged in (where the test before left it, some blocks off) and the news of its
+        // teleport comes a moment later (traced 2026-11-17). Guarding begun in between, he walked to where it had been, which took him out of the 16 blocks a creeper notices a player in, and the
+        // creeper never came.
+        await Wait.UntilAsync(() => client.Entities.Values.Any(e => e.PlayerName == "AubriWard" && e.DistanceTo(ax + 2.5, 200, az + 0.5) < 1), Timeout,
+            () => "Vertex sees its friend where it was put; it sees it at " + (client.Entities.Values.FirstOrDefault(e => e.PlayerName == "AubriWard") is { } s ? $"{s.X:0.0} {s.Y:0.0} {s.Z:0.0}" : "nowhere"));
         var skills = new Skills(client);
         var health = client.Health;
 

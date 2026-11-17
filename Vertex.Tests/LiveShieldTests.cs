@@ -76,6 +76,9 @@ public class LiveShieldTests
             if (husk != null) client.LookAt(husk.X, husk.Y + 1.0, husk.Z);
             await client.WaitTicksAsync(1);
             lowest = Math.Min(lowest, client.Health);
+            // Without the shield, one blow landed is the whole point of the control. Standing on for the rest of the time killed him once (2026-11-17: 18.5 health gone by tick 80), and he came back
+            // to life without his shield, which failed the half of the test that is about the shield.
+            if (!shield && before - lowest >= 4) break;
             if (i % 40 == 0) TestContext.Out.WriteLine($"tick {i}: health {client.Health}, husk {(husk == null ? "gone" : husk.DistanceTo(client.Position.X, client.Position.Y, client.Position.Z).ToString("0.0") + " away")}");
         }
         if (shield) await skills.ShieldDownAsync(CancellationToken.None);
@@ -110,11 +113,11 @@ public class LiveShieldTests
         Assert.That(await skills.EquipShieldAsync(CancellationToken.None), Is.True);
 
         var without = await StandFacingAHuskAsync(client, name, ax, az, shield: false, ticks: 120);
-        TestContext.Out.WriteLine($"without the shield up: lost {without} health in 10 s");
+        TestContext.Out.WriteLine($"without the shield up: lost {without} health to the first blow");
         Assert.That(without, Is.GreaterThan(2), "a husk on hard hurts a player standing still (this is the control: if nothing hurts, the shield proves nothing)");
 
         var with = await StandFacingAHuskAsync(client, name, ax, az, shield: true, ticks: 120);
-        TestContext.Out.WriteLine($"with the shield up: lost {with} health in 10 s");
+        TestContext.Out.WriteLine($"with the shield up: lost {with} health in 6 s");
         Assert.That(with, Is.LessThanOrEqualTo(without / 4), "the raised shield takes the hits");
     }
 
@@ -206,32 +209,87 @@ public class LiveShieldTests
     }
 
     /// <summary>
+    /// Where the blow in every fight comes from: three fights with a husk, written out ten times a second (how far it is, his health, whether his feet are on the ground, how long until his sword is
+    /// ready). A measurement to read, run by name; it asserts only that he won.
+    /// </summary>
+    [TestCase(false)]
+    [TestCase(true)]
+    [Explicit("a measurement to read: where in a fight he is hit")]
+    public async Task WhereInAFightHeIsHit(bool atArmsLength)
+    {
+        var name = atArmsLength ? "VertexBlowArm" : "VertexBlow";
+        var (client, ax, az) = await JoinOnArenaAsync(name, 20);
+        await using var _ = client;
+        await GiveAsync(client, name, "minecraft:iron_sword", 1);
+        var skills = new Skills(client) { FightAtArmsLength = atArmsLength };
+        for (var fight = 1; fight <= 3; fight++)
+        {
+            await _server.CommandAsync("kill @e[type=minecraft:husk]");
+            await _server.CommandAsync($"effect give {name} minecraft:instant_health 1 10 true");
+            await _server.CommandAsync($"effect give {name} minecraft:saturation 1 10 true");
+            await _server.CommandAsync($"tp {name} {ax + 0.5} 200 {az + 0.5} -90 0");
+            await client.WaitTicksAsync(40);
+            await _server.CommandAsync($"summon minecraft:husk {ax + 8.5} 200 {az + 0.5} ");
+            await Wait.UntilAsync(() => client.Entities.Values.Any(e => e.Name == "minecraft:husk"), Timeout, () => "the husk");
+            var lines = new List<string>();
+            using var watch = new CancellationTokenSource();
+            var started = client.Ticks;
+            var watcher = Task.Run(async () =>
+            {
+                var last = client.Health;
+                while (!watch.IsCancellationRequested)
+                {
+                    var husk = client.Entities.Values.FirstOrDefault(e => e.Name == "minecraft:husk");
+                    var (px, py, pz) = client.Position;
+                    var d = husk?.DistanceTo(px, py, pz) ?? -1;
+                    var hit = client.Health < last;
+                    lines.Add($"t{client.Ticks - started,3} d {d,4:0.0} health {client.Health,4:0.#} {(client.OnGround ? "ground" : "AIR   ")} sword in {client.TicksUntilAttackReady,2} husk health {husk?.Health,4:0.#}{(hit ? "  <-- HIT" : "")}");
+                    last = client.Health;
+                    await Task.Delay(100);
+                }
+            });
+            var (ok, text) = await skills.AttackAsync("husk", CancellationToken.None);
+            watch.Cancel();
+            await watcher;
+            TestContext.Out.WriteLine($"=== fight {fight}: {text}");
+            foreach (var l in lines) TestContext.Out.WriteLine(l);
+            Assert.That(ok, Is.True, text);
+        }
+    }
+
+    /// <summary>
     /// TJ, 2026-11-16: "I really want him to be good at fighting the monsters." Willing is one half; the other is what a fight costs him. He walked to two blocks from a monster and stood there between
     /// swings, inside its reach: about one blow of a husk's in every fight (4.5 of his 20 on hard), 2.4 hearts a fight live. Stepping back out of its reach while his sword comes round, as a player does,
-    /// against the same husk, the same sword and no shield: eight fights, four each way, turn about so that neither way always goes first.
-    /// A measurement, run by name: its first run (2026-11-16) said stepping back as built is no better (standing 6, 4.5, 4.5; stepping back 4.5, 4.5, 4.5, then 14.5 and a fight broken off), so the
-    /// switch is off in the game and this stays out of the ordinary runs until the tactic earns its place.
+    /// against the same husk, the same sword and no shield, turn about so that no way always goes first.
+    /// What it found (2026-11-16 and 17): stepping back alone was no better (4.5 a fight either way, once 14.5). The tick-by-tick trace (`WhereInAFightHeIsHit`) showed why: the blow came from
+    /// walking into the husk with his sword ready and unswung, and from jumping for a critical hit beside it. Fighting at arm's length (stand, let it come to the sword's full reach, swing without
+    /// a jump, short steps near it): as he fought 8, 8, 0, 4.5; at arm's length 0, 0, 0, 0; with stepping back as well 0, 0, 0, 0. So arm's length is on, stepping back off, and this test holds
+    /// him to at most one blow in three fights at arm's length, every one won. Three fought the old way and two with stepping back are in its output for comparison.
     /// </summary>
     [Test]
-    [Explicit("a measurement of a tactic that is switched off: see the summary")]
-    public async Task BetweenSwings_HeStepsBackOutOfAHusksReach_AndTakesFewerBlows()
+    public async Task AgainstAHusk_HeFightsAtArmsLength_AndIsHardlyTouched()
     {
         const string name = "VertexStepBack";
         var (client, ax, az) = await JoinOnArenaAsync(name, 20);
         await using var _ = client;
         await GiveAsync(client, name, "minecraft:iron_sword", 1);
         var skills = new Skills(client);
-        var standing = new List<float>();
-        var stepping = new List<float>();
-        foreach (var stepBack in new[] { false, true, true, false, false, true, true, false })
+        // Three ways, four fights each, in an order that gives none of them the first or the last place every time: A as he fought (walks in, jumps for a critical hit), B at arm's length (stands,
+        // lets it come to the sword's full reach, no jump), C at arm's length and stepping back while the sword comes round.
+        var lost = new Dictionary<char, List<float>> { ['A'] = [], ['B'] = [], ['C'] = [] };
+        var wonAll = new Dictionary<char, bool> { ['A'] = true, ['B'] = true, ['C'] = true };
+        foreach (var way in "ABCBACBA")
         {
-            skills.StepBackBetweenSwings = stepBack;
-            var (won, lost) = await FightAHuskAsync(client, name, ax, az, skills);
-            Assert.That(won, Is.True, $"he beat the husk ({(stepBack ? "stepping back" : "standing his ground")})");
-            (stepBack ? stepping : standing).Add(lost);
+            skills.FightAtArmsLength = way != 'A';
+            skills.StepBackBetweenSwings = way == 'C';
+            var (won, cost) = await FightAHuskAsync(client, name, ax, az, skills);
+            lost[way].Add(cost);
+            wonAll[way] &= won;
         }
-        TestContext.Out.WriteLine($"health lost standing within its reach: {string.Join(", ", standing)} (sum {standing.Sum()}); stepping back: {string.Join(", ", stepping)} (sum {stepping.Sum()})");
-        Assert.That(standing.Sum(), Is.GreaterThan(0), "the control: standing within its reach costs something, or this proves nothing");
-        Assert.That(stepping.Sum(), Is.LessThanOrEqualTo(standing.Sum() / 2), "stepping back costs half as much or less");
+        foreach (var (way, what) in new[] { ('A', "as he fought"), ('B', "at arm's length"), ('C', "at arm's length, stepping back") })
+            TestContext.Out.WriteLine($"{way} {what}: health lost {string.Join(", ", lost[way])} (sum {lost[way].Sum()}), won all {wonAll[way]}");
+        Assert.That(wonAll['B'], Is.True, "at arm's length he wins every fight");
+        Assert.That(lost['B'].Sum(), Is.LessThanOrEqualTo(4.5f), "and takes at most one of a husk's blows in the three");
+        if (lost['A'].Sum() <= lost['B'].Sum()) Assert.Warn($"the old way cost no more this time ({lost['A'].Sum()} against {lost['B'].Sum()}): by itself that is luck (it cost 20.5 in four fights when measured), but twice in a row is worth a look");
     }
 }

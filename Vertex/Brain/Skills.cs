@@ -548,9 +548,21 @@ public sealed partial class Skills(MinecraftClient client)
     /// Between swings he steps back out of the monster's reach, as a player does (strike at arm's length, back off while the sword comes round, strike again). He walks to two blocks from it and stands
     /// there until the next swing, which is inside its reach: about one blow taken in every fight with a husk, and 2.4 hearts a fight live with a good weapon against one monster.
     /// OFF: measured on 2026-11-16 against a husk on hard with an iron sword and no shield, standing his ground cost 6, 4.5 and 4.5 health in three fights, and stepping back 4.5, 4.5, 4.5 and then 14.5 in a
-    /// fight he had to break off. As built it is no better and once much worse; where the one blow in every fight comes from is not yet known (`LiveShieldTests.BetweenSwings...`, run by name, measures it).
+    /// fight he had to break off. As built it was no better and once much worse: the blow in every fight came from walking into the monster, not from standing near it (see <see cref="FightAtArmsLength"/>).
+    /// With that in place, stepping back as well cost 0, 0, 0, 0 against 0, 0, 0, 0 without: nothing to choose, so it stays off.
     /// </summary>
     public bool StepBackBetweenSwings { get; set; }
+
+    /// <summary>
+    /// Against a monster that comes at him to hit him by hand, he stands and lets it come to the full reach of his sword (3 blocks from his feet to its feet), swings the moment it is there, and does not
+    /// jump for a critical hit. Measured tick by tick against a husk (2026-11-17): with his sword ready the whole time he walked from 3 blocks to 0.9 without swinging, because a one-second step toward
+    /// where the husk had been took him past where it now was, then jumped at point-blank range and took two blows before his first landed. Measured the same day, husk on hard, iron sword, no
+    /// shield, four fights each way turn about: as he fought, 8, 8, 0 and 4.5 health lost; at arm's length 0, 0, 0, 0, every fight won. On; the test that measures it turns it off for half its fights.
+    /// </summary>
+    public bool FightAtArmsLength { get; set; } = true;
+
+    /// <summary>Within this of a monster that is coming at him he stops walking toward it and waits for it.</summary>
+    public const double WaitForItWithin = 7;
 
     /// <summary>Is there ground to step back onto, two blocks straight away from this creature: dry, solid, open, nothing that burns?</summary>
     private bool RoomBehind(Entity from)
@@ -568,9 +580,19 @@ public sealed partial class Skills(MinecraftClient client)
     private async Task<bool> FightLoopAsync(int id, Func<Entity, bool>? keepGoing, bool shield, Action<bool> setUp, Func<bool> isUp, CancellationToken ct)
     {
         var stuck = 0;
+        double lastTX = double.NaN, lastTZ = double.NaN;
+        var notComing = 0;
         while (client.Entities.TryGetValue(id, out var t) && !ct.IsCancellationRequested)
         {
             client.Controls.Back = false;
+            // Is it coming at him: has it moved toward where he stands since the last look (its own steps, not his)? A husk walks 0.115 blocks a tick.
+            {
+                var (hx, _, hz) = client.Position;
+                var gap = Math.Max(0.01, Math.Sqrt((hx - t.X) * (hx - t.X) + (hz - t.Z) * (hz - t.Z)));
+                var closing = double.IsNaN(lastTX) ? 1 : ((t.X - lastTX) * (hx - t.X) + (t.Z - lastTZ) * (hz - t.Z)) / gap;
+                (lastTX, lastTZ) = (t.X, t.Z);
+                notComing = closing > 0.02 ? 0 : notComing + 1;
+            }
             // Backing off at 3 hearts is for what hits back. A cow does not, and low health is when he most needs to eat ("I'm too hurt to hunt right now", at 2 hearts and 16 food, 2026-11-04).
             if ((client.Health < 6 && Hostile.Contains(t.Name)) || (keepGoing != null && !keepGoing(t))) return false;
             // A creeper whose fuse is burning (it is within 3 blocks of us): run until its fuse stops, then carry on. (The brain's reflex does the same; a fight run on its own needs it too.)
@@ -586,7 +608,9 @@ public sealed partial class Skills(MinecraftClient client)
                 continue;
             }
             var d = t.DistanceTo(client.Position.X, client.Position.Y, client.Position.Z);
-            var strike = StepBackBetweenSwings ? StrikeFrom : 2.8;       // (2.8 and a walk to within 2 blocks is how he fought before, kept for the test that measures the difference)
+            // What comes at him to hit him by hand: not an archer (standing off from one gives it the shot), not a creeper (it has its own way above), not an animal.
+            var armsLength = FightAtArmsLength && Hostile.Contains(t.Name) && !Ranged.Contains(t.Name) && t.Name != "minecraft:creeper";
+            var strike = armsLength ? 3.0 : StepBackBetweenSwings ? StrikeFrom : 2.8;       // (2.8 and a walk to within 2 blocks is how he fought before, kept for the test that measures the difference)
             // The shield is up from the moment the mob is coming (hits land while we are still walking up to it) and down only for the swing itself.
             if (shield)
             {
@@ -598,10 +622,22 @@ public sealed partial class Skills(MinecraftClient client)
             var inView = client.HasClearLineTo(t);
             if (d > strike || !inView)
             {
+                // It is coming, and close: he stands, faces it and lets it come to the sword. Walking on would take him to where it was a second ago, which is past where it is now. If it stops coming (twelve
+                // ticks no nearer: it has no wits, or something is between them) he goes to it after all.
+                var itComes = armsLength && notComing < 12;
+                if (itComes && inView && d <= WaitForItWithin)
+                {
+                    client.Controls.Clear();
+                    client.LookAt(t.X, t.Y + t.Type.Height * 0.5, t.Z);
+                    await client.WaitTicksAsync(1, ct);
+                    continue;
+                }
                 using var hop = CancellationTokenSource.CreateLinkedTokenSource(ct);
-                hop.CancelAfter(TimeSpan.FromSeconds(1));
-                // As far as arm's length, not up against it: two blocks from its middle is where its own arms reach.
-                try { await client.GoToAsync(Goal.Near(t.X, t.Y, t.Z, !inView ? 1.0 : StepBackBetweenSwings ? 2.5 : 2.0), new PathOptions { CanDig = true, MaxNodes = 8_000 }, hop.Token); }
+                // A second's walk at a time from afar. Close to what hits by hand, four ticks at a time: a walk is toward where it was when the walk began, and nothing in it looks at where it is now. A second of
+                // that took him from 3 blocks to 0.9 with his sword ready and unswung, twice out of twice in the traces of 2026-11-17, and that is where the blow in every fight came from.
+                hop.CancelAfter(armsLength && d <= 8 ? TimeSpan.FromMilliseconds(200) : TimeSpan.FromSeconds(1));
+                // As far as arm's length, not up against it: two blocks from its middle is where its own arms reach. Toward one that is coming, only as far as where he waits for it.
+                try { await client.GoToAsync(Goal.Near(t.X, t.Y, t.Z, !inView ? 1.0 : itComes ? WaitForItWithin - 1 : armsLength || StepBackBetweenSwings ? 2.5 : 2.0), new PathOptions { CanDig = true, MaxNodes = 8_000 }, hop.Token); }
                 catch (OperationCanceledException) when (!ct.IsCancellationRequested) { }
                 // No way to it, or no nearer: a pause, and after eight such tries in a row he gives up on this one. Without this a mob he could not reach (a cow across rough ground, a spider over water)
                 // made this loop spin about 20,000 times a second for five minutes (a test, 2026-11-03: a million log lines).
@@ -614,7 +650,8 @@ public sealed partial class Skills(MinecraftClient client)
             client.LookAt(t.X, t.Y + t.Type.Height * 0.5, t.Z);
             // Jump as the charge is about to complete and hit on the way down: a critical hit (x1.5) at no cost
             // in attack rate. Not on creepers (stay mobile) or when up close to several mobs.
-            if (!shield && client.OnGround && client.TicksUntilAttackReady <= 7 && t.Name != "minecraft:creeper" && d < 2.6)
+            // (And not on what is coming at him by hand, when he fights at arm's length: the jump is half a second standing where it can reach him.)
+            if (!shield && !armsLength && client.OnGround && client.TicksUntilAttackReady <= 7 && t.Name != "minecraft:creeper" && d < 2.6)
                 await client.CritAttackAsync(t, ct);
             else if (client.AttackReady) await client.AttackAsync(t, ct);
             // The sword is coming round and the thing is close: back out of its reach, facing it, until the swing is nearly ready. Only from what hits by hand (backing away from an archer gives it the shot),
@@ -2851,8 +2888,12 @@ public sealed partial class Skills(MinecraftClient client)
         if (!down || client.FeetBlock.Y > y0 - 3) return (false, "I couldn't dig down.");
         await PickUpNearbyAsync(x, y0 - 3, z, ct);
         // Seal the hole above: a block of what he dug (or any he carries) in the top cell of the shaft, which has solid ground beside it to click against.
-        var (placed, _, _) = await client.BuildAsync([new Placement(x, y0 - 1, z, IsFiller, "something to seal the hole with")], ct);
+        var (placed, notPlaced, missing) = await client.BuildAsync([new Placement(x, y0 - 1, z, IsFiller, "something to seal the hole with")], ct);
         var sealed_ = client.World.GetState(x, y0 - 1, z) is var top && top > 0 && Standable(top);
+        // Why not, in his log: live 2026-11-17 at 04:20 a hole stayed open though he had dirt in his hand six seconds before, the log said only "nothing to seal it with", and a zombie had him two minutes later.
+        var whyOpen = sealed_ ? null : missing != null ? "I had nothing to seal it with" : "I could not close it";
+        if (!sealed_)
+            Trace?.Invoke($"dig in: the hole is open at {x} {y0 - 1} {z}: placed {placed}, failed {notPlaced}, missing {missing ?? "nothing"}; there now: {client.World.GetBlock(x, y0 - 1, z)?.Name ?? "unknown"}; I am at {client.Position.X:0.##} {client.Position.Y:0.##} {client.Position.Z:0.##}, holding {client.Inventory.MainHand}");
         // Wait below: until nothing hostile is within 12 blocks (the walkers; fliers cannot get in) and health is back to 8 hearts, at most two minutes.
         // The night through, when that is what he came down for: a sealed hole is the one place nothing reaches him, and two minutes later it is the same night up there.
         var waited = 0;
@@ -2864,11 +2905,14 @@ public sealed partial class Skills(MinecraftClient client)
             // Losing health in a sealed hole (a heart or more below his best down here) means the hole is not the shelter he took it for: out, and choose again.
             best = Math.Max(best, client.Health);
             if (client.Health <= best - 2) { Trace?.Invoke($"night: something is hurting me down here ({client.Health / 2:0.#} hearts), coming up"); forTheNight = false; break; }
+            // Down here is where he can eat in peace, and waiting heals nothing with a food bar under 18: no job that eats on the way has his hands now (he sat a night out at under half a heart, 2026-11-17).
+            if (waited % 5 == 0 && ShouldEat) await EatAsync(ct);
             await client.WaitTicksAsync(20, ct);
             waited++;
         }
         for (var more = 0; more < 120 && !ct.IsCancellationRequested && (NearestHostile(12) != null || NearestFlier(16) != null || client.Health < 16); more++)
         {
+            if (more % 5 == 0 && ShouldEat) await EatAsync(ct);
             await client.WaitTicksAsync(20, ct);
             waited++;
         }
@@ -2876,7 +2920,7 @@ public sealed partial class Skills(MinecraftClient client)
         if (sealed_) { await client.EquipBestToolAsync(client.World.GetState(x, y0 - 1, z), ct); await client.DigAsync(x, y0 - 1, z, ct); }
         await client.GoToAsync(Goal.Block(x, y0, z), new PathOptions { CanDig = true, CanPlace = true, MaxNodes = 6_000 }, ct);
         var out_ = client.FeetBlock.Y >= y0;
-        return (out_, $"I dug in {(sealed_ ? "and sealed the hole" : "(I had nothing to seal it with)")}, waited {waited} seconds below{(forTheNight ? " until morning" : "")}, and {(out_ ? "came back up" : "am still down there")}.");
+        return (out_, $"I dug in {(sealed_ ? "and sealed the hole" : $"({whyOpen})")}, waited {waited} seconds below{(forTheNight ? " until morning" : "")}, and {(out_ ? "came back up" : "am still down there")}.");
     }
 
     /// <summary>
@@ -3423,9 +3467,14 @@ public sealed partial class Skills(MinecraftClient client)
     /// <summary>
     /// Rotten flesh, when he is starving and has nothing better: four points of food for a spell of hunger, which is what a player eats before he starves. He went into a night at 0.3 hearts and a food bar of 5 with
     /// two of them in his pockets, and the first arrow of the morning killed him (17:37, 2026-11-16); 142 of his 151 deaths in the 19-hour run were with no food.
+    /// Also when he is badly hurt (under five hearts) and his food bar is under 18, where health does not come back however long he waits: for half an hour every reading had him at 0.9 health of 20 with a
+    /// food bar of 16 or 17 and a rotten flesh in his pockets, and then a zombie finished him (03:46 to 04:22, 2026-11-17).
     /// </summary>
-    private ItemStack? LastResortFood => client.Food <= StarvingAt && !HasFood
+    private ItemStack? LastResortFood => !HasFood && (client.Food <= StarvingAt || (client.Health < 10 && client.Food < 18))
         ? client.Inventory.Slots.Skip(PlayerInventory.MainStart).FirstOrDefault(s => !s.IsEmpty && s.Name == "minecraft:rotten_flesh") : null;
+
+    /// <summary>Hungry enough, or hurt and too hungry to heal, with something he would eat: the moment to eat, when nothing else has his hands.</summary>
+    public bool ShouldEat => HasSomethingToEat && (client.Food <= 14 || (client.Food < 18 && client.Health < 16));
 
     /// <summary>Something he would eat right now: food, or rotten flesh when starving.</summary>
     public bool HasSomethingToEat => HasFood || LastResortFood != null;

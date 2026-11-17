@@ -155,6 +155,44 @@ public class LiveRoughGroundTests
         Assert.That(client.Food, Is.GreaterThan(before), "and it fed him");
     }
 
+    /// <summary>
+    /// Live 2026-11-17, 03:44: sealed in for the night at under half a heart with a food bar of 17 and a rotten flesh in his pockets, and he sat there. Under 18 a food bar heals nothing however
+    /// long he waits. Dug in and badly hurt he eats what he has, rotten flesh included, and his health comes back.
+    /// </summary>
+    [Test]
+    public async Task DugIn_BadlyHurt_WithOnlyRottenFlesh_HeEatsIt_AndHeals()
+    {
+        const string name = "VertexMend";
+        var (client, ax, az) = await JoinOnRoughGroundAsync(name);
+        await using var _ = client;
+        await EarthUnderHimAsync(client, ax, az);
+        await _server.CommandAsync($"give {name} minecraft:rotten_flesh 4");
+        await Wait.UntilAsync(() => client.Inventory.Count("rotten_flesh") == 4, Timeout, () => client.Inventory.ToString());
+        await _server.CommandAsync($"effect give {name} minecraft:hunger 30 60 true");
+        await Wait.UntilAsync(() => client.Food <= 16, Timeout, () => $"food {client.Food}");
+        await _server.CommandAsync($"effect clear {name}");
+        await _server.CommandAsync($"damage {name} 15");
+        await Wait.UntilAsync(() => client.Health <= 6, Timeout, () => $"health {client.Health}");
+        await client.WaitTicksAsync(10);
+        var (hurt, hungry) = (client.Health, client.Food);
+        Assert.That(hungry, Is.InRange(Skills.StarvingAt + 1, 17), "the setup: too hungry to heal, not starving");
+        var skills = new Skills(client);
+        using var c = new CancellationTokenSource(TimeSpan.FromSeconds(100));
+        var cover = skills.TakeCoverAsync(c.Token);
+        try
+        {
+            await Wait.UntilAsync(() => client.Inventory.Count("rotten_flesh") < 4 && client.Health >= hurt + 2, TimeSpan.FromSeconds(90),
+                () => $"health {hurt} -> {client.Health}, food {hungry} -> {client.Food}, rotten flesh {client.Inventory.Count("rotten_flesh")}, at {client.Position}");
+            TestContext.Out.WriteLine($"health {hurt} -> {client.Health}, food {hungry} -> {client.Food}, rotten flesh left {client.Inventory.Count("rotten_flesh")}, feet at y {client.FeetBlock.Y}");
+            Assert.That(client.FeetBlock.Y, Is.LessThanOrEqualTo(197), "and he was down in his hole for it");
+        }
+        finally
+        {
+            c.Cancel();
+            try { await cover; } catch (OperationCanceledException) { }
+        }
+    }
+
     /// <summary>The corners of the box that holds every block of a kind within 25 blocks of (ax, az).</summary>
     private static (int X0, int X1, int Z0, int Z1, int MinY, int Count)? Extent(MinecraftClient client, int ax, int az, string block)
     {

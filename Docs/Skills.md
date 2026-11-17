@@ -196,6 +196,10 @@ on a one-block island with water on three sides and a three-high dirt wall on th
   armed against one monster, fighting comes out at 0.66 and running at 0.59; bare-handed, running stays ahead.
 - **Beside a friend he stands and fights.** With another player within 24 blocks, a weapon in his pockets and four hearts or more, a monster that comes at him or within 8 blocks of the friend is
   fought, whatever his record says of running, and he leaves the job he was on for it (it resumes after). Not creepers. The log says "standing with <name>".
+- **He fights at arm's length** (`Skills.FightAtArmsLength`, 2026-11-17). Against what comes at him to hit him by hand (not archers, not creepers) he stands, lets it come to the full reach of
+  his sword (3 blocks, feet to feet), swings the moment it is there, does not jump for a critical hit, and near it walks four ticks at a time. Before, with his sword ready, he walked from 3 blocks
+  to 0.9 without swinging (a one-second walk goes to where the monster was) and then jumped beside it. Measured against a husk on hard with an iron sword and no shield: 8, 8, 0 and 4.5 health
+  lost of 20 as he fought, 0 in each of four fights at arm's length. Animals and archers are fought as before, critical hits and all.
 - **A shield early**: it is the step after the iron pickaxe (one ingot and six planks), not the last one after all the armor. Skeletons cost him more health than anything else.
 - **Where he may dig in** (`Skills.DigInProblem`, 2026-11-16). Solid ground four deep, no sand or gravel, no water or lava beside it (as before), and now: the three blocks diggable in 5 seconds with
   the best tool he carries when something is on him (12 seconds at nightfall), and rock or earth on all four sides of the two cells he will be in. Stone with bare hands is 22 seconds under fire; a
@@ -204,6 +208,8 @@ on a one-block island with water on three sides and a three-high dirt wall on th
 - **Out of water under the ground, upward** (`LeaveWaterAsync`, 2026-11-16). In a flooded cave, or a shaft of his own that filled, he cuts a stair up from where he has air to the open sky (or to
   the surface of the sea over him). Swimming for a shore from there was a dive each time, ended by the need for air: 208 times in 78 minutes, live.
 - **Starving, he eats rotten flesh** (food bar 6 of 20 or less and nothing better; `Skills.HasSomethingToEat`). It is still not "food" for the food step of his way up.
+  Since 2026-11-17 also when he is under five hearts with a food bar under 18 and nothing better (under 18 health does not come back by waiting), and he eats while dug in
+  (`TakeCoverAsync`, when `Skills.ShouldEat`): before, nothing ate while he sat in a hole.
 - **Wood far below him is not a tree.** `CollectAsync` leaves logs more than 16 blocks under his feet (a mine's timber, a wreck's) and looks over the land for a tree: he drowned diving for one.
 - **Looking for what lives on the surface, from the surface** (2026-11-16). Under the ground, a search for animals, sheep, spiders or trees first takes him up (`ComeUpToLookAsync`: a stair to the first
   standing room with open sky over it). Before, the walk "over the land" was a tunnel under it: live an iron pickaxe made at 16:39 was worn out by 16:44, about 250 blocks of stone later. Ore and stone
