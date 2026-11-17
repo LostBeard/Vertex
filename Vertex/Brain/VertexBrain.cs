@@ -762,6 +762,13 @@ public sealed class VertexBrain : IBody
         return !Client.Entities.Values.Any(e => e.IsPlayer && e.Uuid != Client.Profile.Id && e.DistanceTo(x, y, z) < 24);
     }
 
+    /// <summary>
+    /// The next step on his way up. At night under the ground, when nights have killed him: the next one whose work is down there (stone, iron, diamond), so the night is spent mining, as a player spends it.
+    /// With none of those open, the next one whatever it is: it takes him up, the night ends it there, and he digs in. Live, the first night on c07b82e he started looking for sheep, animals and spiders from 20 blocks down.
+    /// </summary>
+    private Skills.Milestone? NextStep() =>
+        NightsKill && IsNight() && Skills.UnderGround() ? Skills.NextMilestone(underTheGroundOnly: true) ?? Skills.NextMilestone() : Skills.NextMilestone();
+
     /// <summary>The jobs the idle loop starts for him alone, by what they are called: the ones a night ends. What a friend asked for, a goal's step, and a reflex in the middle of saving him are not among them.</summary>
     internal static bool OwnSurfaceJob(string job) => job.StartsWith("working toward ") || job is "finding food" or "going back for my things" or "looking for somewhere I can live";
 
@@ -998,7 +1005,7 @@ public sealed class VertexBrain : IBody
                 // Getting on in the world: tools, food, a bed, iron... whatever comes next from what he has right now. Never a fixed script: after a death he is back at the top, and nothing else needs to know.
                 // Quiet (the job's start and end are not news); reaching a step is, and is said once. A friend's request or a goal replaces it at once.
                 if (SelfDirectedPlay && WorkUpWhenIdle && goal == null && !Staying && Client.IsSpawned && !_projectQueued && Client.GameMode == GameMode.Survival && now - _lastActivity >= TimeSpan.FromSeconds(3)
-                    && now >= _nextKitTry && Skills.NearestHostile(10) == null && Skills.NextMilestone() is { } step)
+                    && now >= _nextKitTry && Skills.NearestHostile(10) == null && NextStep() is { } step)
                 {
                     _nextKitTry = now + TimeSpan.FromSeconds(5);
                     _lastActivity = now;

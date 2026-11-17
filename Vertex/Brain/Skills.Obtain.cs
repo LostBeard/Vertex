@@ -311,14 +311,22 @@ public sealed partial class Skills
     private bool WearingBetter(string piece) => client.Inventory.Slots.Take(PlayerInventory.MainStart).Any(s => !s.IsEmpty && s.Name.EndsWith("_" + piece) && !s.Name.Contains("leather") && !s.Name.Contains("golden"));
 
     /// <summary>The next step not yet reached and not given up on for now, or null when there is nothing left to do (or everything left has just failed).</summary>
-    public Milestone? NextMilestone()
+    /// <param name="underTheGroundOnly">Only a step whose work is under the ground (<see cref="DoneUnderTheGround"/>): what he goes on with at night down there, when nights have killed him.</param>
+    public Milestone? NextMilestone(bool underTheGroundOnly = false)
     {
         var now = DateTime.UtcNow;
         bool Open(Milestone m) => !m.Done() && (!_milestoneBackoff.TryGetValue(m.Item, out var b) || b.Until <= now);
+        if (underTheGroundOnly) return Milestones().FirstOrDefault(m => Open(m) && DoneUnderTheGround(m.Item));
         // Hurt and unable to heal (natural healing stops under 18 food) with nothing to eat: food before tools. He lost one stone pickaxe after another at 2 hearts and 16 food (2026-11-04): tools do not stay with someone who cannot heal.
         if (client.Health < 14 && client.Food < 18 && !HasFood && Milestones().FirstOrDefault(m => m.Item == "food") is { } food && Open(food)) return food;
         return Milestones().FirstOrDefault(Open);
     }
+
+    /// <summary>
+    /// Is this step's work under the ground: stone, iron, diamond? Food, a bed, a bow, arrows and wooden tools are got on the surface (animals, sheep, spiders, trees). A stone or iron step can still send him up
+    /// for a stick or for fuel; at night that ends it (<see cref="VertexBrain.OwnSurfaceJob"/>), which costs him the rest of that night and nothing else.
+    /// </summary>
+    internal static bool DoneUnderTheGround(string item) => item.Contains("stone_") || item.Contains("iron_") || item.Contains("diamond_");
 
     /// <summary>The next step not yet reached, whether or not he is trying it just now: what he would say he is working toward.</summary>
     public Milestone? WorkingToward() => Milestones().FirstOrDefault(m => !m.Done());

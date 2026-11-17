@@ -69,6 +69,87 @@ public class LiveRoughGroundTests
         return (client, ax, az);
     }
 
+    /// <summary>Earth four deep under where he stands and two blocks round it (the base everywhere else is stone, which bare hands take 7.5 seconds a block to break).</summary>
+    private async Task EarthUnderHimAsync(MinecraftClient client, int ax, int az)
+    {
+        await _server.CommandAsync($"fill {ax - 2} 196 {az - 2} {ax + 2} 199 {az + 2} minecraft:dirt");
+        await Wait.UntilAsync(() => client.World.GetBlock(ax, 199, az)?.Name == "minecraft:dirt" && client.World.GetBlock(ax, 196, az)?.Name == "minecraft:dirt", Timeout, () => $"the earth under him; at {client.Position}");
+    }
+
+    /// <summary>
+    /// Three blocks of stone with bare hands are 22 seconds of standing still: no way to hide from something that is on him. Digging in is then not on offer (the choice goes to running, fighting,
+    /// the water), and with any pickaxe, or on earth, it is. At nightfall, with nothing on him yet, he has 12 seconds for it, which bare hands in stone do not make either.
+    /// </summary>
+    [Test]
+    public async Task DiggingIn_IsOnOffer_OnlyWhereHeCanGetUnderInTime()
+    {
+        const string name = "VertexHard";
+        var (client, ax, az) = await JoinOnRoughGroundAsync(name);
+        await using var _ = client;
+        await _server.CommandAsync($"fill {ax - 2} 190 {az - 2} {ax + 2} 196 {az + 2} minecraft:stone");
+        await Wait.UntilAsync(() => client.World.GetBlock(ax, 196, az)?.Name == "minecraft:stone" && client.World.GetBlock(ax, 199, az)?.Name == "minecraft:stone", Timeout, () => $"stone under him; at {client.Position}");
+        var skills = new Skills(client);
+        Assert.That(skills.DigInProblem(), Does.Contain("too hard"), "stone, bare hands, something on him");
+        Assert.That(skills.DigInProblem(Skills.DigInAtNightfallTicks), Does.Contain("too hard"), "nor at nightfall");
+        await _server.CommandAsync($"give {name} minecraft:wooden_pickaxe 1");
+        await Wait.UntilAsync(() => client.Inventory.Count("wooden_pickaxe") == 1, Timeout, () => client.Inventory.ToString());
+        Assert.That(skills.DigInProblem(), Is.Null, "stone with a wooden pickaxe: 3.5 seconds");
+        await _server.CommandAsync($"clear {name}");
+        await Wait.UntilAsync(() => client.Inventory.Count("wooden_pickaxe") == 0, Timeout, () => client.Inventory.ToString());
+        await EarthUnderHimAsync(client, ax, az);
+        Assert.That(skills.DigInProblem(), Is.Null, "earth with bare hands: 2.3 seconds");
+        // A gap beside where his head would be (a slope, a cave): live 2026-11-16 he was shot in such a hole, sealed in for the night, by a skeleton 4 blocks away.
+        await _server.CommandAsync($"setblock {ax + 1} 198 {az} minecraft:air");
+        await Wait.UntilAsync(() => client.World.GetBlock(ax + 1, 198, az)?.Name == "minecraft:air", Timeout, () => "the gap");
+        Assert.That(skills.DigInProblem(), Does.Contain("open at the side"));
+        Assert.That(skills.DigInProblem(Skills.DigInAtNightfallTicks), Does.Contain("open at the side"), "at nightfall too");
+        await _server.CommandAsync($"setblock {ax + 1} 198 {az} minecraft:dirt");
+        await Wait.UntilAsync(() => client.World.GetBlock(ax + 1, 198, az)?.Name == "minecraft:dirt", Timeout, () => "the gap closed");
+        Assert.That(skills.DigInProblem(), Is.Null);
+    }
+
+    /// <summary>
+    /// Live 2026-11-16, 17:37: he went through a night at 0.3 hearts with a food bar of 5 and two rotten flesh in his pockets, and the first arrow of the morning killed him. Starving with nothing
+    /// better, he eats it, as a player does; with his food bar above that he leaves it alone.
+    /// </summary>
+    [Test]
+    public async Task Starving_WithOnlyRottenFlesh_HeEatsIt_AndNotBeforeHeIsStarving()
+    {
+        const string name = "VertexStarve";
+        var (client, ax, az) = await JoinOnRoughGroundAsync(name);
+        await using var _ = client;
+        await _server.CommandAsync($"give {name} minecraft:rotten_flesh 4");
+        await Wait.UntilAsync(() => client.Inventory.Count("rotten_flesh") == 4, Timeout, () => client.Inventory.ToString());
+        var skills = new Skills(client);
+        // Hungry, not starving: he has "no food".
+        await _server.CommandAsync($"effect give {name} minecraft:hunger 30 60 true");       // about a point of food every 13 ticks
+        await Wait.UntilAsync(() => client.Food <= 14, Timeout, () => $"food {client.Food}");
+        await _server.CommandAsync($"effect clear {name}");
+        await client.WaitTicksAsync(10);
+        if (client.Food > Skills.StarvingAt)
+        {
+            Assert.That(skills.HasSomethingToEat, Is.False, $"food {client.Food}: not starving, so rotten flesh is not food");
+            var (ate, said) = await skills.EatAsync(CancellationToken.None);
+            Assert.That(ate, Is.False, said);
+            Assert.That(client.Inventory.Count("rotten_flesh"), Is.EqualTo(4));
+        }
+        // Starving.
+        await _server.CommandAsync($"effect give {name} minecraft:hunger 30 60 true");
+        await Wait.UntilAsync(() => client.Food <= Skills.StarvingAt, Timeout, () => $"food {client.Food}");
+        await _server.CommandAsync($"effect clear {name}");
+        await client.WaitTicksAsync(10);
+        var before = client.Food;
+        Assert.That(skills.HasFood, Is.False, "it is still not what he counts as food to have");
+        Assert.That(skills.HasSomethingToEat, Is.True, $"food {before}: starving");
+        using var c = new CancellationTokenSource(TimeSpan.FromSeconds(30));
+        var (ok, text) = await skills.EatAsync(c.Token);
+        TestContext.Out.WriteLine($"{ok}: {text}; food {before} -> {client.Food}");
+        Assert.That(ok, Is.True, text);
+        Assert.That(text, Does.Contain("rotten flesh"));
+        Assert.That(client.Inventory.Count("rotten_flesh"), Is.EqualTo(3));
+        Assert.That(client.Food, Is.GreaterThan(before), "and it fed him");
+    }
+
     /// <summary>The corners of the box that holds every block of a kind within 25 blocks of (ax, az).</summary>
     private static (int X0, int X1, int Z0, int Z1, int MinY, int Count)? Extent(MinecraftClient client, int ax, int az, string block)
     {
@@ -180,6 +261,9 @@ public class LiveRoughGroundTests
         for (var z0 = az - 30; z0 <= az + 30; z0 += 8)
             await _server.CommandAsync($"fill {ax - 30} 150 {z0} {ax + 30} 196 {Math.Min(z0 + 7, az + 30)} minecraft:stone");
         var stand = 200 + StripeHeight(ax, ax);
+        await EarthUnderHimAsync(client, ax, az);
+        var deaths = 0;
+        client.Died += _ => Interlocked.Increment(ref deaths);
         await _server.CommandAsync($"effect give {name} minecraft:instant_damage 1 1");        // 12 points: 20 down to 8
         await Wait.UntilAsync(() => client.Health is > 0 and <= 10, Timeout, () => $"health {client.Health}");
         for (var i = 0; i < 3; i++)
@@ -197,6 +281,8 @@ public class LiveRoughGroundTests
             await Task.Delay(TimeSpan.FromSeconds(8));
             TestContext.Out.WriteLine($"at {client.Position}, health {client.Health}, zombies {client.Entities.Values.Count(e => e.Name == "minecraft:zombie")}; jobs {string.Join(" | ", jobs)}");
             Assert.That(client.Health, Is.GreaterThan(0), "and still alive eight seconds later, underground");
+            Assert.That(Volatile.Read(ref deaths), Is.Zero, "and he did not die on the way: health after a respawn is health too");
+            Assert.That(client.Position.Y, Is.LessThanOrEqualTo(stand - 2), "under the ground");
             Assert.That(jobs.Any(j => j.StartsWith("taking cover")), Is.True, string.Join(" | ", jobs));
         }
         finally { reflexes.Enabled = false; tasks.Stop(); await _server.CommandAsync("kill @e[tag=vcover]"); }
@@ -331,6 +417,10 @@ public class LiveRoughGroundTests
         for (var z0 = az - 30; z0 <= az + 30; z0 += 8)
             await _server.CommandAsync($"fill {ax - 30} 150 {z0} {ax + 30} 196 {Math.Min(z0 + 7, az + 30)} minecraft:stone");
         var stand = 200 + StripeHeight(ax, ax);
+        // Earth under him: what bare hands get into in two seconds. In stone it is 22, and the test "passed" on his health after he had died and come back (2026-11-16).
+        await EarthUnderHimAsync(client, ax, az);
+        var deaths = 0;
+        client.Died += _ => Interlocked.Increment(ref deaths);
         if (withSword) await _server.CommandAsync($"give {name} minecraft:iron_sword 1");
         await _server.CommandAsync($"summon minecraft:skeleton {ax + 0.5} {stand} {az + 12.5} {{Tags:[\"varcher\"],HandItems:[{{id:\"minecraft:bow\",count:1}},{{}}],active_effects:[{{id:\"minecraft:fire_resistance\",duration:1000000}}]}}");
         await Wait.UntilAsync(() => client.Entities.Values.Any(e => e.Name == "minecraft:skeleton") && (!withSword || client.Inventory.Count("iron_sword") >= 1), Timeout, () => client.Inventory.ToString());
@@ -351,8 +441,10 @@ public class LiveRoughGroundTests
             {
                 await Wait.UntilAsync(() => client.Position.Y <= stand - 2 || client.Health <= 0, TimeSpan.FromSeconds(40), () => $"at {client.Position}, health {client.Health}; jobs {string.Join(" | ", jobs)}");
                 Assert.That(client.Health, Is.GreaterThan(0), "he lived: " + string.Join(" | ", jobs));
+                Assert.That(client.Position.Y, Is.LessThanOrEqualTo(stand - 2), "under the ground: " + string.Join(" | ", jobs));
                 Assert.That(jobs.Any(j => j.StartsWith("taking cover")), Is.True, string.Join(" | ", jobs));
             }
+            Assert.That(Volatile.Read(ref deaths), Is.Zero, "and he did not die on the way: health after a respawn is health too");
             TestContext.Out.WriteLine($"health {client.Health} at {client.Position}; jobs {string.Join(" | ", jobs)}");
         }
         finally { reflexes.Enabled = false; tasks.Stop(); await _server.CommandAsync("kill @e[tag=varcher]"); }

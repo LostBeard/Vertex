@@ -80,6 +80,11 @@ public sealed partial class Skills(MinecraftClient client)
             .Select(kv => kv.Key).ToHashSet();
     }
 
+    private HashSet<int>? _logBlocks;
+
+    /// <summary>The blocks that are tree trunks (the game's "logs" tag).</summary>
+    private HashSet<int> LogBlocks => _logBlocks ??= D.BlockTag("minecraft:logs").Select(n => D.Block(n)).Where(b => b != null).Select(b => b!.Id).ToHashSet();
+
     public HashSet<int> ResolveBlocks(string what)
     {
         var w = what.Trim().ToLowerInvariant().Replace(' ', '_');
@@ -213,12 +218,19 @@ public sealed partial class Skills(MinecraftClient client)
         var learned = LearnedStatesNamed(what);
         if (types.Count == 0 && learned.Count == 0) return (false, $"I don't know what block '{what}' is.");
         bool Wanted(int s) => s > 0 && (types.Contains(D.StateBlock[s]) || learned.Contains(s));
+        // Trees stand on the ground. A log far below him is a mine's timber or a wreck's, and the way to it is a dive or a long shaft: he drowned going from y 64 for one at y 3 (17:39 on 2026-11-16; 17 drownings in the
+        // 19-hour run, 15 of them "coming up for air" on the way to a wooden pickaxe), and set off down a shaft with bare hands, from y 50, for another at y -13 (15:18 the same day). Wood more than 16 blocks under his feet is left where it is;
+        // he looks over the land for a tree instead.
+        var wood = types.Any(LogBlocks.Contains);
+        bool NotFarBelow((int X, int Y, int Z) p) => !wood || p.Y >= client.Position.Y - 16;
         var broken = 0;
         var failures = 0;
         var digFailures = 0;
         var fetchedScaffold = false;
         (int X, int Y, int Z)? ground = null;
         var tried = new HashSet<(int, int, int)>();
+        var seen = new Dictionary<(int, int, int), int>();
+        var aimedAt = new HashSet<(int, int, int)>();
         var nextToLava = 0;
         var partOfABuild = 0;
         var legs = 0;
@@ -230,10 +242,28 @@ public sealed partial class Skills(MinecraftClient client)
             var feetY = client.Position.Y;
             // And out of the land that burns him while there is any other: he walked past cooler ground to the nearest tree in the savanna, life after life (2026-11-04).
             var hotAt = HotAt?.Invoke();
-            var found = client.World.FindBlocksTall(Wanted, client.Position, 64, 256).Where(p => !tried.Contains(p))
+            var found = client.World.FindBlocksTall(Wanted, client.Position, 64, 256).Where(p => !tried.Contains(p) && NotFarBelow(p))
                 .OrderBy(p => hotAt is double h && KnownTooHot(BiomeAt(p.Item1, p.Item2, p.Item3), h) ? 1 : 0).ThenBy(p => Math.Abs(p.Y - feetY) > 8 ? 1 : 0).Take(64).ToList();
             // Opening a block with lava beside it (or lava above it, which falls in) lets the lava out onto whoever is digging: leave it (found 2026-10-15: a diamond ringed with lava took 11 of 20 health).
             // From the top of a stack of sand or gravel only: taking one from under the rest brings them down on him (2026-11-04: he dug into a sand bank, went from 7 hearts to nothing "in wall", and died with the job still going).
+            // What he saw a moment ago and is gone without his having aimed at it: he broke it getting at another (the log between him and the next, the ore beside the one whose drop he dug to). It counts, when it
+            // went from close by and is not sand or gravel that fell: uncounted, he took a fourth log for three, and with two of three ores aimed at and all three in his pockets went after a "third" 150 blocks
+            // below, six tries of it (2026-11-16).
+            var alsoBroken = 0;
+            foreach (var (gone, was) in seen.Where(p => !aimedAt.Contains(p.Key) && !Wanted(client.World.GetState(p.Key.Item1, p.Key.Item2, p.Key.Item3))).Select(p => (p.Key, p.Value)).ToList())
+            {
+                seen.Remove(gone);
+                var mine = !Falls(was) && client.DistanceToBlock(gone.Item1, gone.Item2, gone.Item3) <= 8;
+                if (mine) { broken++; alsoBroken++; }
+                Trace?.Invoke($"collecting {what}: the one at {gone.Item1} {gone.Item2} {gone.Item3} is gone and I did not aim at it (now {client.World.GetBlock(gone.Item1, gone.Item2, gone.Item3)?.Name ?? "unknown"}){(mine ? $": I broke it on my way, so that is {broken} of {count}" : "")}");
+            }
+            if (alsoBroken > 0)
+            {
+                var (ox, oy, oz) = client.FeetBlock;
+                await PickUpNearbyAsync(ox, oy, oz, ct);
+                if (broken >= count) break;
+            }
+            foreach (var p in found) seen[p] = client.World.GetState(p.Item1, p.Item2, p.Item3);
             found = found.Where(p => !UnderFallingBlock(p.Item1, p.Item2, p.Item3)).ToList();
             // Not out of someone's building, however good the logs. Nobody's asking him to choose between that and nothing: there is more world (TJ watched him take a village house apart, 2026-11-04).
             var built = found.Where(p => client.PartOfABuild(p.Item1, p.Item2, p.Item3)).ToList();
@@ -249,12 +279,14 @@ public sealed partial class Skills(MinecraftClient client)
                 // wood when the near trees are gone: fixed compass legs round one spot kept him at a cut-down island for half an hour, and took him out to sea (2026-11-04).
                 if (found.Count > 0 || legs >= 4) break;
                 legs++;
-                var (_, _, stretch) = await LookOverLandAsync(() => client.World.FindBlocksTall(Wanted, client.Position, 64, 256).Any(p => !tried.Contains(p)), 1, ct);
+                // Trees are looked for from the surface; ore and stone from where he is.
+                var (_, _, stretch) = await LookOverLandAsync(() => client.World.FindBlocksTall(Wanted, client.Position, 64, 256).Any(p => !tried.Contains(p) && NotFarBelow(p)), 1, ct, onTheSurface: wood);
                 walked += stretch;
                 continue;
             }
             var (bx, by, bz) = targets[0];
             tried.Add((bx, by, bz));
+            aimedAt.Add((bx, by, bz));
             Trace?.Invoke($"collecting {what}: going for the one at {bx} {by} {bz} ({broken} of {count} so far)");
             // With blocks to stand on he can build his way up to what is out of reach.
             var scaffold = Have(s => client.ThrowawayBlocks.Contains(s.Name));
@@ -1754,13 +1786,15 @@ public sealed partial class Skills(MinecraftClient client)
     /// Goes and looks: walks up to `maxLegs` legs of about 48 blocks, a different way each time, and stops as soon as `found()` is true. "I don't see any sheep" is not an answer while there is more world
     /// to walk (he said it, and "I couldn't find any diamond ore", without moving a block: TJ, 2026-11-03). Returns whether it was found, how many legs, and how far he walked.
     /// </summary>
-    private async Task<(bool Found, int Legs, double Walked)> LookFurtherAsync(Func<bool> found, int maxLegs, CancellationToken ct)
+    /// <param name="onTheSurface">What he looks for is on the surface: from under the ground he comes up first (see <see cref="ComeUpToLookAsync"/>).</param>
+    private async Task<(bool Found, int Legs, double Walked)> LookFurtherAsync(Func<bool> found, int maxLegs, CancellationToken ct, bool onTheSurface = true)
     {
         var legs = 0;
         double walked = 0;
         while (!found() && legs < maxLegs && !ct.IsCancellationRequested)
         {
             legs++;
+            if (onTheSurface) await ComeUpToLookAsync(ct);
             var (lx, _, lz) = client.Position;
             var (dx, dz) = new[] { (0, -1), (1, 0), (0, 1), (-1, 0) }[(legs + (int)(Math.Abs(lx) + Math.Abs(lz))) % 4];
             var before = client.Position;
@@ -2253,16 +2287,32 @@ public sealed partial class Skills(MinecraftClient client)
     }
 
     /// <summary>Why he cannot dig in right here, in words, or null when he can: checked without moving, so a choice is not spent on something that would fail at once (the island he respawns on is mostly sand).</summary>
-    public string? DigInProblem()
+    /// <param name="withinTicks">How long the three blocks may take him with the best tool he carries: 5 seconds with something after him, longer when it is only getting dark.</param>
+    public string? DigInProblem(int withinTicks = DigInUnderFireTicks)
     {
         var (px, py, pz) = client.Position;
         if (InWaterNow()) return "I can't dig in while I'm in the water.";
-        return DigInProblemAt((int)Math.Floor(px), (int)Math.Floor(py + 1e-6), (int)Math.Floor(pz));
+        return DigInProblemAt((int)Math.Floor(px), (int)Math.Floor(py + 1e-6), (int)Math.Floor(pz), withinTicks);
     }
 
+    /// <summary>
+    /// How long digging in may take with a monster on him, in ticks. Stone with bare hands is 7.5 seconds a block: 22 seconds of standing still under a skeleton's bow, which is how the test written for
+    /// "hides underground without a weapon" had been ending, unseen, in his death (2026-11-16), and live 26 of his dig-ins in 19 hours ended in his death, 9 of them shot by a skeleton. Earth by hand (2.3 s) and stone with any pickaxe pass.
+    /// </summary>
+    public const int DigInUnderFireTicks = 100;
+
+    /// <summary>The same when night is only coming on and nothing is on him yet: 12 seconds.</summary>
+    public const int DigInAtNightfallTicks = 240;
+
     /// <summary>The same question about ground he is not standing on: feet at x, y0, z.</summary>
-    private string? DigInProblemAt(int x, int y0, int z)
+    private string? DigInProblemAt(int x, int y0, int z, int withinTicks)
     {
+        var ticks = 0;
+        for (var d = 1; d <= 3; d++)
+        {
+            var s = client.World.GetState(x, y0 - d, z);
+            if (s > 0 && client.BestDigTicks(s) is int t) ticks += t;
+        }
         for (var d = 1; d <= 4; d++)
         {
             var s = client.World.GetState(x, y0 - d, z);
@@ -2273,6 +2323,12 @@ public sealed partial class Skills(MinecraftClient client)
             foreach (var (dx, dz) in new[] { (1, 0), (-1, 0), (0, 1), (0, -1) })
                 if (client.World.GetState(x + dx, y0 - d, z + dz) is var n && n > 0 && (D.StateFlags[n] & GameData.FlagWater) != 0) return "There is water beside the ground here: it would flood the hole.";
         }
+        // The two cells he will be in need rock or earth on all four sides. On a slope, or with a cave beside it, the hole is open at the side: sealed in for the night at 209 66 -322 he was shot in it by a skeleton
+        // 4 blocks away, nine hearts in 23 seconds, and died of it at sunrise (17:50 on 2026-11-16).
+        for (var d = 2; d <= 3; d++)
+            foreach (var (dx, dz) in new[] { (1, 0), (-1, 0), (0, 1), (0, -1) })
+                if (!Standable(client.World.GetState(x + dx, y0 - d, z + dz))) return "The ground here is open at the side (a slope, or a cave beside it): a hole here would not close.";
+        if (ticks > withinTicks) return $"The ground here is too hard to dig into in time with what I carry (about {ticks / 20.0:0} seconds for three blocks).";
         return null;
     }
 
@@ -2300,7 +2356,7 @@ public sealed partial class Skills(MinecraftClient client)
             var d2 = dx * dx + dz * dz;
             if (d2 > reach * reach || !client.World.IsLoaded(bx + dx, bz + dz)) continue;
             if (GroundLevel(bx + dx, bz + dz, by) is not int gy || !Open(client.World.GetState(bx + dx, gy + 1, bz + dz))) continue;
-            if (DigInProblemAt(bx + dx, gy, bz + dz) == null) spots.Add((bx + dx, gy, bz + dz, d2));
+            if (DigInProblemAt(bx + dx, gy, bz + dz, DigInAtNightfallTicks) == null) spots.Add((bx + dx, gy, bz + dz, d2));
         }
         return spots.OrderBy(s => s.D2).Select(s => (s.X, s.Y, s.Z)).ToList();
     }
@@ -2311,7 +2367,7 @@ public sealed partial class Skills(MinecraftClient client)
     /// </summary>
     public async Task<(bool, string)> ShelterForTheNightAsync(CancellationToken ct)
     {
-        if (DigInProblem() is { } problem)
+        if (DigInProblem(DigInAtNightfallTicks) is { } problem)
         {
             var spots = FindDigInSpots(24);
             // The nearest few, a few blocks apart: one spot he cannot reach says little about the next.
@@ -2326,9 +2382,9 @@ public sealed partial class Skills(MinecraftClient client)
                 leg.CancelAfter(TimeSpan.FromSeconds(30));
                 try { await client.GoToAsync(Goal.Block(spot.X, spot.Y, spot.Z), new PathOptions { MaxNodes = 12_000, Sprint = true }, leg.Token); }
                 catch (OperationCanceledException) when (!ct.IsCancellationRequested) { }
-                if (DigInProblem() == null) break;
+                if (DigInProblem(DigInAtNightfallTicks) == null) break;
             }
-            if (DigInProblem() is { } still)
+            if (DigInProblem(DigInAtNightfallTicks) is { } still)
                 return (false, $"{still} I looked for ground to dig into within 24 blocks and {(spots.Count == 0 ? "found none" : "could not get to any")}.");
         }
         return await TakeCoverAsync(ct, untilMorning: true);
@@ -2718,7 +2774,7 @@ public sealed partial class Skills(MinecraftClient client)
     {
         var (px, py, pz) = client.Position;
         int x = (int)Math.Floor(px), y0 = (int)Math.Floor(py + 1e-6), z = (int)Math.Floor(pz);
-        if (DigInProblem() is { } problem) return (false, problem);
+        if (DigInProblem(untilMorning ? DigInAtNightfallTicks : DigInUnderFireTicks) is { } problem) return (false, problem);
         // Down three blocks: the path finder digs straight down (the cheapest way to a goal below).
         await client.EquipBestToolAsync(client.World.GetState(x, y0 - 1, z), ct);
         var down = await client.GoToAsync(Goal.Block(x, y0 - 3, z), new PathOptions { CanDig = true, MaxNodes = 4_000 }, ct);
@@ -3266,11 +3322,24 @@ public sealed partial class Skills(MinecraftClient client)
 
     public bool HasFood => EdibleStacks.Any();
 
+    /// <summary>The food bar (0 to 20) at or below which he is starving: health no longer comes back and soon starts to go.</summary>
+    public const int StarvingAt = 6;
+
+    /// <summary>
+    /// Rotten flesh, when he is starving and has nothing better: four points of food for a spell of hunger, which is what a player eats before he starves. He went into a night at 0.3 hearts and a food bar of 5 with
+    /// two of them in his pockets, and the first arrow of the morning killed him (17:37, 2026-11-16); 142 of his 151 deaths in the 19-hour run were with no food.
+    /// </summary>
+    private ItemStack? LastResortFood => client.Food <= StarvingAt && !HasFood
+        ? client.Inventory.Slots.Skip(PlayerInventory.MainStart).FirstOrDefault(s => !s.IsEmpty && s.Name == "minecraft:rotten_flesh") : null;
+
+    /// <summary>Something he would eat right now: food, or rotten flesh when starving.</summary>
+    public bool HasSomethingToEat => HasFood || LastResortFood != null;
+
     /// <summary>Eats the most filling food we carry, if not full.</summary>
     public async Task<(bool, string)> EatAsync(CancellationToken ct)
     {
         if (client.Food >= 20) return (true, "I'm not hungry.");
-        var food = EdibleStacks.OrderByDescending(s => s.Type!.FoodNutrition).FirstOrDefault();
+        var food = EdibleStacks.OrderByDescending(s => s.Type!.FoodNutrition).FirstOrDefault() ?? LastResortFood;
         if (food == null) return (false, "I don't have any food.");
         var name = food.Name;
         if (!await client.EquipAsync(s => s.Name == name, ct)) return (false, "I couldn't get my food out.");

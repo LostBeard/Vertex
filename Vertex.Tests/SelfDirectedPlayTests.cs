@@ -40,6 +40,21 @@ public class SelfDirectedPolicyTests
         Assert.That(VertexBrain.SafeForOwnProject(inWater: false, hostileNear: true), Is.False, "four creepers around him");
     }
 
+    /// <summary>At night under the ground, once nights have killed him, he goes on with what is done down there. Live 2026-11-16 he started looking for sheep, animals and spiders from 20 blocks down.</summary>
+    [TestCase("minecraft:stone_pickaxe", true)]
+    [TestCase("minecraft:stone_sword", true)]
+    [TestCase("minecraft:iron_pickaxe", true)]
+    [TestCase("minecraft:iron_chestplate", true)]
+    [TestCase("minecraft:diamond_pickaxe", true)]
+    [TestCase("minecraft:wooden_pickaxe", false)]
+    [TestCase("minecraft:wooden_sword", false)]
+    [TestCase("food", false)]
+    [TestCase("bed", false)]
+    [TestCase("minecraft:bow", false)]
+    [TestCase("minecraft:arrow", false)]
+    [TestCase("minecraft:shield", false)]
+    public void WhichStepsAreDoneUnderTheGround(string item, bool under) => Assert.That(Skills.DoneUnderTheGround(item), Is.EqualTo(under));
+
     [Test]
     public void AGoalHeSetsForHimself_IsNobodys_ButAFriendsRequestKeepsItsOwner()
     {

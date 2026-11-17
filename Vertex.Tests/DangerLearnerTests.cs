@@ -627,9 +627,11 @@ public class LiveDangerChoiceTests
     public async Task AnArcherInViewThatHeCannotReach_DoesNotHoldHim_AndTeachesHimNothing()
     {
         // As live: a skeleton in view past the 12 blocks running looks at, out of his reach, never hitting him.
+        // Fireproof: in the daylight of this stage it burned to death about 25 seconds in, and when he happened to be "fighting" it at that moment (he was, once digging in on stone with bare hands was no longer
+        // on offer and the choice fell on a fight) the fight counted as won and was written down: the sun's work, not his (2026-11-16).
         var (client, skills, tasks, ax, az) = await JoinAsync("Watched",
             (x, z) => $"fill {x + 16} 200 {z} {x + 16} 206 {z} minecraft:stone",
-            (x, z) => $"summon minecraft:skeleton {x + 16.5} 207 {z + 0.5} {{NoAI:1b,PersistenceRequired:1b}}");
+            (x, z) => $"summon minecraft:skeleton {x + 16.5} 207 {z + 0.5} {{NoAI:1b,PersistenceRequired:1b,active_effects:[{{id:\"minecraft:fire_resistance\",duration:1000000}}]}}");
         await using var _ = client;
         var file = Path.Combine(TestContext.CurrentContext.WorkDirectory, $"danger-{Guid.NewGuid():N}.jsonl");
         try
@@ -651,7 +653,12 @@ public class LiveDangerChoiceTests
             TestContext.Out.WriteLine($"free after {(DateTime.UtcNow - started).TotalSeconds:0} s");
 
             var rows = File.Exists(file) ? File.ReadAllLines(file) : [];
-            Assert.That(rows.Where(r => r.Contains("\"Flee\"") || r.Contains("\"Fight\"")), Is.Empty, "standing still is no outcome");
+            Assert.That(rows.Where(r => r.Contains("\"Fight\"")), Is.Empty, "a fight he could not get to is no outcome");
+            // Running is an outcome only when he ran: from inside the 12 blocks that running looks at (a try at a fight walks him up to the foot of the pillar, 7 blocks from it, and running from there is real).
+            // From further off it ends where it began, and that is not written down.
+            int ranFromClose;
+            lock (decisions) ranFromClose = decisions.Count(d => System.Text.RegularExpressions.Regex.Match(d, @"^running away against skeleton at (\d+) blocks") is { Success: true } m && int.Parse(m.Groups[1].Value) < 12);
+            Assert.That(rows.Count(r => r.Contains("\"Flee\"")), Is.LessThanOrEqualTo(ranFromClose), "standing still is no outcome: " + string.Join(" | ", rows));
         }
         finally
         {

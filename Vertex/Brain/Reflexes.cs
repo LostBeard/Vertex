@@ -190,7 +190,7 @@ public sealed class Reflexes : IDisposable
         }
 
         // Food in his pockets while he works: eating only when idle meant never, now that he always has something on. Natural healing stops under 18 food, so hurt he eats sooner. Not while a monster has just hit him. He goes back to the job.
-        if (_tick >= _nextEatTick && _skills.HasFood && !_eating && (c.Food <= 14 || (c.Food < 18 && c.Health < 16)) && !HandlesMonsters(_tasks.Current) && DateTime.UtcNow - _lastMonsterHit > TimeSpan.FromSeconds(3)
+        if (_tick >= _nextEatTick && _skills.HasSomethingToEat && !_eating && (c.Food <= 14 || (c.Food < 18 && c.Health < 16)) && !HandlesMonsters(_tasks.Current) && DateTime.UtcNow - _lastMonsterHit > TimeSpan.FromSeconds(3)
             && (_tasks.Current?.StartsWith("working toward") == true || _tasks.Current?.Contains("somewhere I can live") == true || _tasks.Current == "cooling off"))
         {
             _nextEatTick = _tick + 100;
@@ -297,7 +297,7 @@ public sealed class Reflexes : IDisposable
         }
 
         // Eat when hungry and idle (eating mid-dig would cancel the dig).
-        if (c.Food <= 14 && !_tasks.IsBusy && _skills.HasFood)
+        if (c.Food <= 14 && !_tasks.IsBusy && _skills.HasSomethingToEat)
         {
             Run(async () => await _skills.EatAsync(CancellationToken.None));
             return;

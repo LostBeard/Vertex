@@ -210,19 +210,103 @@ public class LiveObtainTests
         Assert.That(client.Inventory.Count("iron_pickaxe"), Is.EqualTo(1));
     }
 
+    /// <summary>
+    /// Three logs wanted from a trunk of six. Getting at the next one he breaks the log between without aiming at it, and it was not counted: he took a fourth for three. With ore it cost more: two
+    /// of three aimed at, all three in his pockets, and he went after a "third" 150 blocks below the stage, six tries of it (4 of that test's 6 minutes, 2026-11-16).
+    /// Which log goes that way is up to where the first one's drop lands (he steps into the trunk for it, and the log above is where his head would be): it happened in most runs here and not in all,
+    /// so the test holds him to the outcome, three logs for three wanted, and says in its output whether it happened. With the count switched off the run gave four.
+    /// </summary>
+    [Test]
+    public async Task ALogHeBreaksOnTheWayToTheNext_Counts_ThreeWantedIsThreeTaken()
+    {
+        var (client, skills, ax, az) = await StageAsync("ObtainCount");
+        await using var _c = client;
+        var trace = new List<string>();
+        skills.Trace += m => { lock (trace) trace.Add(m); TestContext.Out.WriteLine(m); };
+        using var cts = new CancellationTokenSource(TimeSpan.FromMinutes(3));
+        var (ok, text) = await skills.CollectAsync("wood", 3, cts.Token);
+        TestContext.Out.WriteLine($"{ok}: {text}");
+        Assert.That(ok, Is.True, text);
+        Assert.That(client.Inventory.Count("oak_log"), Is.EqualTo(3), "three, not the fourth he used to take: " + text);
+        lock (trace) TestContext.Out.WriteLine(trace.Any(t => t.Contains("I broke it on my way")) ? "one went without his aiming at it, and was counted" : "this time he aimed at all three");
+    }
+
+    /// <summary>
+    /// Live 2026-11-16, 17:39: back to life at y 64 with empty pockets, the nearest log was a wreck's or a mine's at y 3; he dived for it and drowned (17 drownings in the 19-hour run, 15 on the way to
+    /// a wooden pickaxe). Here the only log there is hangs 50 blocks under the stage: he does not go for it, looks over the land for a tree, and says he found none.
+    /// </summary>
+    [Test]
+    public async Task WoodFarBelowHim_IsNotATree_HeLooksOverTheLandInstead()
+    {
+        var (client, skills, ax, az) = await StageAsync("ObtainDeep",
+            (x, z) => $"fill {x + 12} 200 {z - 2} {x + 16} 206 {z + 2} minecraft:air",
+            (x, z) => $"fill {x - 14} 200 {z + 3} {x - 14} 205 {z + 3} minecraft:air",
+            (x, z) => $"setblock {x + 3} 150 {z} minecraft:oak_log");
+        await using var _c = client;
+        await Wait.UntilAsync(() => client.World.GetBlock(ax + 3, 150, az)?.Name == "minecraft:oak_log" && client.World.GetBlock(ax + 14, 202, az)?.Name == "minecraft:air", Timeout, () => $"the stage; at {client.FeetBlock}");
+        var trace = new List<string>();
+        skills.Trace += m => { lock (trace) trace.Add(m); TestContext.Out.WriteLine(m); };
+        var deaths = 0;
+        client.Died += _ => Interlocked.Increment(ref deaths);
+        using var cts = new CancellationTokenSource(TimeSpan.FromMinutes(4));
+        var (ok, text) = await skills.CollectAsync("wood", 2, cts.Token);
+        TestContext.Out.WriteLine($"{ok}: {text}; at {client.FeetBlock}");
+        Assert.That(ok, Is.False, text);
+        lock (trace) Assert.That(trace.Where(t => t.Contains("going for the one at")), Is.Empty, "he did not set off for the log under the stage");
+        Assert.That(text, Does.Contain("haven't found any"), "he looked, and says so");
+        lock (trace) Assert.That(trace.Any(t => t.Contains("looking on the land")), Is.True, "over the land: " + string.Join(" | ", trace));
+        Assert.That(client.FeetBlock.Y, Is.GreaterThanOrEqualTo(199), "still on the stage");
+        Assert.That(Volatile.Read(ref deaths), Is.Zero);
+    }
+
+    /// <summary>
+    /// Live 2026-11-16: an iron pickaxe made at 16:39 was worn out by 16:44, about 250 blocks of stone later, while he looked for animals, sheep and spiders from 20 blocks under the ground: "looking over
+    /// the land" from down there is a tunnel under it. Here he is in a cell 20 blocks under the stage (the stage made 30 thick for it) with an iron pickaxe and no sheep anywhere: he comes up, looks from the
+    /// surface, and says he found none.
+    /// </summary>
+    [Test]
+    public async Task LookingForSheepFromUnderTheGround_HeComesUpFirst_AndDoesNotTunnelUnderTheLand()
+    {
+        var (client, skills, ax, az) = await StageAsync("ObtainUp",
+            (x, z) => $"fill {x - 28} 170 {z - 28} {x + 28} 179 {z + 28} minecraft:stone",
+            (x, z) => $"fill {x - 28} 180 {z - 28} {x + 28} 189 {z + 28} minecraft:stone",
+            (x, z) => $"fill {x} 180 {z} {x} 181 {z} minecraft:air");
+        await using var _c = client;
+        await _server.CommandAsync("give ObtainUp minecraft:iron_pickaxe 1");
+        await _server.CommandAsync($"tp ObtainUp {ax + 0.5} 180 {az + 0.5}");
+        await Wait.UntilAsync(() => client.OnGround && client.FeetBlock == (ax, 180, az) && client.Inventory.Count("iron_pickaxe") == 1, Timeout, () => $"at {client.FeetBlock}; {client.Inventory}");
+        Assert.That(skills.UnderGround(), Is.True, "the setup: 18 blocks of stone over his head");
+        var trace = new List<string>();
+        skills.Trace += m => { lock (trace) trace.Add(m); TestContext.Out.WriteLine(m); };
+        using var cts = new CancellationTokenSource(TimeSpan.FromMinutes(5));
+        var (ok, text) = await skills.ObtainAsync("bed", 1, cts.Token);
+        var stone = client.Inventory.Count("cobblestone");
+        TestContext.Out.WriteLine($"{ok}: {text}; at {client.FeetBlock}, {stone} cobblestone");
+        Assert.That(ok, Is.False, "there are no sheep: " + text);
+        Assert.That(text, Does.Contain("found none"));
+        lock (trace) Assert.That(trace.Any(t => t.Contains("going up to the surface")), Is.True, string.Join(" | ", trace));
+        Assert.That(client.FeetBlock.Y, Is.GreaterThanOrEqualTo(200), "he looked from the surface");
+        Assert.That(stone, Is.LessThanOrEqualTo(90), "a stair up 20 blocks, not three tunnels under the land");
+    }
+
     [Test]
     public async Task WhatCannotBeFound_FailsSayingWhat_NotInTwoSecondsAndNotForever()
     {
         // Diamonds need an iron pickaxe, which needs iron, and there is no iron here: he goes as far as the wood and stone, then says what is missing.
         var (client, skills, _, _) = await StageAsync("ObtainNothing");
         await using var _c = client;
+        var trace = new List<string>();
+        skills.Trace += m => { lock (trace) trace.Add(m); };
         using var cts = new CancellationTokenSource(TimeSpan.FromMinutes(6));
         var started = DateTime.UtcNow;
         var (ok, text) = await skills.ObtainAsync("diamond_sword", 1, cts.Token);
         TestContext.Out.WriteLine($"{(DateTime.UtcNow - started).TotalSeconds:0} s: {text}");
         Assert.That(ok, Is.False);
         Assert.That(text, Does.Contain("iron").IgnoreCase, "the thing that stopped him, by name");
-        Assert.That(client.Inventory.Count("stone_pickaxe"), Is.GreaterThanOrEqualTo(1), "he got as far as there was any getting");
+        // That he went digging for iron says he had the stone pickaxe it takes. Whether he still holds it at the end is up to the ground under this stage: the iron he can see is in the real world 150 blocks
+        // below a stage that floats, and six tries at it through the stage's floor wore the pickaxe out on one stage (132 cobblestone, 2026-11-16) and not on the next (9).
+        lock (trace) Assert.That(trace.Any(t => t.StartsWith("digging for") && t.Contains("raw iron")), Is.True, "he got as far as there was any getting: " + string.Join(" | ", trace.TakeLast(6)));
+        Assert.That(client.Inventory.Count("stone_pickaxe") >= 1 || client.Inventory.Count("cobblestone") >= 100, Is.True, "with a stone pickaxe, or the stone it broke on: " + text);
     }
 
     [Test]

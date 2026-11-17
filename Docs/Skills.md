@@ -183,8 +183,19 @@ on a one-block island with water on three sides and a three-high dirt wall on th
   minutes at most into the same night. Nothing tells him nights are dangerous: from the third death lesson tagged `night` within 14 days (his memory and this run) he believes it, and says so in the log
   ("learned from 3 deaths at night in the last 14 days: nights kill me here..."). While he believes it, playing alone in survival with no goal, no friend within 24 blocks and no bed he can sleep in, at
   night he leaves off what he started for himself on the surface (the way up, finding food, going back for his things), goes to ground he can dig into if he stands on sand or by water (within 24 blocks),
-  digs in, seals the hole and stays until the sun is up (`ShelterForTheNightAsync`). Under the ground already (three blocks of rock or earth over his head) he goes on working. He comes up early if he
-  loses a heart down there. With no death at night for 14 days the belief lapses and he finds out again.
+  digs in, seals the hole and stays until the sun is up (`ShelterForTheNightAsync`). Under the ground already (three blocks of rock or earth over his head) he goes on working, and on the steps that are
+  done down there first (stone, iron, diamond: `Skills.DoneUnderTheGround`), so a night is spent mining when there is mining to do. He comes up early if he loses a heart down there. With no death at
+  night for 14 days the belief lapses and he finds out again.
+- **Where he may dig in** (`Skills.DigInProblem`, 2026-11-16). Solid ground four deep, no sand or gravel, no water or lava beside it (as before), and now: the three blocks diggable in 5 seconds with
+  the best tool he carries when something is on him (12 seconds at nightfall), and rock or earth on all four sides of the two cells he will be in. Stone with bare hands is 22 seconds under fire; a
+  hole on a slope or beside a cave is open at the side. Where the ground will not do, digging in is not among the choices `DangerLearner` is given, and for the night he walks to ground that will.
+- **Starving, he eats rotten flesh** (food bar 6 of 20 or less and nothing better; `Skills.HasSomethingToEat`). It is still not "food" for the food step of his way up.
+- **Wood far below him is not a tree.** `CollectAsync` leaves logs more than 16 blocks under his feet (a mine's timber, a wreck's) and looks over the land for a tree: he drowned diving for one.
+- **Looking for what lives on the surface, from the surface** (2026-11-16). Under the ground, a search for animals, sheep, spiders or trees first takes him up (`ComeUpToLookAsync`: a stair to the first
+  standing room with open sky over it). Before, the walk "over the land" was a tunnel under it: live an iron pickaxe made at 16:39 was worn out by 16:44, about 250 blocks of stone later. Ore and stone
+  are still looked for from where he is.
+- **What he breaks without aiming at it counts** (`CollectAsync`, 2026-11-16): the log between him and the next, the ore beside the one whose drop he dug to. The log line is "is gone and I did not
+  aim at it ... I broke it on my way". Uncounted, he took a fourth log for three and once went looking for a third ore with all three in his pockets.
 - **Using what he learned.** Stranded on a tiny patch, he asks his memory BEFORE trying: the lessons for that situation (tag `exp:tiny-patch`) carry the ways that worked or failed (`worked:swim`,
   `failed:dig`; ways are swim, dig, climb). Each candidate shore is planned without moving, and the order of tries moves toward a way that worked and away from one that failed; with no earlier
   lessons it stays nearest first. It is only the ORDER: nothing is ruled out, a way that failed is still tried if the others do not work. When the order changed he says why in the lesson

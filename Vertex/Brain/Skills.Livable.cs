@@ -214,13 +214,15 @@ public sealed partial class Skills
     /// Goes and looks for a land animal where land animals are: the nearest land he can see and has not been over lately, not known to be too hot. The plain search walks fixed compass legs whatever is under him, and he spent 19 minutes
     /// at sea looking for sheep with plains in sight (2026-11-04). Nothing of the kind in sight, it does what the plain search does.
     /// </summary>
-    private async Task<(bool Found, int Legs, double Walked)> LookOverLandAsync(Func<bool> found, int maxLegs, CancellationToken ct)
+    /// <param name="onTheSurface">What he looks for is on the surface (animals, trees): from under the ground he comes up first. False for what is in the ground (ore, stone), where the way along is a tunnel anyway.</param>
+    private async Task<(bool Found, int Legs, double Walked)> LookOverLandAsync(Func<bool> found, int maxLegs, CancellationToken ct, bool onTheSurface = true)
     {
         var legs = 0;
         double walked = 0;
         while (!found() && legs < maxLegs && !ct.IsCancellationRequested)
         {
             legs++;
+            if (onTheSurface) await ComeUpToLookAsync(ct);
             var (bx, by, bz) = client.FeetBlock;
             var now = DateTime.UtcNow;
             (int X, int Z)? best = null;
@@ -243,7 +245,7 @@ public sealed partial class Skills
             }
             if (best is not { } goal)
             {
-                var (_, plainLegs, plainWalked) = await LookFurtherAsync(found, 1, ct);
+                var (_, plainLegs, plainWalked) = await LookFurtherAsync(found, 1, ct, onTheSurface);
                 walked += plainWalked;
                 if (plainLegs == 0) break;
                 continue;
@@ -266,6 +268,31 @@ public sealed partial class Skills
             lock (_searchedLand) _searchedLand[(goal.X >> 5, goal.Z >> 5)] = DateTime.UtcNow;
         }
         return (found(), legs, walked);
+    }
+
+    /// <summary>
+    /// Up to the surface before he looks for anything that lives on it. From under the ground a walk "over the land" is a tunnel under it: live he made an iron pickaxe at 16:39 and it was worn out by 16:44, about 250
+    /// blocks of stone later, while he looked for animals, sheep and spiders from 20 blocks down (2026-11-16). Under water, or with no standing room found overhead, he stays as he is.
+    /// </summary>
+    private async Task ComeUpToLookAsync(CancellationToken ct)
+    {
+        if (!UnderGround()) return;
+        var (x, y, z) = client.FeetBlock;
+        int? surface = null;
+        for (var by = y + 1; by <= y + 64 && surface == null; by++)
+        {
+            if (!Standable(client.World.GetState(x, by - 1, z)) || !Open(client.World.GetState(x, by, z)) || !Open(client.World.GetState(x, by + 1, z))) continue;
+            var roofed = false;
+            for (var up = by + 2; up <= by + 12 && !roofed; up++)
+                roofed = client.World.GetState(x, up, z) is var s && Standable(s) && D.BlockOf(s).Name is var n && !n.EndsWith("_leaves") && !n.EndsWith("_log");
+            if (!roofed) surface = by;
+        }
+        if (surface is not int top) return;
+        Trace?.Invoke($"under the ground at {x} {y} {z}: going up to the surface (y {top}) to look");
+        using var climb = CancellationTokenSource.CreateLinkedTokenSource(ct);
+        climb.CancelAfter(TimeSpan.FromSeconds(90));
+        try { await client.GoToAsync(Goal.Near(x + 0.5, top, z + 0.5, 1.5), new PathOptions { CanDig = true, CanPlace = Have(s => client.ThrowawayBlocks.Contains(s.Name)) > 0, MaxNodes = 20_000 }, climb.Token); }
+        catch (OperationCanceledException) when (!ct.IsCancellationRequested) { }
     }
 
     /// <summary>The nearest log he can see that stands in a biome not known to be too hot, or null. What he needs before anything else is wood, and a bare strip of cool ground beside a burning forest does not give him any: he "settled" on one again and again, and walked into the fire for wood (2026-11-04).</summary>
